@@ -16449,7 +16449,7 @@ float reliefAt(vec2 p, float e) {
   // finer and finer. Mountains: sharp ridges with softer valleys between (each octave weighted by the one before);
   // lowlands: gentle swells that fade quickly, so fields stay flat
   float mt = sstep(0.15, 0.9, up);
-  float amp = mix(0.0035, 0.016, mt), fq = 5.0, wgt = 1.0, gain = mix(0.36, 0.47, mt);
+  float amp = mix(0.002, 0.016, mt), fq = 5.0, wgt = 1.0, gain = mix(0.36, 0.47, mt);
   vec2 q = p * fq;
   for (int o = 0; o < 12; o++) {
     float k = sstep(2.5, 5.0, 1.0 / (fq * uScale));
@@ -16467,11 +16467,20 @@ float reliefAt(vec2 p, float e) {
 }
 
 // ---------- colors measured from satellite pictures ----------
-const vec3 DEEP = vec3(0.039, 0.133, 0.212), OCEAN = vec3(0.055, 0.192, 0.314), MID = vec3(0.082, 0.294, 0.420), SHELF = vec3(0.133, 0.404, 0.498), SHOAL = vec3(0.247, 0.549, 0.573);
+// (v36) measured again from Maz's satellite pictures (North Sea, the Gulf, Mesopotamia, the Sahara, the Amazon, East
+// Anglia): real seas are slate and teal, not blue; dry land is pale beige-grey; forests and fields are greyer greens.
+// These are the colours before satLook() adds the camera's haze.
+const vec3 DEEP = vec3(0.075, 0.150, 0.170), OCEAN = vec3(0.085, 0.170, 0.190), MID = vec3(0.100, 0.200, 0.215), SHELF = vec3(0.140, 0.260, 0.265), SHOAL = vec3(0.230, 0.370, 0.345);
+const vec3 TURQ = vec3(0.40, 0.60, 0.55), SILT = vec3(0.28, 0.40, 0.34), BANK = vec3(0.55, 0.58, 0.48);
 const vec3 SAND = vec3(0.788, 0.725, 0.549), WETSAND = vec3(0.553, 0.518, 0.384);
-const vec3 STEPPE = vec3(0.612, 0.592, 0.388), DRYGRASS = vec3(0.498, 0.529, 0.310), GRASS = vec3(0.392, 0.478, 0.259), LUSH = vec3(0.290, 0.404, 0.208);
-const vec3 SCRUB = vec3(0.337, 0.396, 0.231), HILLGRASS = vec3(0.431, 0.459, 0.282), HILLSOIL = vec3(0.490, 0.431, 0.314);
-const vec3 FORESTDARK = vec3(0.106, 0.196, 0.114), FOREST = vec3(0.165, 0.275, 0.157), FORESTLIGHT = vec3(0.239, 0.365, 0.196);
+const vec3 STEPPE = vec3(0.720, 0.670, 0.560), DRYGRASS = vec3(0.580, 0.560, 0.420), GRASS = vec3(0.430, 0.470, 0.300), LUSH = vec3(0.350, 0.420, 0.250);
+const vec3 SCRUB = vec3(0.400, 0.430, 0.300), HILLGRASS = vec3(0.470, 0.480, 0.340), HILLSOIL = vec3(0.560, 0.500, 0.400), ERG = vec3(0.870, 0.740, 0.540);
+const vec3 FORESTDARK = vec3(0.120, 0.200, 0.120), FOREST = vec3(0.190, 0.270, 0.170), FORESTLIGHT = vec3(0.260, 0.340, 0.210);
+// what a satellite camera does to every colour: a little less saturated, and a thin blue-grey haze of air over it all
+vec3 satLook(vec3 c) {
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  return mix(vec3(l), c, 0.88) * 0.93 + vec3(0.035, 0.040, 0.044);
+}
 const vec3 ROCK = vec3(0.420, 0.392, 0.357), ROCKLIGHT = vec3(0.604, 0.569, 0.518), ROCKDARK = vec3(0.247, 0.227, 0.204), SNOW = vec3(0.933, 0.945, 0.953), SNOWSHADE = vec3(0.667, 0.718, 0.769);
 const vec3 HEDGE = vec3(0.231, 0.290, 0.165), TRACK = vec3(0.62, 0.58, 0.48), ROAD = vec3(0.55, 0.54, 0.52), ROOF1 = vec3(0.60, 0.36, 0.28), ROOF2 = vec3(0.56, 0.54, 0.52), ROOF3 = vec3(0.42, 0.40, 0.38), GARDEN = vec3(0.30, 0.40, 0.22);
 // crops: the colors of real fields (sampled from a Copernicus Sentinel-2 picture of Bavarian farmland), a little livelier
@@ -16503,14 +16512,41 @@ float gFarm = 0.0;
 vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
   float pxm = uScale;                      // cells per pixel
   float m = moistureAt(p) + 0.07 * (vnoise(p * 2.1, uSeed + 88) - 0.5);
+  float m0 = m;   // without the ragged forest edge: dry and wet land shade into each other slowly
   // ragged edges between forest and open land, more ragged the closer you look
-  float amp = 0.02, fq = 9.0;
+  m += 0.06 * (fbm(p * 3.2 + 0.6 * vec2(gnoise(p * 1.3, uSeed + 6090), gnoise(p * 1.3 + 3.7, uSeed + 6091)), uSeed + 6092, 3) - 0.5);
+  float amp = 0.035, fq = 9.0;
   for (int o = 0; o < 7; o++) { float k = octFade(fq); if (k <= 0.0) break; k *= octTop(fq); if (k > 0.0) m += amp * k * (vnoise(p * fq, uSeed + 6100 + o * 7) - 0.5);  amp *= 0.62; fq *= 2.0; }
   float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
-  float wet = sstep(0.24, 0.62, m);
-  vec3 g = wet < 0.5 ? mix(STEPPE, DRYGRASS, wet * 2.0) : wet < 0.8 ? mix(DRYGRASS, GRASS, (wet - 0.5) / 0.3) : mix(GRASS, LUSH, (wet - 0.8) / 0.2);
+  // how dry the open land is: the driest plains (about one in six) are semi-arid, pale beige-grey earth with thin grass
+  // as in Mesopotamia; most are green grassland; the wettest, next to the forests, lush
+  float wet = sstep(0.22, 0.52, m0);
+  vec3 g = wet < 0.35 ? mix(STEPPE, DRYGRASS, wet / 0.35) : wet < 0.7 ? mix(DRYGRASS, GRASS, (wet - 0.35) / 0.35) : mix(GRASS, LUSH, (wet - 0.7) / 0.3);
+  // broad patches of other soils and plant cover, as every real satellite picture shows: some paler, some greyer
+  float mac = fbm(p * 0.55, uSeed + 140, 3) - 0.5, mac2 = fbm(p * 1.6 + 4.0, uSeed + 141, 3) - 0.5;
+  g *= 1.0 + 0.16 * mac;
+  g = mix(g, vec3(dot(g, vec3(0.3333))), sstep(0.05, 0.25, mac2) * 0.3);
   float mott = fbm(p * 3.3, uSeed + 120, 3) - 0.5;
-  g = mix(g, mott > 0.0 ? SCRUB : STEPPE, abs(mott) * 0.4);
+  g = mix(g, mott > 0.0 ? SCRUB : g * 1.12, abs(mott) * 0.35);
+  // dry country: stream beds and wadis show as a fine tree of darker, greener lines; sand sheets and low dunes
+  // gather in the driest hollows
+  float dryW = 1.0 - sstep(0.15, 0.55, wet);
+  if (dryW > 0.01) {
+    vec2 wq = p + 0.25 * vec2(gnoise(p * 3.0, uSeed + 150), gnoise(p * 3.0 + 7.0, uSeed + 151));
+    float v1 = 1.0 - abs(gnoise(wq * 6.0, uSeed + 152)) * 1.6, v2 = 1.0 - abs(gnoise(wq * 17.0, uSeed + 153)) * 1.6;
+    float lines = sstep(0.93, 0.99, v1) * sstep(0.4, 1.4, 0.02 / pxm) + 0.7 * sstep(0.93, 0.99, v2) * sstep(0.3, 0.7, v1) * sstep(0.4, 1.4, 0.008 / pxm);
+    g = mix(g, vec3(0.44, 0.46, 0.33), min(lines, 1.0) * dryW * 0.55);
+    // scrub and bare ground: dry land is a speckle of olive bushes, pale earth and darker stony patches
+    float sp = fbm(p * 11.0, uSeed + 155, 4), st = fbm(p * 4.5 + 2.0, uSeed + 156, 3);
+    g = mix(g, vec3(0.50, 0.50, 0.38), sstep(0.5, 0.72, sp) * dryW * 0.45);
+    g = mix(g, vec3(0.80, 0.75, 0.65), sstep(0.5, 0.25, sp) * dryW * 0.25);
+    g = mix(g, vec3(0.52, 0.49, 0.44), sstep(0.62, 0.8, st) * dryW * 0.35);
+    float sandP = sstep(0.55, 0.75, fbm(p * 1.1, uSeed + 160, 4)) * sstep(0.75, 1.0, dryW) * 0.75;
+    if (sandP > 0.01) {
+      float dune = 0.5 + 0.5 * sin((dot(p, vec2(0.8, 0.6)) + 0.03 * gnoise(p * 40.0, uSeed + 161)) * 220.0);
+      g = mix(g, mix(g, ERG, 0.7) * (1.0 + 0.07 * (dune - 0.5) * sstep(2.0, 5.0, 0.028 / pxm)), sandP);
+    }
+  }
   // fine mottle of grass and bare ground at every scale
   float fm = 0.0; amp = 0.08; fq = 16.0;
   for (int o = 0; o < 9; o++) { float k = octFade(fq); if (k <= 0.0) break; k *= octTop(fq); if (k > 0.0) fm += amp * k * (vnoise(p * fq, uSeed + 6200 + o * 7) - 0.5);  amp *= 0.7; fq *= 2.0; }
@@ -16549,7 +16585,7 @@ vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
     float rowPx = 0.00012 / pxm;
     fc *= 1.0 + 0.05 * sstep(1.5, 4.0, rowPx) * sin(bf.y * 6.2832 * 40.0);
     float blockPx = min(bs.x / ns, bs.y) / pxm;
-    vec3 avg = vec3(0.40, 0.46, 0.29);
+    vec3 avg = vec3(0.37, 0.42, 0.26);
     // from further away, fields blur into a patchwork of larger parcels, each its own colour
     vec2 gs = bs * vec2(3.0, 4.0), gc = floor(q / gs);
     vec3 gcol = mix(avg, cropColor(hash2(int(gc.x), int(gc.y), uSeed + 522), hash2(int(gc.x), int(gc.y), uSeed + 523)), 0.75);
@@ -16563,7 +16599,7 @@ vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
     // woodlots and copses among the fields, as in real farmland
     float wl = 0.6 * gnoise(p * 9.0, uSeed + 517) + 0.3 * gnoise(p * 27.0, uSeed + 518) + 0.1 * gnoise(p * 81.0, uSeed + 519);
     float wood = sstep(0.17, 0.172 + 30.0 * pxm, wl + 0.03 * gnoise(p * 900.0, uSeed + 521));
-    vec3 woodc = mix(FORESTDARK, FOREST, 0.5 + 0.5 * gnoise(p * 300.0, uSeed + 520));
+    vec3 woodc = mix(FOREST, FORESTLIGHT, 0.4 + 0.5 * gnoise(p * 300.0, uSeed + 520)) * 0.92;
     fc = mix(fc, woodc, wood);
     // irrigated land: greener, with canals close up
     if (lu.g > 0.3) { fc = mix(fc, LUSH, 0.35 * lu.g); float cw = 0.0003; fc = mix(fc, vec3(0.24, 0.46, 0.56), lu.g * (1.0 - sstep(cw * 0.5, cw * 0.5 + pxm, abs(bf.y - 0.5) * bs.y)) * sstep(1.0, 3.0, cw / pxm)); }
@@ -17699,7 +17735,19 @@ void riverAt(vec2 p, float pxm) {
 vec3 waterColor(vec2 p, float e) {
   float d = uSea - e;
   vec3 c = d < 0.012 ? mix(SHOAL, SHELF, d / 0.012) : d < 0.05 ? mix(SHELF, MID, (d - 0.012) / 0.038) : d < 0.14 ? mix(MID, OCEAN, (d - 0.05) / 0.09) : mix(OCEAN, DEEP, clamp((d - 0.14) / 0.2, 0.0, 1.0));
-  if (d < 0.01) c = mix(c, SAND, (1.0 - d / 0.01) * 0.4);
+  // the open sea is never one flat colour: broad patches of greyer and greener water
+  c *= 1.0 + 0.12 * (fbm(p * 0.4, uSeed + 7690, 3) - 0.5);
+  // silt stirred up near the coast: milky turquoise and green clouds that the currents draw out into long streaks
+  vec2 wq = p + 1.6 * vec2(fbm(p * 0.7, uSeed + 7700, 3), fbm(p * 0.7 + 9.1, uSeed + 7701, 3));
+  vec2 sq = ROT * wq;
+  float swirl = fbm(sq * vec2(1.4, 4.2), uSeed + 7702, 4);
+  float near = 1.0 - sstep(0.003, 0.025 + 0.045 * swirl, d);
+  float turb = clamp(near * (0.2 + 1.3 * (swirl - 0.3)), 0.0, 1.0);
+  vec3 silt = mix(SILT, TURQ, sstep(0.42, 0.68, fbm(wq * 1.1, uSeed + 7703, 3)));
+  c = mix(c, silt, turb * 0.7);
+  // sandbanks in shallow water: pale ridges laid along the current
+  if (d < 0.02) { float bank = sstep(0.6, 0.72, fbm(sq * vec2(2.5, 9.0), uSeed + 7704, 4)); c = mix(c, BANK, bank * (1.0 - d / 0.02) * 0.55); }
+  if (d < 0.01) c = mix(c, SAND, (1.0 - d / 0.01) * 0.3);
   // ripples and swell, finer the closer you look
   float w = 0.0, amp = 0.05, fq = 9.0;
   for (int o = 0; o < 10; o++) { float k = octFade(fq); if (k <= 0.0) break; k *= octTop(fq); if (k > 0.0) w += amp * k * (vnoise(p * fq * vec2(1.0, 2.2), uSeed + 6500 + o * 7) - 0.5);  amp *= 0.72; fq *= 2.0; }
@@ -17770,7 +17818,7 @@ void main() {
   bool forced = outside || p.x < 1.0 || p.y < 1.0 || p.x >= 95.0 || p.y >= 63.0;
   bool water = forced || e <= uSea;
   if (uMode == 1) { outColor = water ? vec4(0.0) : vec4(1.0); return; }
-  if (outside) { outColor = vec4(0.039, 0.133, 0.212, 1.0); return; }
+  if (outside) { outColor = vec4(satLook(DEEP), 1.0); return; }
   vec3 col;
   if (water) col = waterColor(p, forced ? min(e, uSea - 0.2) : e);
   else {
@@ -17799,11 +17847,11 @@ void main() {
     float lam = dot(n, sun);
     float shade = clamp(lam / sun.z, 0.42, 1.45);
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
-    shade = 1.0 + (shade - 1.0) * (0.55 + 0.45 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
+    shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
     outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }
-  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+  outColor = vec4(clamp(satLook(col), 0.0, 1.0), 1.0);
 }
 #elif PASS == 2
 // pass 2: the towns, over the land the first pass drew; the river water comes back on top (bridges where main roads
@@ -17824,9 +17872,9 @@ void main() {
   float e0 = elevationAt(p);
   float slope = length(vec2(elevationAt(p + vec2(dx, 0.0)) - e0, elevationAt(p + vec2(0.0, dx)) - e0) / dx) * 7.5 * 2.5;
   vec4 town = cityColor(p, uScale, e - uSea, slope);
-  vec3 col = mix(base.rgb, clamp(town.rgb, 0.0, 1.0), town.a);
+  vec3 col = mix(base.rgb, satLook(clamp(town.rgb, 0.0, 1.0)), town.a);
   col = mix(col, base.rgb, rv.x * (1.0 - gTownRoad));
-  col = mix(col, vec3(0.62, 0.61, 0.58), rv.x * gTownRoad * town.a);   // bridges
+  col = mix(col, satLook(vec3(0.62, 0.61, 0.58)), rv.x * gTownRoad * town.a);   // bridges
   outColor = vec4(col, 1.0);
 }
 #endif
@@ -18991,7 +19039,7 @@ function renderMapNow() {
 function renderStatic(cs, dpr) {
   const sc = view.staticCanvas.getContext("2d");
   sc.setTransform(1, 0, 0, 1, 0, 0);
-  sc.fillStyle = "#0a2236";
+  sc.fillStyle = GLMAP.ok ? "#1b2f35" : "#0a2236";
   sc.fillRect(0, 0, canvas.width, canvas.height);
   updateLanduse();
   sc.imageSmoothingEnabled = true;
@@ -19019,7 +19067,7 @@ function renderStatic(cs, dpr) {
   sc.setTransform(1, 0, 0, 1, 0, 0);
   // a soft vignette, like lamplight on a map table
   const g = sc.createRadialGradient(canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) * 0.45, canvas.width / 2, canvas.height / 2, Math.hypot(canvas.width, canvas.height) * 0.6);
-  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(4,8,10,0.28)");
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(4,8,10,0.2)");
   sc.fillStyle = g; sc.fillRect(0, 0, canvas.width, canvas.height);
   return missing;
 }
@@ -26081,7 +26129,7 @@ function restore(saved) {
 Object.assign(ICONS, { save: giSvg("delapouite/save"), cloud: giSvg("delapouite/cloud-upload") });
 const SAVE_FORMAT = "drawn-borders-save";
 const SAVE_VERSION = 6;                         // version 5 saves (before version 18 of the game) load as they are
-const GAME_BUILD = 33;
+const GAME_BUILD = 36;
 const LOCAL_KEYS = { auto: SAVE_KEY, earlier: "drawn-borders/save-earlier-raw", rescued: "drawn-borders/save-rescued", slots: "drawn-borders/slots", slot: "drawn-borders/slot/" };
 const SAVE_LIMITS = { named: 10, earlier: 3, chunk: 200000 };
 const SAVES = {

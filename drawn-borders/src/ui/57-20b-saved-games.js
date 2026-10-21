@@ -11,7 +11,7 @@
 Object.assign(ICONS, { save: giSvg("delapouite/save"), cloud: giSvg("delapouite/cloud-upload") });
 const SAVE_FORMAT = "drawn-borders-save";
 const SAVE_VERSION = 6;                         // version 5 saves (before version 18 of the game) load as they are
-const GAME_BUILD = 33;
+const GAME_BUILD = 36;
 const LOCAL_KEYS = { auto: SAVE_KEY, earlier: "drawn-borders/save-earlier-raw", rescued: "drawn-borders/save-rescued", slots: "drawn-borders/slots", slot: "drawn-borders/slot/" };
 const SAVE_LIMITS = { named: 10, earlier: 3, chunk: 200000 };
 const SAVES = {
