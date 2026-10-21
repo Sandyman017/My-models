@@ -211,7 +211,7 @@ function addChronicle(g, text, tone = "neutral", nid = null) {
    `plan` carries the rivals' decisions (from Claude or the built-in rules), made at the start of the season. */
 function runSeason(w, g, plan) {
   const rng = mulberry32((w.seed * 7919 + g.turn * 104729 + 17) >>> 0);
-  const dispatch = { season: seasonLabel(g.turn), player: null, abroad: [], built: [], warnings: [], war: [], diplomacy: [], economy: [], ambitions: [], firsts: [], decisions: [], leader: [], cabinet: [], opening: [], cities: [], groups: [] };
+  const dispatch = { season: seasonLabel(g.turn), player: null, abroad: [], built: [], warnings: [], war: [], diplomacy: [], economy: [], ambitions: [], firsts: [], decisions: [], leader: [], cabinet: [], opening: [], cities: [], groups: [], trade: [] };
   const ownersBefore = new Map(g.cities.map(c => [c.id, c.owner]));
   const pn = g.nations[PLAYER];
   const last = pn.history[pn.history.length - 1];
@@ -301,6 +301,7 @@ function runSeason(w, g, plan) {
     noteFor(n, g, text, null);
   }
   for (const t of checkEliminations(g)) { dispatch.war.push(t); addChronicle(g, t, "bad", null); }
+  tradeForgetDead(g);
   for (const t of wars.news) addChronicle(g, t, "warn", null);
   dispatch.battles = wars.reports.filter(r => r.attacker === PLAYER || r.defender === PLAYER || sameSideAs(g, PLAYER, r.attacker) || sameSideAs(g, PLAYER, r.defender));
 
@@ -327,6 +328,8 @@ function runSeason(w, g, plan) {
     const store = monthsOfFood((P.granary && P.granary.stock) || 0, P.history.length ? P.history[P.history.length - 1].pop || 0 : 0);
     if (P.alive && (Math.abs(h - 1) >= 0.03 || dry)) dispatch.economy.push({ text: `The harvest is in: ${harvestWord(h)}, ${pct(h)} of a normal year${dry ? ", after the dry summer" : ""}. It feeds the nation until next autumn.${h < 0.95 ? (store >= 0.5 ? ` If the fields can't feed everyone, the national reserve (${fmt1(store)} months of food) makes up the rest while it lasts.` : " There is no grain in the national reserve to make up a shortfall.") : ""}`, tone: h < 0.95 ? "warn" : "good" });
   }
+  // merchants sign next season's contracts, with the harvest known (10s); the season's statistics then show them
+  for (const x of clearWorldTrade(w, g, { history: true })) { dispatch.trade.push(x); addChronicle(g, x.text, x.tone === "good" ? "good" : x.tone === "warn" ? "warn" : "neutral", PLAYER); }
   checkGrowthDeeds(w, g);
   checkFirsts(w, g, dispatch);
   if (g.nations[PLAYER].alive) checkAmbitions(w, g, dispatch);

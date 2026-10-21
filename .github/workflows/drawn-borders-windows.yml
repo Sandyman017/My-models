@@ -1,6 +1,6 @@
-# Builds the Drawn Borders Windows installer and publishes it on the Releases page,
-# as release "drawn-borders-v<version from package.json>" (a new version makes a new release;
-# the same version is rebuilt in place). Runs when the game changes, or from "Run workflow" on the Actions tab.
+# Builds the Drawn Borders Windows installer on every change (a check that it still builds), and publishes it on
+# the Releases page as "drawn-borders-v<version from package.json>" when that version is new. Bump the version in
+# package.json to release. Also runs from "Run workflow" on the Actions tab.
 name: Drawn Borders for Windows
 
 on:
@@ -40,7 +40,15 @@ jobs:
         id: version
         shell: bash
         run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-      - name: Publish on the Releases page
+      - name: Is this version already published?
+        id: exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "drawn-borders-v${{ steps.version.outputs.v }}" >/dev/null 2>&1; then echo "yes=1" >> "$GITHUB_OUTPUT"; else echo "yes=0" >> "$GITHUB_OUTPUT"; fi
+      - name: Publish on the Releases page (new versions only, so work in progress never replaces a release)
+        if: steps.exists.outputs.yes == '0'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: drawn-borders-v${{ steps.version.outputs.v }}

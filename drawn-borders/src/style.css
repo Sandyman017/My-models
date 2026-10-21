@@ -981,3 +981,15 @@ details.mreport[open] > summary::before { content: "▾"; }
 ul.mrep { margin: 4px 0 4px 14px; padding: 0; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.4; }
 ul.mrep li { list-style: none; position: relative; padding-left: 10px; }
 ul.mrep li::before { content: "·"; position: absolute; left: 0; color: var(--gold); font-weight: 700; }
+
+/* ===== v37 trade: D (Trade panel, Economy, food, dock) ===== */
+/* ===== end D ===== */
+
+/* ===== v37 trade: E (Statistics) ===== */
+/* ===== end E ===== */
+
+/* ===== v37 trade: F (map) ===== */
+/* ===== end F ===== */
+
+/* ===== v37 trade: G (nations, letters, news) ===== */
+/* ===== end G ===== */

@@ -697,7 +697,8 @@ function techAvailable(n, t) { return !hasTech(n, t) && (!TECHS[t].needs || hasT
 function emptyEconomy() {
   return { people: null, cities: [], regions: [], networks: [], gdp: 0, pop: 0.001, food: 0, faminePop: 0, famineShare: 0, isolated: [], roadEdges: 0, area: 0, sites: [], reach: new Map(),
     sectors: {}, subs: {}, goods: { supply: {}, demand: {}, imports: {}, exports: {}, util: {} }, sat: {}, levels: {}, workers: 0, research: 0, effects: {}, armsSat: 1, fuelSat: 1, constructionIndex: 1, exportValue: 0, importBill: 0, access: 0,
-    workforce: 0, unemployed: 0, unemployment: 0, vacancies: 0, armed: 0, publicJobs: 0, granary: null, lostToIdle: 0, programs: 0, seats: 0, citySkill: 0, cityResearch: 0 };
+    workforce: 0, unemployed: 0, unemployment: 0, vacancies: 0, armed: 0, publicJobs: 0, granary: null, lostToIdle: 0, programs: 0, seats: 0, citySkill: 0, cityResearch: 0,
+    trade: emptyTradeEcon(), foodIn: 0, foodOut: 0, tariffBase: 0 };
 }
 
 /* While a government weighs its options nothing changes, so each nation's economy is worked out once.
@@ -733,6 +734,9 @@ function computeEconomyRaw(w, g, nid) {
   const regions = cities.map(city => ({ city, cells: [], pop: 0, farmland: 0, touches: new Set() }));
   let area = 0;
   const partners = g.treaties ? g.treaties.filter(t => t.type === "trade" && (t.a === nid || t.b === nid)).map(t => (t.a === nid ? t.b : t.a)) : [];
+  // the trade book (10s): who sells what to whom this season. Without one, the old world-market rules apply unchanged.
+  const TB = g.trade && g.trade.v ? g.trade : null;
+  const bEdges = TB ? new Array(g.nations.length).fill(0) : null;   // border length with each nation
   for (let i = 0; i < N_CELLS; i++) {
     if (!held(i)) continue;
     area++;
@@ -745,7 +749,14 @@ function computeEconomyRaw(w, g, nid) {
     r.cells.push(i);
     r.pop += g.pop[i];
     r.farmland += cellFood(w, g, i);
-    if (partners.length) {
+    if (TB) {
+      const x = i % GRID_W;
+      let o;
+      if (x > 0 && (o = g.owner[i - 1]) >= 0 && o !== nid) { r.touches.add(o); bEdges[o]++; }
+      if (x < GRID_W - 1 && (o = g.owner[i + 1]) >= 0 && o !== nid) { r.touches.add(o); bEdges[o]++; }
+      if (i >= GRID_W && (o = g.owner[i - GRID_W]) >= 0 && o !== nid) { r.touches.add(o); bEdges[o]++; }
+      if (i < N_CELLS - GRID_W && (o = g.owner[i + GRID_W]) >= 0 && o !== nid) { r.touches.add(o); bEdges[o]++; }
+    } else if (partners.length) {
       for (const [dx, dy] of DIRS4) {
         const x = cellX(i) + dx, y = cellY(i) + dy;
         if (!inBounds(x, y)) continue;
@@ -759,7 +770,7 @@ function computeEconomyRaw(w, g, nid) {
   /* Road networks and foreign markets */
   const joined = joinNetworks(w, g, nid, cities, regions, cityNetworks(g, nid, cities));
   const { netOf, count } = joined;
-  const networks = Array.from({ length: count }, () => ({ regions: [], pop: 0, food: 0, port: false, capital: false, foreign: 0, partners: [], touches: new Set() }));
+  const networks = Array.from({ length: count }, () => ({ regions: [], pop: 0, food: 0, port: false, seaPort: null, capital: false, foreign: 0, partners: [], touches: new Set(), foodIn: 0, foodOut: 0 }));
   regions.forEach((r, k) => {
     const net = networks[netOf[k]];
     r.net = netOf[k];
@@ -767,6 +778,7 @@ function computeEconomyRaw(w, g, nid) {
     net.pop += r.pop;
     r.touches.forEach(o => net.touches.add(o));
     if (r.city.port && (!g.sea || !oceanPort(w, r.city) || portUsableBy(w, g, r.city, nid))) net.port = true;
+    if (TB && r.city.port && oceanPort(w, r.city) && (!g.sea || portUsableBy(w, g, r.city, nid)) && (!net.seaPort || r.city.capital)) net.seaPort = r.city;
     if (r.city.capital) net.capital = true;
   });
   // the capital is in enemy hands: a provincial seat governs in its place
@@ -798,7 +810,8 @@ function computeEconomyRaw(w, g, nid) {
     const ppop = nationPop(g, p);
     const pPort = g.cities.some(c => c.owner === p && c.port && !(occ && occ[c.cell] >= 0) && !(g.sea && oceanPort(w, c) && portBlockadedFor(w, g, c, p)));
     for (const net of networks) {
-      if (net.touches.has(p) || (net.port && pPort)) { net.foreign += DIPLO.tradeForeignShare * ppop * tradeLaw.foreign; net.partners.push(p); if (net.touches.has(p)) landPartner = true; }
+      const caravans = TB && net.capital && TB.links[linkKey(nid, p)] && TB.links[linkKey(nid, p)].m === "over";
+      if (net.touches.has(p) || (net.port && pPort) || caravans) { net.foreign += DIPLO.tradeForeignShare * ppop * tradeLaw.foreign; net.partners.push(p); if (net.touches.has(p)) landPartner = true; }
     }
   }
   const anyPort = networks.some(n => n.port && n.capital) || networks.some(n => n.port);
@@ -808,6 +821,23 @@ function computeEconomyRaw(w, g, nid) {
   const seaAccess = anyPort ? (0.5 + WB.access) * seaShare : 0;
   const access = seaAccess + (networks.some(x => x.partners.length) ? 0.3 : 0);
   const importCapShare = access * tradeLaw.imports, exportCapShare = access * 0.8 * tradeLaw.exports;
+  let roadEdges = 0;
+  const roadsTo = TB ? new Array(g.nations.length).fill(0) : null;   // roads crossing into each nation's land
+  for (const k of g.roads) {
+    const [a, b] = edgeEnds(k);
+    if (g.owner[a] === nid) roadEdges++;
+    if (TB) {
+      const oa = g.owner[a], ob = g.owner[b];
+      if (oa === nid && ob >= 0 && ob !== nid && !(occ && (occ[a] >= 0 || occ[b] >= 0))) roadsTo[ob]++;
+      else if (ob === nid && oa >= 0 && oa !== nid && !(occ && (occ[a] >= 0 || occ[b] >= 0))) roadsTo[oa]++;
+    }
+  }
+  const TRD = TB ? tradeLinksOf(w, g, nid, TB, networks, regions, bEdges, roadsTo, cities, anyPort, WB, tradeLaw) : null;
+  // what the book's contracts and the merchants' search deliver: settled good by good below (10s)
+  const TC = TB ? { nid, TB, TRD, ix: tradeIndex(g), reroute: !!g.reroute, importCapShare, exportCapShare, harbor: {}, extraT: {},
+    open: { inN: TRADE.importOpen[laws.trade || "balanced"] ?? 1, outN: TRADE.exportOpen[laws.trade || "balanced"] ?? 1 },
+    trade: { ...emptyTradeEcon(), links: TRD.links, landView: TRD.landView, mainPort: TRD.mainPort, transit: TRD.transit, worldImportCapRaw: TRD.worldImportCapRaw, worldExportCapRaw: TRD.worldExportCapRaw },
+    importBase: 0, transport: 0, premium: 0, tariffBase: 0, seaMt: 0, seaMtIn: 0, worldIn: {} } : null;
 
   /* Industry levels in each town, limited by what the land holds */
   const levels = {};
@@ -863,7 +893,23 @@ function computeEconomyRaw(w, g, nid) {
   const gran = granaryPlan(nation, regions.reduce((s, r) => s + r.pop, 0));
   // the reserve serves the capital's network; if the capital is lost, the government feeds the largest part still held
   const resNet = networks.find(x => x.capital) || networks.slice().sort((a, b) => b.pop - a.pop)[0];
-  for (const net of networks) {
+  const foodTrade = TB ? tradeFoodPlan(w, g, TC, networks, resNet, foodprocWant, mech) : null;
+  if (TB) for (const net of networks) {
+    // farms grow what the people eat, what was sold abroad and what the state buys for its reserve
+    const base = net.foodBase + net.foodOut;
+    const wanted = base + (net === resNet ? gran.fillWant * 4 : 0);
+    net.foodMade = Math.min(net.food, wanted);
+    if (net === resNet) {
+      gran.spare = Math.max(0, net.food - base) / 4;
+      gran.fill = clamp((net.foodMade - base) / 4, 0, gran.fillWant);
+      // grain bought abroad comes first; what is still short is made up from the reserve, as far as it goes
+      const short = Math.max(0, net.pop - (net.food - net.foodOut) - net.foodIn) / 4;
+      gran.release = Math.min(gran.stock, short);
+      gran.short = short - gran.release;
+      net.reserveFood = gran.release * 4;
+    }
+  }
+  else for (const net of networks) {
     // farms grow food for export only when machinery makes farm work pay; the state buys extra for its reserve
     const exportRoom = (net.port || net.partners.length) ? 0.25 * clamp(mech / 0.4, 0, 1) : 0;
     const base = net.pop * (1.02 + exportRoom) + (net.capital ? foodprocWant : 0);
@@ -888,7 +934,7 @@ function computeEconomyRaw(w, g, nid) {
   let workforce = 0, unemployed = 0, vacancies = 0, publicJobs = 0;
   for (const r of regions) {
     const net = networks[r.net];
-    r.foodRatio = (net.food + (net.reserveFood || 0)) / Math.max(0.001, net.pop);
+    r.foodRatio = (net.food - (net.foodOut || 0) + (net.foodIn || 0) + (net.reserveFood || 0)) / Math.max(0.001, net.pop);
     r.foodMade = net.food > 0 ? net.foodMade * r.food / net.food : 0;
     r.workforce = r.pop * LF.lf * (1 - armed);
   }
@@ -969,7 +1015,8 @@ function computeEconomyRaw(w, g, nid) {
     }
     for (const g2 in def.out || {}) if (g2 !== "food") supply[g2] += def.out[g2] * x.lvl * rate * (def.sector === "secondary" && def.sub === "Energy" && hasTech(nation, "electrify") ? 1.33 : 1) * (def.sub === "Manufacturing" && hasTech(nation, "assembly") ? 1.25 : 1);
   };
-  const settle = k => {
+  if (TB) Object.assign(TC, { demand, supply, imports, exports, sat });
+  const settle = TB ? (k => tradeSettle(w, g, TC, k)) : k => {
     const short = Math.max(0, demand[k] - supply[k]);
     imports[k] = GOODS[k].local ? 0 : Math.min(short, demand[k] * importCapShare);
     sat[k] = demand[k] > 1e-6 ? Math.min(1, (supply[k] + imports[k]) / demand[k]) : 1;
@@ -1005,7 +1052,12 @@ function computeEconomyRaw(w, g, nid) {
   }
   demand.food = pop + foodprocLevels * INDUSTRIES.foodproc.in.food + gran.fill * 4;   // the reserve's purchase is bought, not sold abroad
   supply.food = regions.reduce((s, r) => s + r.foodMade, 0) + gran.release * 4;          // grain handed out from the store
-  settle("food");
+  if (TB) {
+    // grain: what came in fed the hungry before the famine was counted; what went out was grown for it
+    imports.food = foodTrade.foodIn; exports.food = foodTrade.foodOut;
+    sat.food = demand.food > 1e-6 ? Math.min(1, (supply.food - exports.food + imports.food) / demand.food) : 1;
+    TC.trade.positions.food = { demand: demand.food, supply: supply.food, short: TC.trade.foodGap, surplus: TC.trade.foodOffer };
+  } else settle("food");
 
   /* What the sold share of each good is worth to its makers: a glut with no buyers earns little */
   const util = {};
@@ -1034,7 +1086,7 @@ function computeEconomyRaw(w, g, nid) {
     const outKey = Object.keys(def.out || {})[0];
     let u = outKey && outKey !== "food" ? util[outKey] : 1;
     if (x.kind === "resort") u = (atPeace ? 1 : 0.3) * clamp(stab / 60, 0.3, 1.2);
-    const importPenalty = Object.keys(def.in || {}).some(k => imports[k] > 0.05 * demand[k]) ? 1 - ECON7.importPremium * 0.5 : 1;
+    const importPenalty = Object.keys(def.in || {}).some(k => (TB ? TC.worldIn[k] || 0 : imports[k]) > 0.05 * demand[k]) ? 1 - ECON7.importPremium * 0.5 : 1;
     const va = x.site ? siteVA(g, x, u, skillMult * efficiency * tech * healthMult)
       : x.kind === "smelter" ? (x.processed || 0) * SMELT.vaPerUnit * priceOf(g, "metals") * (util.metals ?? 1) * importPenalty * skillMult * efficiency * tech * healthMult
       : def.workers * x.lvl * (x.rate ?? 0) * def.va * u * importPenalty * skillMult * efficiency * tech * healthMult;
@@ -1081,11 +1133,18 @@ function computeEconomyRaw(w, g, nid) {
   // trade: the cost of what had to be imported, and tariffs collected on it
   let importBill = 0, exportValue = 0;
   GOOD_ORDER.forEach(k => { const pr = GOODS[k].price * priceOf(g, k); importBill += imports[k] * pr; exportValue += exports[k] * pr; });
-  let gdp = Object.values(sectors).reduce((s, x) => s + x.va, 0) - importBill * ECON7.importPremium - (seaT ? seaT.fees || 0 : 0);
+  // with the book: what imports cost beyond their world price is transport by land, the middlemen's cut on the world
+  // market, and foreign shipowners' fees; without it, the old flat premium on everything imported
+  const tradeLoss = TB ? TC.transport + TC.premium : importBill * ECON7.importPremium;
+  let gdp = Object.values(sectors).reduce((s, x) => s + x.va, 0) - tradeLoss - (seaT ? seaT.fees || 0 : 0);
+  let tradeOut = emptyTradeEcon();
+  if (TB) {
+    tradeOut = TC.trade;
+    Object.assign(tradeOut, { importCost: importBill + tradeLoss, tariffBase: TC.tariffBase, transportCost: TC.transport, premiumCost: TC.premium, seaMtWanted: TC.seaMt, seaMtIn: TC.seaMtIn,
+      open: access > 0 || Object.keys(TRD.links).some(o => !tradeBlocked(g, Number(o), nid, "goods") || !tradeBlocked(g, nid, Number(o), "goods")) });
+  }
 
   const constructionSat = Math.min(sat.timber, (sat.metals + sat.machinery) / 2);
-  let roadEdges = 0;
-  for (const k of g.roads) { const [a] = edgeEnds(k); if (g.owner[a] === nid) roadEdges++; }
   const isolated = regions.filter(r => !networks[r.net].capital).map(r => r.city);
   const cityResearch = regions.reduce((s, r) => s + (r.cm.learning ? 2 + r.ind.filter(x => x.kind === "university" || x.kind === "techpark").reduce((a, x) => a + x.lvl * (x.rate ?? 0), 0) : 0), 0);
   const research = all.reduce((s, x) => s + (INDUSTRIES[x.kind].research || 0) * x.lvl * (x.rate ?? 0), 0) + cityResearch;
@@ -1095,7 +1154,8 @@ function computeEconomyRaw(w, g, nid) {
     people,
     cities, regions, networks, gdp, pop, food, faminePop, famineShare: faminePop / Math.max(0.001, pop), isolated, roadEdges, area,
     sectors, subs: Object.values(subs), goods: { demand, supply, imports, exports, util }, sat, levels, workers: pop * LF.lf,
-    research, mech, fert, logistics, tourism, importBill, exportValue, tariffs: importBill * tradeLaw.tariff,
+    research, mech, fert, logistics, tourism, importBill, exportValue, tariffs: (TB ? TC.tariffBase : importBill) * tradeLaw.tariff, tariffBase: TB ? TC.tariffBase : importBill,
+    trade: tradeOut, foodIn: TB ? foodTrade.foodIn : 0, foodOut: TB ? foodTrade.foodOut : 0,
     constructionIndex: (1 + 0.6 * (1 - constructionSat)) * (1 - Math.min(0.1, 0.02 * levels.business)) * (1 + modSum(nation, "build")) * (hasTrait(nation, "pragmatic") ? 0.95 : 1),
     armsSat, fuelSat: fuelNeed > 0 ? Math.min(1, sat.oil) : 1, healthMult, access, seaAccess, seaLinks: joined.links, bySea: joined.bySea, byRiver: joined.byRiver, freightFees: seaT ? seaT.fees || 0 : 0,
     effects: { goodsSat: sat.goods, powerSat: sat.power },

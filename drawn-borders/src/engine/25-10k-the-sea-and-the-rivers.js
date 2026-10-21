@@ -1261,7 +1261,10 @@ function seaTradeFor(w, g, n, econ, tradeF) {
   for (const k in SEA.tonsPerUnit) mt += ((econ.goods.imports[k] || 0) + (econ.goods.exports[k] || 0)) * SEA.tonsPerUnit[k];
   const seaFrac = econ.access > 0 ? clamp((econ.seaAccess || 0) / econ.access, 0, 1) : 0;
   const prevShare = prev ? prev.share : 1;
-  const mtSea = mt * seaFrac / Math.max(0.15, prevShare);
+  // with the trade book the wanted tonnage is known before any port or ship limit (10s); otherwise undo last season's limit
+  const booked = econ.trade && econ.trade.seaMtWanted !== undefined && g.trade && g.trade.v;
+  const mtSea = booked ? econ.trade.seaMtWanted : mt * seaFrac / Math.max(0.15, prevShare);
+  const inShare = booked && mtSea > 0 ? clamp(econ.trade.seaMtIn / mtSea, 0, 1) : 1;   // foreign shipowners charge the buyer
   const ports = g.cities.filter(c => c.owner === n.id && portUsableBy(w, g, c, n.id));
   const lakes = g.cities.filter(c => c.owner === n.id && c.port && !oceanPort(w, c) && !(g.occ && g.occ[c.cell] >= 0));
   const cap = ports.reduce((s, c) => s + PORT_LEVELS[portLevel(c)].tradeMt * (cityFocusOn(g, c, "port") ? 1.5 : 1), 0) + lakes.length * PORT_LEVELS[1].tradeMt;
@@ -1271,7 +1274,7 @@ function seaTradeFor(w, g, n, econ, tradeF) {
   const carry = Math.min(mtSea, cap, own + foreign);
   const share = mtSea > 0.05 ? clamp(carry / mtSea, 0, 1) : 1;
   const ownCarry = Math.min(carry, own), foreignCarry = Math.max(0, carry - ownCarry);
-  return { mt: sr(mtSea), cap, own: sr(own), carry: sr(carry), share: sr(share, 3), fees: sr(foreignCarry * (war ? SEA.warFreightRate : SEA.freightRate) / 1000, 3), income: sr(ownCarry * SEA.freightRate / 1000, 3), war, tradeF, limit: carry >= mtSea - 0.01 ? null : cap <= own + foreign ? "ports" : "ships" };
+  return { mt: sr(mtSea), cap, own: sr(own), carry: sr(carry), share: sr(share, 3), fees: sr(foreignCarry * inShare * (war ? SEA.warFreightRate : SEA.freightRate) / 1000, 3), income: sr(ownCarry * SEA.freightRate / 1000, 3), war, tradeF, limit: carry >= mtSea - 0.01 ? null : cap <= own + foreign ? "ports" : "ships" };
 }
 
 /* Saves from before the sea: harbors that already handled more trade than a small harbor can are counted as

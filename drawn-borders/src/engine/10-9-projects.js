@@ -12,6 +12,16 @@ function hypothetical(g, change) {
   if (change.freighters) h.nations = g.nations.map(n => (n.id === change.nid ? { ...n, freighters: (n.freighters || 0) + change.freighters } : n));
   if (change.irrigate) { h.irrigated = g.irrigated.slice(); change.irrigate.forEach(c => { h.irrigated[c] = 1; }); }
   if (change.treaty) h.treaties = (g.treaties || []).concat([{ id: -1, ...change.treaty }]);
+  // embargoes live in the trade book (10s): the copy gets its own list, the contracts stay shared (never changed)
+  if ((change.embargo || change.lift) && g.trade) {
+    let E = g.trade.embargoes || [];
+    if (change.lift) E = E.filter(e => !(change.lift.id !== undefined ? e.id === change.lift.id : e.by === change.lift.by && e.on === change.lift.on));
+    if (change.embargo) E = E.concat([change.embargo]);
+    h.trade = { ...g.trade, embargoes: E };
+  }
+  // a world imagined to weigh a choice: merchants also look for new sellers and buyers (10s); "this season"
+  // previews leave that out (in the real game new contracts are signed only at the end of each season)
+  h.reroute = !change.noReroute;
   if (change.site) {
     const sp = change.site;
     if (sp.id !== undefined) h.sites = g.sites.map(x => (x.id === sp.id ? { ...x, level: sp.level } : x));
