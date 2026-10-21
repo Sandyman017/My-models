@@ -19,6 +19,7 @@ const TRADE = {
   borderMtPerEdge: 0.2, borderMtMin: 1, borderMtMax: 4,   // Mt a year across a border with no road, by its length
   roadMt: 10,          // Mt a year for each road that crosses the border (a road with a railway beside it)
   overMt: 1,           // Mt a year by caravan across wild land
+  caravanMarket: 0.3,  // a trade partner reached only by caravans brings a third as many buyers into our market as a neighbor
   importOpen: { protect: 0.5, balanced: 1, free: 1 },   // share of a shortage merchants may fill from other nations
   exportOpen: { protect: 0.7, balanced: 1, free: 1 },   // share of a surplus they may sell to other nations
   foodExport: 0.25,    // farms grow for export at most a quarter of their people's need, and only with machinery

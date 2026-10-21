@@ -811,7 +811,9 @@ function computeEconomyRaw(w, g, nid) {
     const pPort = g.cities.some(c => c.owner === p && c.port && !(occ && occ[c.cell] >= 0) && !(g.sea && oceanPort(w, c) && portBlockadedFor(w, g, c, p)));
     for (const net of networks) {
       const caravans = TB && net.capital && TB.links[linkKey(nid, p)] && TB.links[linkKey(nid, p)].m === "over";
-      if (net.touches.has(p) || (net.port && pPort) || caravans) { net.foreign += DIPLO.tradeForeignShare * ppop * tradeLaw.foreign; net.partners.push(p); if (net.touches.has(p)) landPartner = true; }
+      if (net.touches.has(p) || (net.port && pPort) || caravans) {
+        // a partner reached only by caravans across wild land is a much smaller market than one across a border or a sea lane
+        const reach = net.touches.has(p) || (net.port && pPort) ? 1 : TRADE.caravanMarket; net.foreign += DIPLO.tradeForeignShare * ppop * tradeLaw.foreign * reach; net.partners.push(p); if (net.touches.has(p)) landPartner = true; }
     }
   }
   const anyPort = networks.some(n => n.port && n.capital) || networks.some(n => n.port);

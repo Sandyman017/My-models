@@ -2662,7 +2662,9 @@ function computeEconomyRaw(w, g, nid) {
     const pPort = g.cities.some(c => c.owner === p && c.port && !(occ && occ[c.cell] >= 0) && !(g.sea && oceanPort(w, c) && portBlockadedFor(w, g, c, p)));
     for (const net of networks) {
       const caravans = TB && net.capital && TB.links[linkKey(nid, p)] && TB.links[linkKey(nid, p)].m === "over";
-      if (net.touches.has(p) || (net.port && pPort) || caravans) { net.foreign += DIPLO.tradeForeignShare * ppop * tradeLaw.foreign; net.partners.push(p); if (net.touches.has(p)) landPartner = true; }
+      if (net.touches.has(p) || (net.port && pPort) || caravans) {
+        // a partner reached only by caravans across wild land is a much smaller market than one across a border or a sea lane
+        const reach = net.touches.has(p) || (net.port && pPort) ? 1 : TRADE.caravanMarket; net.foreign += DIPLO.tradeForeignShare * ppop * tradeLaw.foreign * reach; net.partners.push(p); if (net.touches.has(p)) landPartner = true; }
     }
   }
   const anyPort = networks.some(n => n.port && n.capital) || networks.some(n => n.port);
@@ -10424,6 +10426,7 @@ const TRADE = {
   borderMtPerEdge: 0.2, borderMtMin: 1, borderMtMax: 4,   // Mt a year across a border with no road, by its length
   roadMt: 10,          // Mt a year for each road that crosses the border (a road with a railway beside it)
   overMt: 1,           // Mt a year by caravan across wild land
+  caravanMarket: 0.3,  // a trade partner reached only by caravans brings a third as many buyers into our market as a neighbor
   importOpen: { protect: 0.5, balanced: 1, free: 1 },   // share of a shortage merchants may fill from other nations
   exportOpen: { protect: 0.7, balanced: 1, free: 1 },   // share of a surplus they may sell to other nations
   foodExport: 0.25,    // farms grow for export at most a quarter of their people's need, and only with machinery
