@@ -1,0 +1,4 @@
+# Keep LF line endings on every machine (Windows checkouts too): the build compares files byte for byte.
+* text=auto eol=lf
+*.png binary
+*.glb binary
