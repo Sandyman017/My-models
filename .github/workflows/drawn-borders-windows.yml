@@ -1,11 +1,12 @@
-# Builds the Drawn Borders Windows installer.
-# Push a tag like "drawn-borders-v34.0.0" to publish it on the Releases page;
-# "Run workflow" on the Actions tab builds it without a release (download it from the run's artifacts).
+# Builds the Drawn Borders Windows installer and publishes it on the Releases page,
+# as release "drawn-borders-v<version from package.json>" (a new version makes a new release;
+# the same version is rebuilt in place). Runs when the game changes, or from "Run workflow" on the Actions tab.
 name: Drawn Borders for Windows
 
 on:
   push:
-    tags: ["drawn-borders-v*"]
+    branches: [main, "claude/**"]
+    paths: ["drawn-borders/**", ".github/workflows/drawn-borders-windows.yml"]
   workflow_dispatch:
 
 permissions:
@@ -35,11 +36,17 @@ jobs:
         with:
           name: Drawn-Borders-Setup
           path: drawn-borders/release/*.exe
+      - name: Read the version
+        id: version
+        shell: bash
+        run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Publish on the Releases page
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: Drawn Borders ${{ github.ref_name }}
+          tag_name: drawn-borders-v${{ steps.version.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Drawn Borders ${{ steps.version.outputs.v }}
+          make_latest: true
           files: drawn-borders/release/*.exe
           body: |
             **To install:** download `Drawn-Borders-Setup-….exe` below and run it.
