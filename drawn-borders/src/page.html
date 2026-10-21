@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Drawn Borders</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/*@@STYLE@@*/
+</style>
+
+<div class="app">
+  <header class="hud" id="hud"></header>
+  <nav class="dock" id="dock" aria-label="Panels" hidden></nav>
+  <main class="main">
+    <section class="mapwrap" id="mapwrap">
+      <canvas id="map" aria-label="World map"></canvas>
+      <div class="toolbar" id="toolbar" hidden></div>
+      <div class="mapnav" id="mapnav" hidden></div>
+      <div class="rightcol" id="rightcol" hidden></div>
+      <div class="pausebanner" id="pausebanner" hidden></div>
+      <div class="map-hint" id="map-hint" hidden></div>
+      <div class="comingup" id="comingup" hidden></div>
+      <div class="turnbox" id="turnbox" hidden></div>
+      <div class="tooltip" id="tooltip" hidden></div>
+      <div class="playbar" id="playbar" hidden></div>
+      <div class="zoombox" id="zoombox" role="group" aria-label="Zoom">
+        <button type="button" data-action="zoom-out" aria-label="Zoom out" title="Zoom out (−)">−</button>
+        <button type="button" data-action="zoom-fit" class="zoom-level" id="zoom-level" title="Show the whole map (0)">100%</button>
+        <button type="button" data-action="zoom-in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+        <button type="button" data-action="motion-toggle" id="motion-toggle" class="motion-btn" title="Turn map animation on or off">Motion</button>
+        <button type="button" data-action="credits-open" class="motion-btn" title="Who made the icons and the map's photographs">Credits</button>
+      </div>
+      <div class="dispatch-backdrop" id="dispatch" hidden></div>
+      <div class="dispatch-backdrop" id="waiting" hidden></div>
+      <div class="dispatch-backdrop" id="decision" hidden></div>
+      <div class="dispatch-backdrop" id="credits" hidden></div>
+      <div class="dispatch-backdrop" id="saves" hidden></div>
+      <div class="composer-wrap" id="composer" hidden></div>
+    </section>
+    <aside class="sidebar" id="sidebar"></aside>
+  </main>
+  <div class="stats-wrap" id="stats" hidden></div>
+  <div class="stats-wrap" id="assembly" hidden></div>
+</div>
+
+<script>
+"use strict";
+
+/*@@SCRIPT@@*/
+</script>
