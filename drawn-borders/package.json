@@ -1,0 +1,35 @@
+{
+  "name": "drawn-borders",
+  "productName": "Drawn Borders",
+  "version": "34.0.0",
+  "description": "Draw your own country on a new world, then lead it season by season.",
+  "author": "Maz",
+  "private": true,
+  "main": "desktop/main.js",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node build.js --check && node tests/engine.test.js",
+    "start": "node build.js && electron .",
+    "dist": "node build.js && electron-builder --win nsis --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "com.maz.drawnborders",
+    "productName": "Drawn Borders",
+    "files": ["drawn-borders.html", "desktop/**", "package.json"],
+    "directories": { "output": "release" },
+    "win": { "target": "nsis", "icon": "desktop/icon.png" },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Drawn Borders",
+      "runAfterFinish": true,
+      "artifactName": "Drawn-Borders-Setup-${version}.${ext}"
+    }
+  }
+}

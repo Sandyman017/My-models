@@ -1,0 +1,48 @@
+# Builds the Drawn Borders Windows installer.
+# Push a tag like "drawn-borders-v34.0.0" to publish it on the Releases page;
+# "Run workflow" on the Actions tab builds it without a release (download it from the run's artifacts).
+name: Drawn Borders for Windows
+
+on:
+  push:
+    tags: ["drawn-borders-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: drawn-borders
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: drawn-borders/package-lock.json
+      - run: npm ci
+      - name: The built game matches the source
+        run: node build.js --check
+      - name: Play two worlds with the game rules
+        run: node tests/engine.test.js 2 8
+      - name: Build the installer
+        run: npx electron-builder --win nsis --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Drawn-Borders-Setup
+          path: drawn-borders/release/*.exe
+      - name: Publish on the Releases page
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Drawn Borders ${{ github.ref_name }}
+          files: drawn-borders/release/*.exe
+          body: |
+            **To install:** download `Drawn-Borders-Setup-….exe` below and run it.
+            Windows may say "Windows protected your PC": click **More info**, then **Run anyway** (the game is not signed with a paid certificate).
+            The game installs for you only, adds a desktop icon and starts by itself. Press F11 for full screen.
+            Saved games stay on this computer; "Export to file" puts a copy in Documents\Drawn Borders\Saves.

@@ -3,7 +3,8 @@
 A grand strategy game that runs in the browser. You draw your own country's borders on a generated world, then run it season by season against rival nations: economy from geography (mines, farms, factories, trade), roads and cities, army and navy, diplomacy and letters, ministers, interest groups, and people and work (ages, skills, wages, labour laws).
 
 - **Play**: double-click `drawn-borders.html` (Chrome or Edge). It is built from `src/` and committed, so it is always ready to play.
-- **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v34) and what each added, and ideas for next steps. Read it before big changes.
+- **Windows program** (since v35): `desktop/` wraps the same built file in Electron. Maz installs it from the GitHub Releases page.
+- **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v35) and what each added, and ideas for next steps. Read it before big changes.
 
 ## About the player (Maz)
 - English is his second language: explain things in **simple English**.
@@ -24,6 +25,13 @@ Until v33 the game was one hand-edited 2.1 MB file. Now the source is split into
 1. `node build.js` — rebuilds `drawn-borders.html`. Always commit it together with the source; `node build.js --check` fails if it is out of date.
 2. `node tests/engine.test.js [worlds] [seasons]` — plays whole worlds with the engine in Node (default 2 × 12) and checks nothing breaks and the save round-trips.
 3. `node tests/browser.test.js` — opens the built game in Chrome (Playwright), founds a nation, plays 3 seasons, fails on any error or broken characters; screenshot in `tests/out/`.
+
+## The Windows program (`desktop/`, `package.json`)
+- `desktop/main.js` opens `drawn-borders.html` in its own window (maximized, F11 full screen, one copy at a time, links open in the normal browser). `desktop/preload.js` gives the page `window.desktop` = `{ savesFolder, saveFile(name, data) }`; "Export to file" uses it to write to `Documents\Drawn Borders\Saves`. Autosaves and named saves stay in localStorage, which Electron keeps in the user's AppData.
+- The game must still work without `window.desktop` (browser, claude.ai): check for it, never require it.
+- `npm install`, then `npm start` runs it; `npm run dist` builds the installer (on Windows).
+- **Releasing**: bump `version` in `package.json`, commit, then push a tag `drawn-borders-v<version>`. The workflow `.github/workflows/drawn-borders-windows.yml` checks the build, plays two worlds, builds `Drawn-Borders-Setup-<version>.exe` on Windows and publishes it on the Releases page. Not code-signed: Windows shows "Windows protected your PC" → More info → Run anyway.
+- Claude features (letters, ministers' answers, account saves) need claude.ai's `window.claude`; in the program they fall back to the built-in rules.
 
 New sections: add a new numbered file in the right folder (pick a number between its neighbors, e.g. `31b-...js`, since names sort as text). Anything before section 13 belongs in `engine/` and must not touch the browser.
 

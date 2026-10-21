@@ -311,3 +311,10 @@ Eleven small ideas were offered and Maz said "Go". Seven are in this version; th
 - **Checks that anyone can run**: `tests/engine.test.js` plays whole worlds in Node; `tests/browser.test.js` founds a nation and plays seasons in Chrome and fails on errors or broken characters.
 - The project lives in the GitHub repository `My-models`, folder `drawn-borders/`, so every version is kept and any change can be undone.
 - Next, as discussed: a Windows program around the same game (its own window, no 16 MB limit), then sound, music and art as separate files.
+
+### Version 35: the Windows program (Maz said "go ahead" from his phone, to find it on his PC later)
+- **Same game, its own window.** `desktop/` wraps the built `drawn-borders.html` in Electron (the same Chrome inside, so the map and the graphics card work as before). Opens maximized, F11 for full screen, its own icon (a drawn red-and-gold border on an island), one copy at a time, links open in the normal browser.
+- **Save files go to a real folder**: "Export to file" writes straight to `Documents\Drawn Borders\Saves` with no download dialog; the Saved games window says where. Autosaves stay in the program's own storage (not touched by clearing a browser). Old browser saves move over as files: export in the browser, "Load from file" in the program.
+- **Installer built by GitHub**: a tag `drawn-borders-v…` runs `.github/workflows/drawn-borders-windows.yml` on a Windows machine: checks the build, plays two worlds, builds `Drawn-Borders-Setup-<version>.exe`, and publishes it on the Releases page. Installs for the user only (no admin), desktop and Start menu icons. Not code-signed, so Windows warns the first time.
+- Claude features fall back to the built-in rules in the program (no API key); the browser and claude.ai versions are unchanged.
+- Checked: the program (Linux build of the same code) opens, founds a nation, plays, autosaves across restarts, and writes save files; engine and browser tests pass.
