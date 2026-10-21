@@ -834,7 +834,7 @@ function computeEconomyRaw(w, g, nid) {
   }
   const TRD = TB ? tradeLinksOf(w, g, nid, TB, networks, regions, bEdges, roadsTo, cities, anyPort, WB, tradeLaw) : null;
   // what the book's contracts and the merchants' search deliver: settled good by good below (10s)
-  const TC = TB ? { nid, TB, TRD, ix: tradeIndex(g), reroute: !!g.reroute, importCapShare, exportCapShare, harbor: {}, extraT: {},
+  const TC = TB ? { nid, TB, TRD, ix: tradeIndex(g), reroute: !g.noReroute, importCapShare, exportCapShare, harbor: {}, extraT: {},
     open: { inN: TRADE.importOpen[laws.trade || "balanced"] ?? 1, outN: TRADE.exportOpen[laws.trade || "balanced"] ?? 1 },
     trade: { ...emptyTradeEcon(), links: TRD.links, landView: TRD.landView, mainPort: TRD.mainPort, transit: TRD.transit, worldImportCapRaw: TRD.worldImportCapRaw, worldExportCapRaw: TRD.worldExportCapRaw },
     importBase: 0, transport: 0, premium: 0, tariffBase: 0, seaMt: 0, seaMtIn: 0, worldIn: {} } : null;

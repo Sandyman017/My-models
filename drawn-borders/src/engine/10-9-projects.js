@@ -19,9 +19,8 @@ function hypothetical(g, change) {
     if (change.embargo) E = E.concat([change.embargo]);
     h.trade = { ...g.trade, embargoes: E };
   }
-  // a world imagined to weigh a choice: merchants also look for new sellers and buyers (10s); "this season"
-  // previews leave that out (in the real game new contracts are signed only at the end of each season)
-  h.reroute = !change.noReroute;
+  // "this season": merchants have not yet looked for other sellers for what an embargo or war cut off (10s)
+  if (change.noReroute) h.noReroute = true;
   if (change.site) {
     const sp = change.site;
     if (sp.id !== undefined) h.sites = g.sites.map(x => (x.id === sp.id ? { ...x, level: sp.level } : x));

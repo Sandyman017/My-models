@@ -786,9 +786,10 @@ function emptyTradeEcon() {
 /* ---------- Inside a nation's economy: settling one good against the book ----------
    Contracts to other nations are delivered first (a contract is a promise), then the home market, then what is still
    short is bought: from contracted sellers (a contract is delivered in full), then the world market within its
-   limits. In a world imagined to weigh a choice (`hypothetical`), merchants also look for sellers with goods nobody
-   bought and buyers nobody served, within the route's capacity (`reroute`), so a new road, harbor, trade agreement
-   or embargo shows its full effect; in the real game new contracts wait for the end of the season. */
+   limits. When things have changed since the contracts were signed (a new road or harbor, an embargo, a war),
+   merchants also strike quick deals with sellers who have goods nobody bought and buyers nobody served, within the
+   route's capacity (`reroute`). The same rule holds in the real game and in every world imagined to weigh a choice,
+   so a choice is valued by what it changes and nothing else; a "this season" preview leaves the quick deals out. */
 function tradeShareOf(g, id) { return g.sea && g.sea.trade && g.sea.trade[id] ? g.sea.trade[id].share ?? 1 : 1; }
 function tradeFlowCheck(w, g, C, f, other) {
   let code = tradeBlocked(g, f.s, f.b, f.k);

@@ -2685,7 +2685,7 @@ function computeEconomyRaw(w, g, nid) {
   }
   const TRD = TB ? tradeLinksOf(w, g, nid, TB, networks, regions, bEdges, roadsTo, cities, anyPort, WB, tradeLaw) : null;
   // what the book's contracts and the merchants' search deliver: settled good by good below (10s)
-  const TC = TB ? { nid, TB, TRD, ix: tradeIndex(g), reroute: !!g.reroute, importCapShare, exportCapShare, harbor: {}, extraT: {},
+  const TC = TB ? { nid, TB, TRD, ix: tradeIndex(g), reroute: !g.noReroute, importCapShare, exportCapShare, harbor: {}, extraT: {},
     open: { inN: TRADE.importOpen[laws.trade || "balanced"] ?? 1, outN: TRADE.exportOpen[laws.trade || "balanced"] ?? 1 },
     trade: { ...emptyTradeEcon(), links: TRD.links, landView: TRD.landView, mainPort: TRD.mainPort, transit: TRD.transit, worldImportCapRaw: TRD.worldImportCapRaw, worldExportCapRaw: TRD.worldExportCapRaw },
     importBase: 0, transport: 0, premium: 0, tariffBase: 0, seaMt: 0, seaMtIn: 0, worldIn: {} } : null;
@@ -3139,9 +3139,8 @@ function hypothetical(g, change) {
     if (change.embargo) E = E.concat([change.embargo]);
     h.trade = { ...g.trade, embargoes: E };
   }
-  // a world imagined to weigh a choice: merchants also look for new sellers and buyers (10s); "this season"
-  // previews leave that out (in the real game new contracts are signed only at the end of each season)
-  h.reroute = !change.noReroute;
+  // "this season": merchants have not yet looked for other sellers for what an embargo or war cut off (10s)
+  if (change.noReroute) h.noReroute = true;
   if (change.site) {
     const sp = change.site;
     if (sp.id !== undefined) h.sites = g.sites.map(x => (x.id === sp.id ? { ...x, level: sp.level } : x));
@@ -11192,9 +11191,10 @@ function emptyTradeEcon() {
 /* ---------- Inside a nation's economy: settling one good against the book ----------
    Contracts to other nations are delivered first (a contract is a promise), then the home market, then what is still
    short is bought: from contracted sellers (a contract is delivered in full), then the world market within its
-   limits. In a world imagined to weigh a choice (`hypothetical`), merchants also look for sellers with goods nobody
-   bought and buyers nobody served, within the route's capacity (`reroute`), so a new road, harbor, trade agreement
-   or embargo shows its full effect; in the real game new contracts wait for the end of the season. */
+   limits. When things have changed since the contracts were signed (a new road or harbor, an embargo, a war),
+   merchants also strike quick deals with sellers who have goods nobody bought and buyers nobody served, within the
+   route's capacity (`reroute`). The same rule holds in the real game and in every world imagined to weigh a choice,
+   so a choice is valued by what it changes and nothing else; a "this season" preview leaves the quick deals out. */
 function tradeShareOf(g, id) { return g.sea && g.sea.trade && g.sea.trade[id] ? g.sea.trade[id].share ?? 1 : 1; }
 function tradeFlowCheck(w, g, C, f, other) {
   let code = tradeBlocked(g, f.s, f.b, f.k);
