@@ -249,7 +249,7 @@ function foundNation() {
     const rc = game.cities.find(c => c.owner === n.id && c.capital);
     return `the ${n.name} to the ${directionWord(cap, rc.cell)}`;
   });
-  addChronicle(game, `${name} is founded. Its neighbors: ${rivals.join(" and ")}.`, "neutral", PLAYER);
+  addChronicle(game, `${name} is founded. Its neighbors: ${bJoin(rivals)}.`, "neutral", PLAYER);
   bumpMap();
   startDeliberation();
 }

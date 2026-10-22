@@ -30,6 +30,8 @@ jobs:
         run: node build.js --check
       - name: Play two worlds with the game rules
         run: node tests/engine.test.js 2 8
+      - name: Check trade between nations
+        run: node tests/trade.test.js 2 8
       - name: Build the installer
         run: npx electron-builder --win nsis --publish never
       - uses: actions/upload-artifact@v4

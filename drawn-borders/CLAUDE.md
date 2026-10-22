@@ -1,10 +1,10 @@
 # Drawn Borders — Maz's strategy game
 
-A grand strategy game that runs in the browser. You draw your own country's borders on a generated world, then run it season by season against rival nations: economy from geography (mines, farms, factories, trade), roads and cities, army and navy, diplomacy and letters, ministers, interest groups, and people and work (ages, skills, wages, labour laws).
+A grand strategy game that runs in the browser. You draw your own country's borders on a generated world, then run it season by season against rival nations: economy from geography (mines, farms, factories), trade between nations (contracts, embargoes, grain and aid), roads and cities, army and navy, diplomacy and letters, ministers, interest groups, and people and work (ages, skills, wages, labour laws).
 
 - **Play**: double-click `drawn-borders.html` (Chrome or Edge). It is built from `src/` and committed, so it is always ready to play.
 - **Windows program** (since v35): `desktop/` wraps the same built file in Electron. Maz installs it from the GitHub Releases page.
-- **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v35) and what each added, and ideas for next steps. Read it before big changes.
+- **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v37) and what each added, and ideas for next steps. Read it before big changes.
 
 ## About the player (Maz)
 - English is his second language: explain things in **simple English**.
@@ -24,7 +24,14 @@ Until v33 the game was one hand-edited 2.1 MB file. Now the source is split into
 **After every change:**
 1. `node build.js` — rebuilds `drawn-borders.html`. Always commit it together with the source; `node build.js --check` fails if it is out of date.
 2. `node tests/engine.test.js [worlds] [seasons]` — plays whole worlds with the engine in Node (default 2 × 12) and checks nothing breaks and the save round-trips.
-3. `node tests/browser.test.js` — opens the built game in Chrome (Playwright), founds a nation, plays 3 seasons, fails on any error or broken characters; screenshot in `tests/out/`.
+3. `node tests/trade.test.js [worlds] [seasons]` — checks trade between nations (default 2 × 10): contracts are sane, the same game signs the same contracts, an embargo cuts supply and its preview says so, grain reaches a hungry nation, the book survives a save and old saves get one.
+4. `node tests/browser.test.js` — opens the built game in Chrome (Playwright), founds a nation, plays 3 seasons, opens the Trade panel and the trade statistics, fails on any error or broken characters; screenshots in `tests/out/`.
+
+## Trade between nations (since v37)
+- **The merchants' book** `game.trade` (saved): once a season, at the end of `runSeason` after the harvest, `clearWorldTrade` signs the next season's contracts — who sells what to whom — by the price at the buyer's border (world price, transport by road, caravan or sea, import tax unless there is a trade agreement, the middlemen's cut from beyond the map). What no nation can sell or buy goes to the world market through harbors and trade partners. No randomness: ties go by nation id.
+- `computeEconomy` only **reads** the book (it never writes it). A war, an embargo or a lost harbor cuts a contract at once; merchants make quick deals with spare goods between seasons. Worlds imagined to weigh a choice (`hypothetical`) share the book; `{embargo}`, `{lift}` and `{noReroute}` change it there.
+- Files: `engine/25b-…` (book, prices, links, embargoes, food aid, read helpers such as `tradeOf`, `tradeWith`, `tradeOffers`, `tradeRisks`, `embargoPreview`), `engine/25c-…` (rivals' trade decisions: embargoes, lifting, food aid, early warnings), `ui/54b-…` (Trade panel), `ui/51b-…` (Nations, letters, season report), `ui/42b-…` (trade on the map), Statistics "Trade" view in `ui/45-17c-…`.
+- Old saves get a book when they load (`tradeMigrate`); a fault in the clearing never stops a season (the old contracts stand).
 
 ## The Windows program (`desktop/`, `package.json`)
 - `desktop/main.js` opens `drawn-borders.html` in its own window (maximized, F11 full screen, one copy at a time, links open in the normal browser). `desktop/preload.js` gives the page `window.desktop` = `{ savesFolder, saveFile(name, data) }`; "Export to file" uses it to write to `Documents\Drawn Borders\Saves`. Autosaves and named saves stay in localStorage, which Electron keeps in the user's AppData.

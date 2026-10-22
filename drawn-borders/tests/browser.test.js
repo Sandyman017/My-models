@@ -1,4 +1,5 @@
-/* Opens the built game in Chrome, founds a nation, plays a few seasons, and checks for errors and broken characters.
+/* Opens the built game in Chrome, founds a nation, plays a few seasons, opens the Trade panel and the trade statistics,
+   and checks for errors and broken characters.
    Needs Playwright (npm i -D playwright). Screenshots go to tests/out/.
    node tests/browser.test.js */
 "use strict";
@@ -22,10 +23,27 @@ const { chromium } = require("playwright");
   await page.waitForTimeout(5000);
   for (let i = 0; i < 3; i++) { await page.click('button:has-text("Next")'); await page.waitForTimeout(4000); }
   await page.screenshot({ path: path.join(out, "after-seasons.png") });
+  // the Trade panel (key X), a good's sellers, the embargo card, and the Statistics trade view
+  await page.evaluate(() => { ui.dispatch = null; renderAll(); });
+  await page.keyboard.press("x");
+  await page.waitForTimeout(800);
+  if (!(await page.$(".trade-goods"))) errors.push("the Trade panel did not open");
+  await page.evaluate(() => { const k = document.querySelector("tr.trade-good"); if (k) k.click(); });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { const b = document.querySelector('[data-action="trade-embargo-open"]'); if (b) b.click(); });
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(out, "trade-panel.png") });
+  for (let k = 0; k < 30 && (await page.evaluate(() => !!ui.play)); k++) await page.waitForTimeout(1000);   // the season still playing out on the map
+  await page.keyboard.press("i");
+  await page.waitForTimeout(800);
+  await page.evaluate(() => { const b = document.querySelector('[data-action="st-view"][data-view="trade"]'); if (b) b.click(); });
+  await page.waitForTimeout(800);
+  if (!(await page.$(".st-matrix.trade"))) errors.push("the Statistics trade view did not open");
+  await page.screenshot({ path: path.join(out, "statistics-trade.png") });
   const text = await page.evaluate(() => document.body.innerText);
   const broken = text.match(/â[\u0080-⃿]|Â·/g) || [];
   await browser.close();
   if (broken.length) errors.push(`broken characters on screen: ${broken.slice(0, 5).join(" ")}`);
   if (errors.length) { console.error("FAILED\n" + errors.join("\n")); process.exit(1); }
-  console.log("browser test ok: founded a nation and played 3 seasons, no errors, characters fine");
+  console.log("browser test ok: founded a nation, played 3 seasons, opened the Trade panel and the trade statistics; no errors, characters fine");
 })();
