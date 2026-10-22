@@ -36,6 +36,21 @@ const EMBARGO_AIMS = {   // the main reason a government gives for an embargo (s
   war_goods: "because they sell war goods to its enemy",
 };
 
+/* Why `e.by` cut off `e.on`'s trade, as the nation it hurts hears it: a clause to follow a comma ("to press its claim
+   to Ostard"). `you`: spoken to the player ("your army") rather than by its ministers ("our army"). */
+function embargoWhyHeard(g, e, you) {
+  const O = g.opening, our = you ? "your" : "our", we = you ? "you" : "we";
+  switch (e.why) {
+    case "retaliation": return `in answer to ${our} own embargo`;
+    case "pressure": return O && O.by === e.by && e.on === PLAYER && O.stage !== "over" ? `to press its claim to ${O.town}` : `because ${we} refused its demands`;
+    case "threat": return `because it fears ${our} army and will not help it grow`;
+    case "hostility": return "out of old grudges";
+    case "ally_war": { const a = alliesOf(g, e.by).find(z => atWar(g, z, e.on)); return a !== undefined ? `because ${we} are at war with its ally, the ${nameOf(g, a)}` : `because ${we} made war on its ally`; }
+    case "war_goods": { const z = enemiesOf(g, e.by).find(id => id !== e.on); return `because ${we} sell war goods to its enemy${z !== undefined ? `, the ${nameOf(g, z)}` : ""}`; }
+    default: return "";
+  }
+}
+
 /* ---------- Reading the book (no economy worked out) ---------- */
 /* The last output on record (a year): the scale for points without working out an economy. */
 function lastRecordedGdp(g, nid, w) {
@@ -249,7 +264,7 @@ function rivalEmbargoOptions(w, g, n) {
         out.push({ kind: "embargo", target: c.y, good: c.k, dir: "sell", food: c.k === "food", why, answers: c.orig ? c.orig.id : null, terms: [], threat: false,
           self: Math.round(self), other: 0, likely: "it takes effect at once",
           label: `Stop selling ${tradeGoodWord(c.k)} to the ${nameOf(g, c.y)} (${EMBARGO_AIMS[why] || "an embargo"})`,
-          lines: [...reasons, ...costs, ...pv.lines.filter(l => /^Their|^Fuel|^Metal/.test(l.label)).slice(0, 3).map(l => ({ code: "info", label: `${l.label}: ${l.value}`, pts: 0 }))],
+          lines: [...reasons, ...costs, ...pv.lines.filter(l => /^Their|^Fuel|^Metal/.test(l.label)).slice(0, 5).map(l => ({ code: "info", label: `${l.label}: ${l.value}`, pts: 0 }))],
           est: { q: est.q, hurt: sr(est.hurt, 2), keyDrop: sr(est.keyDrop, 3), armyDrop: sr(est.armyDrop, 3), lossThem: sr(est.lossThem, 3), lossUs: sr(est.lossUs, 3) } });
       }
     }
@@ -337,10 +352,11 @@ function executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say) {
   if (orig) orig.answered = r.e.id;
   const top = reasons.slice().sort((a, b) => b.pts - a.pts)[0];
   if (y === PLAYER) {
+    const heard = embargoWhyHeard(g, r.e);
     const it = g.inbox[g.inbox.length - 1];
-    if (it && it.kind === "embargo" && it.from === x) { it.why = code; it.reason = top ? top.label : EMBARGO_AIMS[code] || ""; }
+    if (it && it.kind === "embargo" && it.from === x) { it.why = code; it.reason = heard; }
     const key = o.good === "all" || TRADE.key.includes(o.good);
-    dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${top ? ` (${lcFirst(top.label)})` : ""}. Our merchants are looking for other sellers.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
+    dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${heard ? `, ${heard}` : ""}. Our merchants are looking for other sellers.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
   }
   say(`${embargoVerb(r.e).replace(/^./, ch => ch.toUpperCase())} the ${nameOf(g, y)}.`, why || (top ? top.label : ""));
   return true;
@@ -486,9 +502,9 @@ function tradeEarlyWarning(w, g, n, menu, orders, dispatch) {
   const warned = T.warned || (T.warned = {});
   if (warned[n.id] !== undefined && g.turn - warned[n.id] < EMBARGO_AI.warnEvery) return;
   warned[n.id] = g.turn;
-  const top = o.lines.filter(l => l.pts > 0).sort((a, b) => b.pts - a.pts)[0];
+  const heard = embargoWhyHeard(g, { why: o.why, by: n.id, on: PLAYER }, true);
   const d = dependence(g, PLAYER, o.good).find(x => x.from === n.id);
-  dispatch.warnings.push(`The ${n.name}'s merchants talk of cutting off your ${tradeGoodWord(o.good)}.${d ? ` ${pct(d.share)} of your ${tradeGoodWord(o.good)} comes from them.` : ""}${top ? ` Their government's reason: ${lcFirst(top.label)}.` : ""} Other sellers, a trade road or a harbor would make you less dependent.`);
+  dispatch.warnings.push(`The ${n.name}'s merchants talk of cutting off your ${tradeGoodWord(o.good)}${heard ? `, ${heard}` : ""}.${d ? ` ${pct(d.share)} of your ${tradeGoodWord(o.good)} comes from them.` : ""} Other sellers, a trade road or a harbor would make you less dependent.`);
 }
 
 /* ---------- Food aid from rival governments, after the contracts are signed ----------
