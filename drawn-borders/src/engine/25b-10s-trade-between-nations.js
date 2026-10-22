@@ -486,7 +486,7 @@ function tradeRisks(w, g, nid, econ, opts = {}) {
       if (lossPct < 0.005 && keyDrop < 0.2) continue;
       const code = tradeBlocked(g, d.from, nid, k);
       const op = opinionDetail(g, d.from, nid).value;
-      const intel = nid === PLAYER && g.intel ? (g.intel[d.from] || {}).level || 0 : 0;
+      const intel = nid === PLAYER && g.intel ? (typeof g.intel[d.from] === "number" ? g.intel[d.from] : (g.intel[d.from] || {}).level || 0) : 0;   // g.intel keeps the war-risk level as a number (checkIntel)
       let level = d.share >= 0.6 || keyDrop >= 0.5 ? 1 : 0;
       if (code || op <= -40 || intel >= 2) level = 2;
       const why = [];

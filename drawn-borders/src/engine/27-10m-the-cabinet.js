@@ -244,12 +244,24 @@ function specialOrders(w, g, n, econ, key) {
   if (key === "economy") {
     if (!cooling(n, key, "fx:wealthtax", 8, g)) out.push(fxOrder("fx:wealthtax", "A one-off tax on the rich", [{ t: "money", v: Math.max(0.2, round1(Y * 0.006)) }, { t: "stab", v: -2 }, { t: "capital", v: -round1(Y * 0.01) }], g, nid, { score: n.treasury < -0.2 * Y ? 1 : -1 }));
     if (!(n.mods || []).some(m => m.key === "stimulus") && !cooling(n, key, "fx:stimulus", 6, g)) out.push(fxOrder("fx:stimulus", "Stimulus spending", [{ t: "money", v: money(0.012) }, { t: "mod", key: "stimulus", label: "Stimulus spending", output: 0.02, seasons: 4 }], g, nid, { score: (econ.unemployment || 0) > 0.04 && n.treasury > 0 ? 1 : -1 }));
-    if ((n.laws.trade || "balanced") !== "protect" && econ.access > 0 && !cooling(n, key, "fx:investors", 12, g)) out.push(fxOrder("fx:investors", "Invite foreign investors", [{ t: "money", v: money(0.002) }, { t: "capital", v: round1(Y * 0.008) }], g, nid, { score: 0.5 }));
+    if ((n.laws.trade || "balanced") !== "protect" && tradeOpen(econ) && !cooling(n, key, "fx:investors", 12, g)) out.push(fxOrder("fx:investors", "Invite foreign investors", [{ t: "money", v: money(0.002) }, { t: "capital", v: round1(Y * 0.008) }], g, nid, { score: 0.5 }));
+    out.push(...economyTradeOrders(w, g, n, econ));
   }
   if (key === "agriculture") {
     if (!(n.mods || []).some(m => m.key === "farm_subsidy") && !cooling(n, key, "fx:farmsub", 8, g)) out.push(fxOrder("fx:farmsub", "Farm subsidies", [{ t: "money", v: money(0.008) }, { t: "mod", key: "farm_subsidy", label: "Farm subsidies", food: 0.05, seasons: 8 }], g, nid, { score: (econ.famineShare || 0) > 0.01 ? 3 : econ.food / Math.max(0.1, econ.pop) < 1.1 ? 1 : -1 }));
     const months = monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop);
-    if (econ.access > 0 && months < 8 && !cooling(n, key, "fx:buygrain", 2, g)) out.push(fxOrder("fx:buygrain", "Buy grain abroad for the reserve", [{ t: "money", v: -Math.max(0.1, round1(econ.pop / 12 * GRAN.priceB * 1.6)) }, { t: "granary", months: 1 }], g, nid, { score: months < 1 && harvestFactor(n) < 0.95 ? 2 : -1 }));
+    if (months < 8 && !cooling(n, key, "fx:buygrain", 2, g)) {
+      // the grain comes from the cheapest seller we can reach, at its price at our border (10s); without a book, the old world-market price
+      const offer = g.trade && g.trade.v ? grainOffers(w, g, nid)[0] || null : econ.access > 0 ? { nid: -1, p: GRAN.priceB * 1.6 } : null;
+      const score = months < 1 && harvestFactor(n) < 0.95 ? 2 : -1;
+      if (offer) {
+        const o = fxOrder("fx:buygrain", offer.nid < 0 ? "Buy grain on the world market for the reserve" : `Buy grain from the ${nameOf(g, offer.nid)} for the reserve`, [{ t: "money", v: -Math.max(0.1, round1(econ.pop / 12 * offer.p)) }, { t: "granary", months: 1 }], g, nid, { score, good: "food", target: offer.nid >= 0 ? offer.nid : undefined });
+        if (offer.price) o.lines.push(`Price at our border: ${bMoney(offer.p)} for a year's food for a million people (the cheapest seller we can reach)`);
+        out.push(o);
+      } else if (g.trade && g.trade.v) out.push({ id: "fx:buygrain", kind: "fx", group: "Measures", label: "Buy grain abroad for the reserve", effects: [], lines: [], cost: 0, score: -9, good: "food",
+        blocked: tradeOpen(econ) ? "No nation we can reach has grain to spare, and the world market is closed to us." : "We cannot buy grain abroad: no nation can reach us, and the world market is closed to us (we need a harbor on the ocean, or a trade partner who has one)." });
+    }
+    out.push(...grainTradeOrders(w, g, n, econ, key, months));
   }
   if (key === "energy") {
     for (const x of (econ.sites || []).filter(x => (x.kind === "coalmine" || x.kind === "oilfield") && x.status === "working")) {
@@ -280,22 +292,154 @@ function specialOrders(w, g, n, econ, key) {
     const threat = atWarAny(g, nid) ? 3 : liveNations(g).some(z => z.id !== nid && (warRisk(w, g, z.id, nid) || { level: 0 }).level >= 2) ? 2 : 0;
     if (!cooling(n, key, "fx:exercises", 4, g) && drillable.some(d => (d.exp || 0) < 0.4)) out.push(fxOrder("fx:exercises", "Army exercises", [{ t: "money", v: money(0.003) }, { t: "drill", v: 0.05, cap: 0.4 }], g, nid,
       { score: threat && drillable.reduce((s, d) => s + (d.exp || 0), 0) / drillable.length < 0.35 ? 1 : -0.5 }));
+    out.push(...warGoodsOrders(w, g, n, econ));
   }
   if (key === "foreign") {
-    const others = liveNations(g).filter(z => z.id !== nid).sort((a, b) => (sharesBorder(g, nid, b.id) ? 1 : 0) - (sharesBorder(g, nid, a.id) ? 1 : 0) || (a.minor ? 1 : 0) - (b.minor ? 1 : 0)).slice(0, 5);
+    // nations near us first; then up to two more that could sell us what we lack (offered only a trade agreement)
+    const all = liveNations(g).filter(z => z.id !== nid);
+    const lack = new Map(all.map(z => [z.id, sellsWhatWeLack(g, nid, z.id)]));
+    const near = all.slice().sort((a, b) => (sharesBorder(g, nid, b.id) ? 1 : 0) - (sharesBorder(g, nid, a.id) ? 1 : 0) || (a.minor ? 1 : 0) - (b.minor ? 1 : 0)).slice(0, 5);
+    const traders = all.filter(z => !near.includes(z) && lack.get(z.id).v >= 0.002 * Y && !hasTreaty(g, nid, z.id, "trade") && !atWar(g, nid, z.id)).sort((a, b) => lack.get(b.id).v - lack.get(a.id).v || a.id - b.id).slice(0, 2);
+    const others = near.concat(traders).sort((a, b) => lack.get(b.id).v - lack.get(a.id).v || near.indexOf(a) - near.indexOf(b));
     for (const z of others) {
       const op = opinionDetail(g, z.id, nid).value;
       const war = atWar(g, nid, z.id);
-      if (!war && !cooling(n, key, `goodwill:${z.id}`, 4, g)) out.push(fxOrder(`goodwill:${z.id}`, `Goodwill visit to the ${z.name}`, [{ t: "money", v: money(0.0015) }, { t: "opinion", from: z.id, key: "goodwill", label: "Visits from their foreign minister", v: 6, cap: 12 }], g, nid,
+      const onlyTrade = traders.includes(z);
+      if (!war && !onlyTrade && !cooling(n, key, `goodwill:${z.id}`, 4, g)) out.push(fxOrder(`goodwill:${z.id}`, `Goodwill visit to the ${z.name}`, [{ t: "money", v: money(0.0015) }, { t: "opinion", from: z.id, key: "goodwill", label: "Visits from their foreign minister", v: 6, cap: 12 }], g, nid,
         { group: "Relations", score: !z.minor && (warRisk(w, g, z.id, nid) || { level: 0 }).level >= 2 ? 2 : op < -10 ? 0.5 : -1, target: z.id }));
       if ((g.lastLetter || {})[z.id] === g.turn) continue;
-      const types = war ? ["peace"] : ["trade", "nap", "alliance", ...(sharesBorder(g, nid, z.id) ? ["border"] : [])];
+      const types = war ? ["peace"] : onlyTrade ? ["trade"] : ["trade", "nap", "alliance", ...(sharesBorder(g, nid, z.id) ? ["border"] : [])];
       for (const type of types) {
         if (validateDeal(g, w, nid, z.id, [{ type }])) continue;
+        const L = lack.get(z.id);
+        const sells = type === "trade" && L.v >= 0.002 * Y;
         out.push({ id: `envoy:${type}:${z.id}`, kind: "envoy", group: "Relations", type, target: z.id, cost: 0,
           label: type === "peace" ? `Propose peace to the ${z.name}` : `Propose a ${TREATY_INFO[type].label.toLowerCase()} to the ${z.name}`,
-          lines: [`They answer at once. Their opinion of you now: ${op > 0 ? "+" : ""}${op} (${opinionLabel(op).toLowerCase()})`], score: type === "trade" && op > 0 ? 1 : type === "peace" ? 0.5 : -1, op });
+          lines: [`They answer at once. Their opinion of you now: ${op > 0 ? "+" : ""}${op} (${opinionLabel(op).toLowerCase()})`].concat(sells ? [lackText(g, L)] : []),
+          score: type === "trade" && op > 0 ? 1 + (sells ? 1 : 0) : type === "trade" && sells && op > -10 ? 0.5 : type === "peace" ? 0.5 : -1, op });
       }
+    }
+  }
+  return out;
+}
+
+/* ---------- Trade orders (10s): embargoes, lifting them, preferred sellers, grain and food aid ----------
+   Every one is an engine action the Trade panel and rival governments use too; the numbers come from the same
+   embargo preview. Ids use only [a-z0-9:_-] so the minister's answer can name them. None is in AUTO_FX: a
+   minister never starts or ends an embargo on his own. */
+const EMB_PV_CACHE = { g: null, stamp: "", m: new Map() };
+/* An embargo preview costs a few what-if economies: keep it while nothing in the world changes. */
+function embargoPreviewCached(w, g, by, on, k, dir, food) {
+  const stamp = `${g.turn}|${g.ver || 0}|${g.trade ? `${g.trade.turn}:${(g.trade.embargoes || []).length}:${g.trade.nextId}` : ""}`;
+  if (EMB_PV_CACHE.g !== g || EMB_PV_CACHE.stamp !== stamp) { EMB_PV_CACHE.g = g; EMB_PV_CACHE.stamp = stamp; EMB_PV_CACHE.m = new Map(); }
+  const key = `${by}|${on}|${k}|${dir}|${food ? 1 : 0}|${JSON.stringify(g.nations[by].laws)}`;
+  if (!EMB_PV_CACHE.m.has(key)) EMB_PV_CACHE.m.set(key, embargoPreview(w, g, by, on, k, dir, food));
+  return EMB_PV_CACHE.m.get(key);
+}
+/* "Their output −$0.4B a year, ours −$0.2B; their opinion of you −1 → −16 (wary)". */
+function embargoConsequenceText(pv) {
+  return `Their output ${bSigned(pv.them)} a year, ours ${bSigned(pv.self)}; their opinion of you ${signed(pv.op0)} → ${signed(pv.op1)} (${pv.word.toLowerCase()})`;
+}
+/* One embargo order, with its preview; null when that embargo is already in force. */
+function embargoOrder(w, g, n, econ, on, k, dir, extra = {}) {
+  const nid = n.id, id = `embargo:${dir}:${k}:${on}`, good = k === "all" ? null : k;
+  const label = extra.label || embargoEffectText(g, { on, k, dir });
+  const block = embargoBlock(g, nid, on, k, dir);
+  if (block && /already in force/.test(block)) return null;
+  if (block) return { id, kind: "fx", group: "Trade", label, effects: [], lines: [], cost: 0, blocked: block, score: -9, good, target: on, allGoods: k === "all" };
+  const pv = embargoPv(embargoPreviewCached(w, g, nid, on, k, dir, false));
+  const o = fxOrder(id, label, [{ t: "embargo", on, k, dir, why: "choice", pv }], g, nid, { group: "Trade", good, target: on, allGoods: k === "all", score: extra.score ?? -1 });
+  const hungry = k === "food" && computeEconomy(w, g, on).famineShare > 0.02;
+  o.emb = { pv, k, dir, on, hungry };
+  o.lines = [embargoConsequenceText(pv)].concat(pv.lost > 0.005 ? [`Our exporters lose ${bMoney(pv.lost)} of sales a year until they find other buyers`] : [], embargoPvLines(pv),
+    pv.ends ? ["It ends our treaty with them"] : [], pv.broken ? ["It BREAKS our promise to them: every nation will see it"] : [], hungry ? ["They are hungry: every nation would see us let them go hungry"] : []);
+  return o;
+}
+function economyTradeOrders(w, g, n, econ) {
+  if (!g.trade || !g.trade.v) return [];
+  const nid = n.id, out = [], Y = Math.max(1, econ.gdp);
+  // embargoes on our main partners: the good we sell them most, the good we buy from them most, and all trade
+  const TO = tradeOf(g, nid);
+  const top = o => Object.entries(o).filter(([k]) => k !== "food").map(([k, q]) => ({ k, v: goodWorth(g, k, q) })).sort((a, b) => b.v - a.v)[0];
+  const embs = [];
+  for (const p of TO.partners.slice(0, 4)) {
+    if (atWar(g, nid, p.nid) || !g.nations[p.nid] || !g.nations[p.nid].alive) continue;
+    const s = top(p.sell), b = top(p.buy);
+    if (s && s.v >= 0.01) embs.push([p.nid, s.k, "sell"]);
+    if (b && b.v >= 0.01) embs.push([p.nid, b.k, "buy"]);
+    if (p.sellV + p.buyV >= 0.02) embs.push([p.nid, "all", "both"]);
+  }
+  for (const [on, k, dir] of embs.slice(0, 6)) { const o = embargoOrder(w, g, n, econ, on, k, dir, k === "all" ? { label: `Stop all trade with the ${nameOf(g, on)} (a full embargo; food still allowed)` } : {}); if (o) out.push(o); }
+  // lifting our own embargoes
+  for (const e of embargoesBy(g, nid)) {
+    const young = g.turn - e.since < TRADE.minEmbargo;
+    const o = fxOrder(`lift:${e.id}`, `Lift our embargo on the ${nameOf(g, e.on)} (${e.k === "all" ? "all trade" : goodWord(e.k)})`, [{ t: "lift", id: e.id, on: e.on }], g, nid, { group: "Trade", target: e.on, good: e.k === "all" ? null : e.k, score: -0.5 });
+    o.lift = { young, since: e.since };
+    o.lines = [young ? `No goodwill: it began less than a year ago (${seasonLabel(e.since)})` : "Their opinion of us rises a little, and their grudge halves", "Our merchants trade with them again from next season's contracts"];
+    out.push(o);
+  }
+  // a second seller for the key goods we buy most
+  const imp = TRADE_GOODS.filter(k => k !== "food" && (econ.goods.imports[k] || 0) > 1e-3).map(k => ({ k, v: goodWorth(g, k, econ.goods.imports[k]) })).filter(x => x.v >= 0.005 * Y || TRADE.key.includes(x.k)).sort((a, b) => b.v - a.v).slice(0, 3);
+  for (const { k } of imp) {
+    const cur = (g.trade.prefer || []).find(p => p.by === nid && p.k === k);
+    if (cur) {
+      const o = fxOrder(`prefer:${k}:none`, `Stop preferring the ${nameOf(g, cur.from)} for ${goodWord(k)}`, [{ t: "prefer", k, from: null }], g, nid, { group: "Trade", good: k, target: cur.from, score: -1 });
+      out.push(o);
+      continue;
+    }
+    const offers = tradeOffers(w, g, nid, k).sellers.filter(s => !s.whyNot && s.price);
+    const cheapest = offers.slice().sort((a, b) => a.price.p - b.price.p)[0];
+    const dep = dependence(g, nid, k)[0];
+    const alt = offers.filter(s => s.nid >= 0 && s.offered > 1e-3 && (!dep || s.nid !== dep.from)).sort((a, b) => a.price.p - b.price.p || a.nid - b.nid)[0];
+    const risky = dep && dep.share >= 0.6 && TRADE.key.includes(k);
+    if (alt) {
+      const o = fxOrder(`prefer:${k}:${alt.nid}`, `Buy ${goodWord(k)} from the ${nameOf(g, alt.nid)} first (a second seller)`, [{ t: "prefer", k, from: alt.nid }], g, nid, { group: "Trade", good: k, target: alt.nid, score: risky ? 0.5 : -1 });
+      const dearer = cheapest ? alt.price.p / cheapest.price.p - 1 : 0;
+      o.pref = { dearer };
+      o.lines.push(`Their price at our border: ${pct(alt.price.p / Math.max(1e-6, alt.price.base))} of the world price${dearer > 0.005 ? ` (${pct(dearer)} more than the cheapest seller)` : " (the cheapest seller)"}`);
+      if (risky) o.lines.push(`Today ${pct(dep.share)} of our ${goodWord(k)} comes from the ${nameOf(g, dep.from)}`);
+      out.push(o);
+    } else if (risky) out.push({ id: `prefer:${k}:find`, kind: "fx", group: "Trade", label: `Find a second seller of ${goodWord(k)}`, effects: [], lines: [], cost: 0, good: k, score: -9,
+      blocked: `No other nation we can reach has ${goodWord(k)} to sell${econ.trade && econ.trade.worldImportCapRaw > 0 ? "; the world market sells some, at the middlemen's price" : ", and the world market is closed to us"}. A trade road, a harbor on the ocean or a trade agreement would open new sellers` });
+  }
+  return out;
+}
+/* Agriculture: food aid to hungry nations we can reach, and a ban on selling grain to a buyer. */
+function grainTradeOrders(w, g, n, econ, key, months) {
+  if (!g.trade || !g.trade.v) return [];
+  const nid = n.id, out = [];
+  const hungry = liveNations(g).filter(z => z.id !== nid).map(z => ({ z, e: computeEconomy(w, g, z.id) })).filter(x => x.e.famineShare > 0.02).sort((a, b) => b.e.famineShare - a.e.famineShare || a.z.id - b.z.id).slice(0, 3);
+  for (const { z, e } of hungry) {
+    const id = `aid:${z.id}`, label = `Send grain to the ${z.name} (food aid)`;
+    const qt = foodAidQuote(w, g, nid, z.id, 1);
+    if (!qt.ok) { out.push({ id, kind: "fx", group: "Trade", label, effects: [], lines: [], cost: 0, score: -9, target: z.id, good: "food", blocked: qt.reason }); continue; }
+    if (cooling(n, key, id, 4, g)) continue;
+    const ours = monthsOfFood(qt.q, econ.pop);
+    const o = fxOrder(id, label, [{ t: "foodAid", to: z.id, months: 1, got: sr(qt.months, 2), q: sr(qt.q, 4), opinion: Math.round(qt.opinion), ours: sr(ours, 2) }], g, nid,
+      { group: "Trade", target: z.id, good: "food", score: months - ours >= 3 && qt.opinion > 0 && !atWar(g, nid, z.id) ? 0.5 : -1 });
+    o.aid = { after: months - ours, recent: qt.recent };
+    o.lines.push(`${pct(e.famineShare)} of their people go hungry`);
+    if (qt.recent) o.lines.push("No new goodwill: we sent them grain less than a year ago");
+    out.push(o);
+  }
+  for (const p of tradeOf(g, nid).partners.filter(p => (p.sell.food || 0) > 1e-3 && !atWar(g, nid, p.nid)).slice(0, 2)) {
+    const o = embargoOrder(w, g, n, econ, p.nid, "food", "sell", { label: `Stop selling grain to the ${nameOf(g, p.nid)}` });
+    if (o) out.push(o);
+  }
+  return out;
+}
+/* Defence: the war goods we sell to a nation that claims our land or whose generals plan a war on us. */
+function warGoodsOrders(w, g, n, econ) {
+  if (!g.trade || !g.trade.v) return [];
+  const nid = n.id, out = [];
+  const intel = g.intel || {};
+  const hot = liveNations(g).filter(z => z.id !== nid && !atWar(g, nid, z.id) && ((claimActive(g) && g.opening.by === z.id) || (nid === PLAYER && (typeof intel[z.id] === "number" ? intel[z.id] : 0) >= 2)));
+  for (const z of hot) {
+    const tw = tradeWith(g, nid, z.id);
+    const ks = Object.keys(tw.aSells).filter(k => STRATEGIC_USE[k] && !tw.aSells[k].blocked && tw.aSells[k].shareOfNeed >= 0.3).sort((a, b) => tw.aSells[b].shareOfNeed - tw.aSells[a].shareOfNeed).slice(0, 2);
+    for (const k of ks) {
+      const o = embargoOrder(w, g, n, econ, z.id, k, "sell", { label: `Stop selling ${goodWord(k)} to the ${z.name} (${STRATEGIC_USE[k]})`, score: 0.5 });
+      if (o) { o.lines.unshift(`They get ${pct(Math.min(1, tw.aSells[k].shareOfNeed))} of their ${goodWord(k)} from us`); out.push(o); }
     }
   }
   return out;
@@ -324,6 +468,18 @@ function objectionFor(w, g, n, econ, m, o) {
   if (o.kind === "envoy" && o.type !== "peace" && (o.op ?? 0) < -10) return "Their opinion of us is poor. I expect them to refuse.";
   if (o.kind === "law" && o.law === "army" && o.below) return "We have more soldiers than this law allows. Many would be sent home.";
   if (o.kind === "stance" && o.value === "offensive" && careful) return "Attacks cost lives. Our generals should be sure before they strike.";
+  // trade (10s): what an embargo, a lift, food aid or a preferred seller would cost us, in numbers
+  if (o.emb) {
+    const pv = o.emb.pv;
+    if (pv.broken) return "We promised them not to do this. Every nation would see us break our word.";
+    if (pv.ends && !bold) return "It would end our treaty with them.";
+    if (o.emb.hungry) return "They are hungry. Every nation would see us let them go hungry.";
+    if (!bold && -pv.self >= 0.005 * Y) return `It would cost us ${fmtMoney(-pv.self)} of output a year${pv.lost > 0.005 ? `: our exporters would lose ${fmtMoney(pv.lost)} of sales` : ""}.`;
+    if (careful && pv.war >= 3) return `They would hate us for it: their wish for war with us would rise by ${pv.war}.`;
+  }
+  if (o.lift && o.lift.young && careful) return "It began less than a year ago. Lifting it now earns us no goodwill, and they will think we are weak.";
+  if (o.aid && o.aid.after < 2 && !bold) return `Our own reserve would fall to ${fmt1(Math.max(0, o.aid.after))} months of food.`;
+  if (o.pref && o.pref.dearer > 0.05 && careful) return `Their price at our border is ${pct(o.pref.dearer)} above the cheapest seller's. We would pay more for safety.`;
   const mg = ministerGroup(m);
   if (mg && n.groups && !bold) {
     if (o.kind === "law") { const d = groupLawDelta(w, g, n, o.law, o.value)[mg]; if (d <= -5) return `It would anger ${GROUPS[mg].the}, the people I come from: their approval would fall ${-d} points.`; }
@@ -333,6 +489,10 @@ function objectionFor(w, g, n, econ, m, o) {
   return null;
 }
 function ministryOrders(w, g, nid, key) {
+  // nothing changes while the menu is drawn up: each nation's economy is worked out once (the trade orders read several)
+  return withEconMemo(g, () => ministryOrdersRaw(w, g, nid, key));
+}
+function ministryOrdersRaw(w, g, nid, key) {
   const n = g.nations[nid];
   if (!ministryActive(n, key)) return [];
   const econ = computeEconomy(w, g, nid);
@@ -380,7 +540,8 @@ function executeOrder(w, g, nid, key, id, how) {
   } else if (o.kind === "fx") {
     applyEffects(w, g, nid, o.effects);
     M.cool[o.id] = g.turn;
-    text = `${o.label}: ${o.lines.join("; ")}.`;
+    // a trade action writes its own news (the embargo, the lift, the aid): the log keeps only what was ordered
+    text = o.emb || o.lift || o.aid ? `${o.label}.` : `${o.label}: ${o.lines.join("; ")}.`;
   } else if (o.kind === "raise") {
     const d = raiseForce(g, nid, o.q);
     text = `${o.label}${d && d.name ? `: the ${d.name}` : ""}.`;
@@ -401,21 +562,61 @@ function executeOrder(w, g, nid, key, id, how) {
   return { ok: true, text, overruled: !!o.objection };
 }
 /* The foreign minister carries a proposal himself: it is weighed exactly like a letter with formal terms. */
-function ministerEnvoy(w, g, nid, o, m) {
-  const to = o.target;
-  const text = `${m.name}, our foreign minister, brings our proposal in person.`;
+function ministerEnvoy(w, g, nid, o, m) { return sendEnvoy(w, g, nid, o.target, o.type, m); }
+/* An envoy (a minister, or the government's envoy when m is null, as in a decision) brings a proposal in person. */
+function sendEnvoy(w, g, nid, to, type, m) {
+  const text = m ? `${m.name}, our foreign minister, brings our proposal in person.` : "Our envoy brings our proposal in person.";
   const analysis = analyzeLetterRules(text);
-  const outcome = processLetter(g, w, to, text, [{ type: o.type }], false, analysis);
+  const outcome = processLetter(g, w, to, text, [{ type }], false, analysis);
+  g.lastLetter = g.lastLetter || {};
   g.lastLetter[to] = g.turn;
   const entry = { id: g.nextId++, turn: g.turn, to, text, terms: outcome.terms, threat: false, status: "done", verdict: outcome.verdict, lines: outcome.lines, notes: outcome.notes,
-    counter: outcome.counter, counterStatus: null, reply: templateReply(g, to, outcome), source: "rules", inferred: outcome.inferred, summary: "", manipulation: false, byMinister: m.name };
+    counter: outcome.counter, counterStatus: null, reply: templateReply(g, to, outcome), source: "rules", inferred: outcome.inferred, summary: "", manipulation: false, ...(m ? { byMinister: m.name } : {}) };
   g.letters.unshift(entry);
   if (g.letters.length > 40) g.letters.length = 40;
   const answer = { accept: "They accepted.", reject: "They refused.", counter: "They answered with a counter-offer: you can answer it in Letters.", message: "They read it." }[outcome.verdict] || "";
-  return { text: `${m.name} proposed ${termsText(g, [{ type: o.type }])} to the ${nameOf(g, to)}. ${answer}`, verdict: outcome.verdict };
+  const t = `${m ? m.name : "Our envoy"} proposed ${termsText(g, [{ type }])} to the ${nameOf(g, to)}. ${answer}`;
+  if (!m && nid === PLAYER) addChronicle(g, t, outcome.verdict === "accept" ? "good" : "neutral", PLAYER);
+  return { text: t, verdict: outcome.verdict };
 }
 
 /* ---------- What each minister would tell you this season ---------- */
+/* The trade worry of the Economy minister, from the merchants' book (cheap: read every time the panel is drawn).
+   Only when losing it would really hurt (the engine's own test: half a percent of output, or a fifth of a key good).
+   Level 2: half or more of a key good comes from a nation that has an embargo on us, is at war with us, or whose
+   generals our intelligence expects to attack. Level 1: 60% or more of a good from one nation. */
+function tradeConcern(w, g, n, econ) {
+  if (!g.trade || !g.trade.v) return null;
+  const nid = n.id;
+  const R = tradeRisks(w, g, nid, econ, { cheap: true });
+  for (const r of R) {
+    if (!TRADE.key.includes(r.k) || r.share < 0.5) continue;
+    const emb = embargoesBy(g, r.from, nid), war = atWar(g, nid, r.from);
+    const iv = nid === PLAYER && g.intel ? g.intel[r.from] : 0, intel = typeof iv === "number" ? iv : (iv && iv.level) || 0;
+    if (emb.length || war || intel >= 2) return { level: 2, text: `${pct(r.share)} of our ${goodWord(r.k)} comes from the ${nameOf(g, r.from)}, and ${war ? "we are at war with them" : emb.length ? `they have an embargo on us (${emb.map(e => embargoLabel(g, e).toLowerCase()).join("; ")})` : "our generals expect them to attack us"}.` };
+  }
+  const r1 = R.find(r => r.share >= 0.6);
+  if (!r1) return null;
+  const alt = r1.why[r1.why.length - 1] || "";
+  return { level: 1, text: `We depend on the ${nameOf(g, r1.from)} for ${pct(r1.share)} of our ${goodWord(r1.k)} (${bMoney(r1.lossPct * Math.max(1, econ.gdp))} a year).${alt ? ` ${alt.charAt(0).toUpperCase()}${alt.slice(1)}.` : ""}` };
+}
+/* " The X's contract is cut: <why>." for a good we are short of, when that is the reason. */
+function cutText(g, nid, econ, k) {
+  const c = ((econ.trade && econ.trade.cut && econ.trade.cut[k]) || []).find(x => x.from !== undefined);
+  return c ? ` What we bought from ${whoName(g, c.from)} cannot come: ${tradeBlockedText(g, c.code, c.from, nid, k)}.` : "";
+}
+/* What the Agriculture minister can say about buying grain in a famine (cheap: no economy is worked out). */
+function grainHint(g, nid, econ) {
+  if (!g.trade || !g.trade.v) return "";
+  const fed = (econ.foodIn || 0) / Math.max(0.1, econ.pop);
+  const ban = embargoesOn(g, nid).find(e => e.k === "food" || (e.k === "all" && e.food));
+  if (ban) return ` The ${nameOf(g, ban.by)} stopped selling us food.`;
+  if (fed > 0.005) return ` Grain bought abroad feeds ${pct(fed)} of our people, but it is not enough.`;
+  if (!tradeOpen(econ)) return " We cannot buy grain abroad: no nation can reach us, and the world market is closed to us.";
+  const T = econ.trade || {};
+  const seller = Object.keys(T.links || {}).map(Number).some(o => ((g.trade.unsold.food || [])[o] || 0) > 0.005 && !tradeBlocked(g, o, nid, "food"));
+  return seller || T.worldImportCapRaw > 0 ? " Grain can be bought abroad: an order of this ministry puts it in the reserve." : " No nation we can reach has grain to spare, and the world market is closed to us.";
+}
 function ministryConcern(w, g, n, econ, key) {
   const nid = n.id;
   if (key === "interior") {
@@ -436,19 +637,28 @@ function ministryConcern(w, g, n, econ, key) {
   }
   if (key === "economy") {
     if (n.treasury < -0.6 * econ.gdp) return { level: 2, text: `Our debt is ${pct(-n.treasury / econ.gdp)} of a year's output. Lenders are getting nervous.` };
+    const tc = tradeConcern(w, g, n, econ);
+    if (tc && tc.level >= 2) return tc;
     const short = GOOD_ORDER.filter(k => econ.goods.demand[k] > 0.2 && (econ.sat[k] ?? 1) < 0.7 && k !== "power" && k !== "food");
-    if (short.length) return { level: 1, text: `We are short of ${short.slice(0, 2).map(k => GOODS[k].label.toLowerCase()).join(" and ")}.` };
+    if (short.length) return { level: 1, text: `We are short of ${short.slice(0, 2).map(k => GOODS[k].label.toLowerCase()).join(" and ")}.${cutText(g, nid, econ, short[0])}` };
+    if (tc) return tc;
     return { level: 0, text: `Output is ${fmtMoney(econ.gdp)} a year.` };
   }
   if (key === "agriculture") {
-    if ((econ.famineShare || 0) > 0.02) return { level: 2, text: `${pct(econ.famineShare)} of our people do not have enough food.` };
+    if ((econ.famineShare || 0) > 0.02) return { level: 2, text: `${pct(econ.famineShare)} of our people do not have enough food.${grainHint(g, nid, econ)}` };
     const ratio = econ.food / Math.max(0.1, econ.pop);
-    if (ratio < 1.1) return { level: 1, text: `The farms feed only ${pct(ratio)} of what we need. One bad harvest and people go hungry.` };
+    const fedAbroad = (econ.foodIn || 0) / Math.max(0.1, econ.pop);
+    if (ratio < 1.1) return { level: 1, text: `The farms feed only ${pct(ratio)} of what we need.${fedAbroad > 0.005 ? ` Grain bought abroad feeds ${pct(fedAbroad)} more, while its sellers keep selling.` : ""} One bad harvest and people go hungry.` };
     return { level: 0, text: `The farms feed ${pct(ratio)} of our needs. ${fmt1(monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop))} months of food in store.` };
   }
   if (key === "energy") {
     if ((econ.sat.power ?? 1) < 0.85) return { level: 2, text: `Blackouts: we make only ${pct(econ.sat.power)} of the electricity we need.` };
-    if ((econ.sat.coal ?? 1) < 0.8 && econ.goods.demand.coal > 0.2) return { level: 1, text: `We are short of coal (${pct(econ.sat.coal)} of what we need).` };
+    // fuel that a war, an embargo or a lost harbor keeps from reaching us
+    for (const k of ["oil", "coal"]) {
+      const c = ((econ.trade && econ.trade.cut && econ.trade.cut[k]) || []).find(x => x.from !== undefined);
+      if (c && (econ.sat[k] ?? 1) < 0.9) return { level: 2, text: `${GOODS[k].label} from ${whoName(g, c.from)} cannot reach us (${tradeBlockedText(g, c.code, c.from, nid, k)}): we have ${pct(econ.sat[k] ?? 1)} of what we need${k === "oil" ? `, and the army ${pct(econ.fuelSat ?? 1)} of its fuel` : ""}.` };
+    }
+    if ((econ.sat.coal ?? 1) < 0.8 && econ.goods.demand.coal > 0.2) return { level: 1, text: `We are short of coal (${pct(econ.sat.coal)} of what we need).${cutText(g, nid, econ, "coal")}` };
     return { level: 0, text: `We make ${pct(econ.sat.power ?? 1)} of the electricity we need.` };
   }
   if (key === "defence") {
@@ -456,11 +666,16 @@ function ministryConcern(w, g, n, econ, key) {
     if (atWarAny(g, nid)) return { level: 2, text: "We are at war. Every division counts." };
     if (hot) return { level: 2, text: `The war risk from the ${hot.z.name} is ${hot.r.label.toLowerCase()}.` };
     if (n.groups && n.groups.army.approval < GRP.angryAt && n.groups.army.share >= 0.1) return { level: 2, text: `The officers are angry (approval ${Math.round(n.groups.army.approval)}). I hear talk in the barracks that I do not like.${n.groups.army.demand ? ` They want: ${n.groups.army.demand.label.toLowerCase()}.` : ""}` };
+    // the nation that claims our town arms itself with what we sell it
+    if (claimActive(g)) { const line = strategicSalesLine(g, nid, g.opening.by); if (line) return { level: 1, text: line }; }
     return { level: 0, text: `${g.divisions.filter(d => d.owner === nid).length} divisions stand ready. No neighbor is preparing for war.` };
   }
   if (key === "foreign") {
     const worst = liveNations(g).filter(z => z.id !== nid && sharesBorder(g, nid, z.id)).map(z => ({ z, v: opinionDetail(g, z.id, nid).value })).sort((a, b) => a.v - b.v)[0];
     if (worst && worst.v < -30) return { level: 2, text: `The ${worst.z.name} is ${opinionLabel(worst.v).toLowerCase()} toward us (${worst.v}).` };
+    // an embargo on us: the worst one first (how much it hurt us when it was declared)
+    const emb = embargoesOn(g, nid).filter(e => g.nations[e.by] && g.nations[e.by].alive).sort((a, b) => (b.hurt || 0) - (a.hurt || 0) || a.id - b.id)[0];
+    if (emb) return { level: (emb.hurt || 0) >= 1 || emb.k === "all" || TRADE.key.includes(emb.k) ? 2 : 1, text: `The ${nameOf(g, emb.by)} ${embargoVerb(emb)} us (since ${seasonLabel(emb.since)}). An envoy, a letter with an offer, or our own embargo could answer it.` };
     const partners = (g.treaties || []).filter(t => t.type === "trade" && (t.a === nid || t.b === nid)).length;
     if (!partners) return { level: 1, text: "We have no trade agreements yet. Our merchants are waiting." };
     return { level: 0, text: `We have ${partners} trade agreement${partners > 1 ? "s" : ""}.` };
@@ -494,6 +709,7 @@ function cabinetSeasonStart(w, g, dispatch) {
   }
 }
 function cabinetSeasonEnd(w, g, dispatch, rng) {
+  notePendingEmbargoCuts(g);
   for (const n of liveNations(g)) {
     if (!n.cabinet) initCabinet(g, n, rng);
     const C = n.cabinet;
@@ -531,17 +747,41 @@ function cabinetSeasonEnd(w, g, dispatch, rng) {
     }
     if (!n.isPlayer) aiCabinet(w, g, n, econ, rng);
   }
+}
+/* What each of your ministers worries about, for the season's report. Called at the end of the season, after the
+   merchants have signed the new contracts, so a trade worry is about this season's trade. */
+function cabinetConcernNews(w, g, dispatch) {
   const n = g.nations[PLAYER];
-  if (n && n.alive && n.cabinet && dispatch) {
-    const econ = computeEconomy(w, g, PLAYER);
-    for (const key of MIN_ORDER) {
-      if (!ministryActive(n, key)) continue;
-      const c = ministryConcern(w, g, n, econ, key), M = n.cabinet.min[key];
-      const kind = `${c.level}:${c.text.replace(/[0-9.,$%MBk]+/g, "#")}`;
-      const fresh = kind !== M.lastConcern || (c.level >= 2 && g.turn - (M.lastConcernTurn ?? -99) >= 4);
-      if (c.level >= 1 && fresh) { dispatch.cabinet.push({ key, text: `${M.minister.name} (${MINISTRIES[key].label}): ${c.text}`, tone: c.level >= 2 ? "warn" : "neutral" }); M.lastConcernTurn = g.turn; }
-      M.lastConcern = kind;
+  if (!n || !n.alive || !n.cabinet || !dispatch) return;
+  const econ = computeEconomy(w, g, PLAYER);
+  for (const key of MIN_ORDER) {
+    if (!ministryActive(n, key)) continue;
+    const c = ministryConcern(w, g, n, econ, key), M = n.cabinet.min[key];
+    const kind = `${c.level}:${c.text.replace(/[0-9.,$%MBk]+/g, "#")}`;
+    const fresh = kind !== M.lastConcern || (c.level >= 2 && g.turn - (M.lastConcernTurn ?? -99) >= 4);
+    if (c.level >= 1 && fresh) { dispatch.cabinet.push({ key, text: `${M.minister.name} (${MINISTRIES[key].label}): ${c.text}`, tone: c.level >= 2 ? "warn" : "neutral" }); M.lastConcernTurn = g.turn; }
+    M.lastConcern = kind;
+  }
+}
+/* An embargo declared on us since the last contracts: note what it cut while the old contracts are still in the
+   book. The decision about it (14-11c) is made after the new contracts are signed, when those flows are gone. */
+function notePendingEmbargoCuts(g) {
+  const T = g.trade;
+  if (!T || !T.pendingDecisions || !T.pendingDecisions.length) return;
+  const ix = tradeIndex(g);
+  for (const p of T.pendingDecisions) {
+    if (p.cut) continue;
+    const e = (T.embargoes || []).find(x => x.id === p.id);
+    const cut = [];
+    if (e) for (const k of TRADE_GOODS) {
+      if (!embargoCovers(e, k)) continue;
+      const qi = e.dir !== "buy" ? ((ix.into[e.on] || {})[k] || []).filter(f => f.s === e.by).reduce((s, f) => s + f.q, 0) : 0;
+      const qo = e.dir !== "sell" ? ((ix.outOf[e.on] || {})[k] || []).filter(f => f.b === e.by).reduce((s, f) => s + f.q, 0) : 0;
+      const need = (T.need[k] || [])[e.on] || 0;
+      if (qi > 1e-4) cut.push({ k, dir: "in", q: sr(qi, 4), share: need > 0 ? sr(qi / need, 3) : 0, v: sr(goodWorth(g, k, qi), 3) });
+      if (qo > 1e-4) cut.push({ k, dir: "out", q: sr(qo, 4), share: 0, v: sr(goodWorth(g, k, qo), 3) });
     }
+    p.cut = cut;
   }
 }
 /* Rival governments open ministries as they grow rich, and replace ministers who fail them. */
