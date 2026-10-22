@@ -35,6 +35,7 @@ const EMBARGO_AIMS = {   // the main reason a government gives for its own embar
   ally_war: "because they make war on our ally",
   war_goods: "because they sell war goods to our enemy",
 };
+/* ---------- What an embargo is for, in words ---------- */
 /* A government's own words for its embargo on `on` ("to press our claim to Ostard"). */
 function embargoAim(g, by, on, why) {
   const O = g.opening;
