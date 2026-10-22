@@ -172,7 +172,7 @@ function groupTerms(w, g, n, econ, L, k, ctx) {
     if (ctx.atWar) T(ARMS_ORDER.indexOf(L.arms || "low") >= 3 ? "War brings arms contracts" : "War disrupts trade", ARMS_ORDER.indexOf(L.arms || "low") >= 3 ? 3 : -4);
     // trade between nations (10s): our own bans cost the exporters; a rival's ban hurts our merchants
     const ban = ourBanLoss(g, n);
-    if (ban) T(ban.v >= 0.005 ? `Our trade bans cost exporters ${bMoney(ban.v)} a year (goods nobody else buys)` : "Our trade bans (merchants dislike them)", -clamp(1 + 4 * 100 * ban.v / Math.max(1, econ.gdp), 1, 8));
+    if (ban) T(ban.v >= 0.005 ? `Our trade bans cost exporters ${bMoney(ban.v)} a year (goods nobody else buys)` : "Our trade bans (merchants dislike them)", banTerm(ban.v, econ));
     const hit = [...new Set(embargoesOn(g, n.id).filter(e => g.nations[e.by] && g.nations[e.by].alive).map(e => e.by))];
     if (hit.length) T(hit.length === 1 ? `The ${nameOf(g, hit[0])}'s trade ban hurts our merchants` : `Trade bans by ${bJoin(hit.map(b => `the ${nameOf(g, b)}`))} hurt our merchants`, -2);
   } else if (k === "army") {
@@ -211,9 +211,10 @@ function groupTerms(w, g, n, econ, L, k, ctx) {
   return out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 }
 /* What our own embargoes cost our exporters, a year: goods we have left unsold that the nations we embargo still
-   buy from the world market or go without (what they would buy from us without the ban). Read from the book. */
-function ourBanLoss(g, n) {
-  const E = embargoesBy(g, n.id).filter(e => g.nations[e.on] && g.nations[e.on].alive);
+   buy from the world market or go without (what they would buy from us without the ban). Read from the book.
+   `skip`: leave one embargo out (what lifting it would change). */
+function ourBanLoss(g, n, skip) {
+  const E = embargoesBy(g, n.id).filter(e => g.nations[e.on] && g.nations[e.on].alive && e.id !== skip);
   if (!E.length) return null;
   const T = g.trade, ix = tradeIndex(g), left = {};
   let v = 0;
@@ -230,6 +231,31 @@ function ourBanLoss(g, n) {
     }
   }
   return { v, count: E.length };
+}
+// business people's mood about our trade bans: −1, and −4 more for each 1% of output our exporters lose (at most −8)
+function banTerm(v, econ) { return -clamp(1 + 4 * 100 * v / Math.max(1, econ.gdp), 1, 8); }
+function grainBanOf(g, nid, skip) { return embargoesBy(g, nid).some(e => e.id !== skip && e.dir !== "buy" && (e.k === "food" || (e.k === "all" && e.food))); }
+/* How a new embargo of ours would move the groups' mood while it lasts (the same terms as groupTerms): business by
+   the sales our exporters would lose (from the embargo preview), farmers when it stops grain sales. */
+function banGroupDelta(g, n, econ, lost, food) {
+  const cur = ourBanLoss(g, n), out = {};
+  const b = Math.round(banTerm((cur ? cur.v : 0) + Math.max(0, lost), econ) - (cur ? banTerm(cur.v, econ) : 0));
+  if (b) out.business = b;
+  if (food && !grainBanOf(g, n.id)) out.farmers = -3;
+  return out;
+}
+/* And what lifting one of our embargoes would give back. */
+function liftGroupDelta(g, n, econ, e) {
+  const cur = ourBanLoss(g, n), rest = ourBanLoss(g, n, e.id), out = {};
+  const b = Math.round((rest ? banTerm(rest.v, econ) : 0) - (cur ? banTerm(cur.v, econ) : 0));
+  if (b) out.business = b;
+  if (grainBanOf(g, n.id) && !grainBanOf(g, n.id, e.id)) out.farmers = 3;
+  return out;
+}
+/* "Business −3, Farmers −3 (approval, while it lasts)": the lasting mood change of a trade action, for its order. */
+function lastingGroupText(d, when) {
+  const parts = GROUP_ORDER.filter(k => d[k]).map(k => `${GROUPS[k].short} ${signed(d[k])}`);
+  return parts.length ? `${parts.join(", ")} (approval, ${when})` : "";
 }
 function groupTarget(w, g, n, econ, L, k, ctx) {
   return Math.round(clamp(50 + groupTerms(w, g, n, econ, L, k, ctx || groupCtx(w, g, n, econ)).reduce((s, t) => s + t.value, 0), 5, 95) * 10) / 10;
@@ -444,7 +470,7 @@ const DEC_GROUPS = {
   bridge: { a: { business: 2 } },
   fair: { a: { business: 3 } },
   oldquarter: { a: { faith: 4, business: -3 }, b: { business: 4, faith: -5 }, c: { faith: 1, business: 1 } },
-  embargoed: { a: { business: 2 }, b: { business: 1, faith: 1 }, c: { army: 2, business: -3 }, d: { business: -2 } },
+  embargoed: { a: { business: 2 }, b: { business: 1, faith: 1 }, c: { army: 2, business: -3 }, d: { business: -2 }, e: { business: 3, army: -2 } },
 };
 function decisionGroupEffects(key, d) {
   const T = DEC_GROUPS[key];

@@ -350,9 +350,12 @@ function embargoOrder(w, g, n, econ, on, k, dir, extra = {}) {
   const pv = embargoPv(embargoPreviewCached(w, g, nid, on, k, dir, false));
   const o = fxOrder(id, label, [{ t: "embargo", on, k, dir, why: "choice", pv }], g, nid, { group: "Trade", good, target: on, allGoods: k === "all", score: extra.score ?? -1 });
   const hungry = k === "food" && computeEconomy(w, g, on).famineShare > 0.02;
-  o.emb = { pv, k, dir, on, hungry };
+  // how our own groups take it while it lasts (the same terms as their mood: 30q)
+  const groups = dir !== "buy" ? banGroupDelta(g, n, econ, pv.lost, k === "food" || (k === "all" && !!extra.food)) : {};
+  o.emb = { pv, k, dir, on, hungry, groups };
   o.lines = [embargoConsequenceText(pv)].concat(pv.lost > 0.005 ? [`Our exporters lose ${bMoney(pv.lost)} of sales a year until they find other buyers`] : [], embargoPvLines(pv),
-    pv.ends ? ["It ends our treaty with them"] : [], pv.broken ? ["It BREAKS our promise to them: every nation will see it"] : [], hungry ? ["They are hungry: every nation would see us let them go hungry"] : []);
+    pv.ends ? ["It ends our treaty with them"] : [], pv.broken ? ["It BREAKS our promise to them: every nation will see it"] : [], hungry ? ["They are hungry: every nation would see us let them go hungry"] : [],
+    [lastingGroupText(groups, "while it lasts")].filter(Boolean));
   return o;
 }
 function economyTradeOrders(w, g, n, econ) {
@@ -374,12 +377,15 @@ function economyTradeOrders(w, g, n, econ) {
   for (const e of embargoesBy(g, nid)) {
     const young = g.turn - e.since < TRADE.minEmbargo;
     const o = fxOrder(`lift:${e.id}`, `Lift our embargo on the ${nameOf(g, e.on)} (${e.k === "all" ? "all trade" : goodWord(e.k)})`, [{ t: "lift", id: e.id, on: e.on }], g, nid, { group: "Trade", target: e.on, good: e.k === "all" ? null : e.k, score: -0.5 });
-    o.lift = { young, since: e.since };
-    o.lines = [young ? `No goodwill: it began less than a year ago (${seasonLabel(e.since)})` : "Their opinion of us rises a little, and their grudge halves", "Our merchants trade with them again from next season's contracts"];
+    const groups = liftGroupDelta(g, n, econ, e);
+    o.lift = { young, since: e.since, groups };
+    o.lines = [young ? `No goodwill: it began less than a year ago (${seasonLabel(e.since)})` : "Their opinion of us rises a little, and their grudge halves", "Our merchants may trade with them again at once; the full contracts are signed at the end of the season"]
+      .concat([lastingGroupText(groups, "once it ends")].filter(Boolean));
     out.push(o);
   }
   // a second seller for the key goods we buy most
   const imp = TRADE_GOODS.filter(k => k !== "food" && (econ.goods.imports[k] || 0) > 1e-3).map(k => ({ k, v: goodWorth(g, k, econ.goods.imports[k]) })).filter(x => x.v >= 0.005 * Y || TRADE.key.includes(x.k)).sort((a, b) => b.v - a.v).slice(0, 3);
+  const prefCount = (g.trade.prefer || []).filter(p => p.by === nid).length;
   for (const { k } of imp) {
     const cur = (g.trade.prefer || []).find(p => p.by === nid && p.k === k);
     if (cur) {
@@ -392,7 +398,9 @@ function economyTradeOrders(w, g, n, econ) {
     const dep = dependence(g, nid, k)[0];
     const alt = offers.filter(s => s.nid >= 0 && s.offered > 1e-3 && (!dep || s.nid !== dep.from)).sort((a, b) => a.price.p - b.price.p || a.nid - b.nid)[0];
     const risky = dep && dep.share >= 0.6 && TRADE.key.includes(k);
-    if (alt) {
+    if (alt && prefCount >= 3) out.push({ id: `prefer:${k}:${alt.nid}`, kind: "fx", group: "Trade", label: `Buy ${goodWord(k)} from the ${nameOf(g, alt.nid)} first (a second seller)`, effects: [], lines: [], cost: 0, good: k, target: alt.nid, score: -9,
+      blocked: "We already prefer three sellers, the most our merchants will follow: stop preferring one of them first" });
+    else if (alt) {
       const o = fxOrder(`prefer:${k}:${alt.nid}`, `Buy ${goodWord(k)} from the ${nameOf(g, alt.nid)} first (a second seller)`, [{ t: "prefer", k, from: alt.nid }], g, nid, { group: "Trade", good: k, target: alt.nid, score: risky ? 0.5 : -1 });
       const dearer = cheapest ? alt.price.p / cheapest.price.p - 1 : 0;
       o.pref = { dearer };
@@ -420,6 +428,8 @@ function grainTradeOrders(w, g, n, econ, key, months) {
     o.aid = { after: months - ours, recent: qt.recent };
     o.lines.push(`${pct(e.famineShare)} of their people go hungry`);
     if (qt.recent) o.lines.push("No new goodwill: we sent them grain less than a year ago");
+    // the faithful are proud of a nation that feeds the hungry (30q: for two years after the last aid)
+    if (!((g.trade.aid || []).some(a => a.from === nid && g.turn - a.turn < 8))) o.lines.push(lastingGroupText({ faith: 2 }, "for 8 seasons: we fed the hungry abroad"));
     out.push(o);
   }
   for (const p of tradeOf(g, nid).partners.filter(p => (p.sell.food || 0) > 1e-3 && !atWar(g, nid, p.nid)).slice(0, 2)) {
@@ -483,6 +493,8 @@ function objectionFor(w, g, n, econ, m, o) {
   const mg = ministerGroup(m);
   if (mg && n.groups && !bold) {
     if (o.kind === "law") { const d = groupLawDelta(w, g, n, o.law, o.value)[mg]; if (d <= -5) return `It would anger ${GROUPS[mg].the}, the people I come from: their approval would fall ${-d} points.`; }
+    const ld = o.emb ? (o.emb.groups || {})[mg] || 0 : 0;
+    if (ld <= -4) return `It would anger ${GROUPS[mg].the}, the people I come from: their approval would fall ${-ld} points while it lasts.`;
     const ge = (o.effects || []).find(e => e.t === "group");
     if (ge && (ge.v[mg] || 0) <= -5) return `It would anger ${GROUPS[mg].the}, the people I come from.`;
   }
@@ -563,11 +575,13 @@ function executeOrder(w, g, nid, key, id, how) {
 }
 /* The foreign minister carries a proposal himself: it is weighed exactly like a letter with formal terms. */
 function ministerEnvoy(w, g, nid, o, m) { return sendEnvoy(w, g, nid, o.target, o.type, m); }
-/* An envoy (a minister, or the government's envoy when m is null, as in a decision) brings a proposal in person. */
+/* An envoy (a minister, or the government's envoy when m is null, as in a decision) brings a proposal in person:
+   one treaty type, or a list of terms (a decision may offer money with it). */
 function sendEnvoy(w, g, nid, to, type, m) {
+  const terms = Array.isArray(type) ? type : [{ type }];
   const text = m ? `${m.name}, our foreign minister, brings our proposal in person.` : "Our envoy brings our proposal in person.";
   const analysis = analyzeLetterRules(text);
-  const outcome = processLetter(g, w, to, text, [{ type }], false, analysis);
+  const outcome = processLetter(g, w, to, text, terms, false, analysis);
   g.lastLetter = g.lastLetter || {};
   g.lastLetter[to] = g.turn;
   const entry = { id: g.nextId++, turn: g.turn, to, text, terms: outcome.terms, threat: false, status: "done", verdict: outcome.verdict, lines: outcome.lines, notes: outcome.notes,
@@ -575,7 +589,7 @@ function sendEnvoy(w, g, nid, to, type, m) {
   g.letters.unshift(entry);
   if (g.letters.length > 40) g.letters.length = 40;
   const answer = { accept: "They accepted.", reject: "They refused.", counter: "They answered with a counter-offer: you can answer it in Letters.", message: "They read it." }[outcome.verdict] || "";
-  const t = `${m ? m.name : "Our envoy"} proposed ${termsText(g, [{ type }])} to the ${nameOf(g, to)}. ${answer}`;
+  const t = `${m ? m.name : "Our envoy"} proposed ${termsText(g, terms)} to the ${nameOf(g, to)}. ${answer}`;
   if (!m && nid === PLAYER) addChronicle(g, t, outcome.verdict === "accept" ? "good" : "neutral", PLAYER);
   return { text: t, verdict: outcome.verdict };
 }

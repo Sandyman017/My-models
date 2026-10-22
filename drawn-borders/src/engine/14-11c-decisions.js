@@ -84,7 +84,9 @@ function effectText(g, e, nid) {
     case "prefer": return e.from !== null && e.from !== undefined && e.from >= 0
       ? { text: `Our merchants buy ${goodWord(e.k)} from the ${nameOf(g, e.from)} first: they count its price ${pct(TRADE.prefer)} lower when they sign contracts`, tone: "neutral" }
       : { text: `Our merchants buy ${goodWord(e.k)} wherever it is cheapest (no preferred seller)`, tone: "neutral" };
-    case "envoy": return { text: `Our envoy proposes a ${TREATY_INFO[e.type] ? TREATY_INFO[e.type].label.toLowerCase() : e.type} to the ${nameOf(g, e.to)}: they answer at once`, tone: "neutral" };
+    case "envoy": return e.terms
+      ? { text: `Our envoy proposes ${termsText(g, e.terms)} to the ${nameOf(g, e.to)}: they answer at once, and may refuse`, tone: "neutral" }
+      : { text: `Our envoy proposes a ${TREATY_INFO[e.type] ? TREATY_INFO[e.type].label.toLowerCase() : e.type} to the ${nameOf(g, e.to)}: they answer at once`, tone: "neutral" };
     default: return { text: "", tone: "neutral" };
   }
 }
@@ -172,7 +174,7 @@ function applyEffects(w, g, nid, effects) {
       case "lift": liftEmbargo(w, g, e.id, nid); break;
       case "foodAid": sendFoodAid(w, g, nid, e.to, e.months || 1); break;
       case "prefer": setPreferredSeller(g, nid, e.k, e.from ?? null); break;
-      case "envoy": if (nid === PLAYER) sendEnvoy(w, g, nid, e.to, e.type, null); break;
+      case "envoy": if (nid === PLAYER) sendEnvoy(w, g, nid, e.to, e.terms || [{ type: e.type }], null); break;
     }
   }
   bumpWorld(g);
@@ -558,8 +560,10 @@ const DECISIONS = {
       const options = [];
       // a: other sellers for the most valuable good they stopped selling us
       const main = cutIn[0];
+      let noAlt = "";
       if (main) {
         const alt = tradeOffers(c.w, g, nid, main.k).sellers.filter(s => s.nid >= 0 && s.nid !== by && !s.whyNot && s.offered > 1e-3 && s.price).sort((a, b) => a.price.p - b.price.p || a.nid - b.nid)[0];
+        if (!alt) noAlt = ` No other nation we can reach has ${goodWord(main.k)} to sell${T.worldImportCapRaw > 0 ? "; the world market sells some, at the middlemen's price" : ", and the world market is closed to us (we need a harbor on the ocean, or a trade partner who has one)"}.`;
         if (alt) {
           const envoy = !hasTreaty(g, nid, alt.nid, "trade") && !validateDeal(g, c.w, nid, alt.nid, [{ type: "trade" }]) && nid === PLAYER;
           options.push({ id: "a", tag: "thrift", label: `Buy ${goodWord(main.k)} from the ${nameOf(g, alt.nid)} instead${envoy ? ", and offer them a trade agreement" : ""}`,
@@ -568,20 +572,31 @@ const DECISIONS = {
       }
       // b: talk them round (a better opinion of us is what makes a government lift an embargo)
       options.push({ id: "b", tag: "kind", label: "Send an envoy to talk them round", effects: [{ t: "money", v: cost(c, 0.0015) }, { t: "opinion", from: by, key: "trade_talks", label: "Sent an envoy to settle our trade dispute", v: 6, cap: 12 }] });
-      // c: answer in kind, with what it would do shown first
-      const cutsOurBuying = E.some(e => e.dir !== "buy");
+      // c: answer in kind: stop selling them what they buy most from us (a ban on buying from them would hurt our
+      //    own buyers first); food only when their embargo covers food. With nothing to sell them, stop buying.
       const tw = tradeWith(g, nid, by);
-      const pickFrom = cutsOurBuying ? tw.aSells : tw.bSells, dir2 = cutsOurBuying ? "sell" : "buy";
       const food = E.some(e => e.k === "food" || (e.k === "all" && e.food));
-      const k2 = Object.keys(pickFrom).filter(k => !pickFrom[k].blocked && pickFrom[k].q > 1e-4 && (k !== "food" || food)).sort((a, b) => pickFrom[b].v - pickFrom[a].v)[0];
+      const pick = o => Object.keys(o).filter(k => !o[k].blocked && o[k].q > 1e-4 && (k !== "food" || food)).sort((a, b) => o[b].v - o[a].v || TRADE_GOODS.indexOf(a) - TRADE_GOODS.indexOf(b))[0];
+      let k2 = pick(tw.aSells), dir2 = "sell";
+      if (!k2) { k2 = pick(tw.bSells); dir2 = "buy"; }
       if (k2 && !embargoBlock(g, nid, by, k2, dir2)) {
         const pv = embargoPreview(c.w, g, nid, by, k2, dir2, false);
         options.push({ id: "c", tag: "proud", label: `Answer in kind: stop ${dir2 === "sell" ? `selling them ${goodWord(k2)}` : `buying their ${goodWord(k2)}`}`, effects: [{ t: "embargo", on: by, k: k2, dir: dir2, why: "retaliation", answers: E[0].id, pv: embargoPv(pv) }] });
       }
+      // e: pay them to lift it, as much as their government would want (weighed exactly as a letter would be), but
+      //    never more than the trade it cut is worth over the years nations plan for (DIPLO.horizonYears)
+      const offer = nid === PLAYER ? liftOffer(c.w, g, nid, by) : null;
+      const cutV = (f.cut || []).reduce((s, x) => s + (x.v || 0), 0) * DIPLO.horizonYears;
+      let price = "";
+      if (offer && offer.amount <= Math.max(cutV, 0.1)) options.push({ id: "e", tag: "kind", label: offer.amount > 0 ? `Offer them ${fmtMoney(offer.amount)} to lift it` : "Ask them to lift it", effects: [{ t: "envoy", to: by, terms: offer.terms }] });
+      else if (offer) price = ` Their government would want about ${fmtMoney(offer.amount)} to lift it: more than ${DIPLO.horizonYears} years of the trade it cut (${bMoney(cutV)}).`;
       options.push({ id: "d", tag: "thrift", label: "Wait: our merchants will look for other sellers and buyers", effects: [] });
+      // what our sales to them became under the new contracts
+      const unsold = cutOut.slice(0, 3).map(x => ({ k: x.k, q: Math.min(x.q, ((g.trade.unsold[x.k] || [])[nid]) || 0) })).filter(x => x.q > 1e-4);
+      const sales = cutOut.length ? (unsold.length ? ` No other buyer was found for ${bJoin(unsold.map(x => tradeQtyText(g, x.k, x.q)))} a year of it.` : " Our merchants found other buyers for it.") : "";
       return {
         title: `The ${X} ${embargoVerb(E[0])} us`, cell: town.cell, by,
-        body: `The ${X} ${E.map(e => `${embargoVerb(e)} us`).join(", and ")}.${why}${cutIn.length ? ` Under the old contracts they sold us ${bJoin(cutIn.slice(0, 3).map(x => `${tradeQtyText(g, x.k, x.q)} a year (${pct(Math.min(1, x.share))} of our need)`))}.` : ""}${cutOut.length ? ` They bought ${bJoin(cutOut.slice(0, 3).map(x => `${tradeQtyText(g, x.k, x.q)} a year`))} from us.` : ""}${now.length ? ` With the new contracts, ${bJoin(now)}.` : ""} We can also offer them money to lift it, in a letter (Nations panel).`,
+        body: `The ${X} ${E.map(e => `${embargoVerb(e)} us`).join(", and ")}.${why}${cutIn.length ? ` Under the old contracts they sold us ${bJoin(cutIn.slice(0, 3).map(x => `${tradeQtyText(g, x.k, x.q)} a year (${pct(Math.min(1, x.share))} of our need)`))}.` : ""}${cutOut.length ? ` They bought ${bJoin(cutOut.slice(0, 3).map(x => `${tradeQtyText(g, x.k, x.q)} a year`))} from us.${sales}` : ""}${now.length ? ` With the new contracts, ${bJoin(now)}.` : ""}${noAlt}${price}`,
         options, def: "d",
       };
     },
@@ -719,7 +734,7 @@ function effectScore(c, e) {
     case "lift": return 1;
     case "foodAid": return (e.opinion || 0) * 0.12 * (per.tradeWeight || 1) - (e.ours || 1) * 0.8;
     case "prefer": return 0;
-    case "envoy": return 0.5;
+    case "envoy": return 0.5 - ((e.terms || []).filter(t => t.type === "payment" && t.from === c.nid).reduce((x, t) => x + t.amount, 0) / onePct) * 2 * per.moneyWeight;
     default: return 0;
   }
 }
@@ -788,6 +803,20 @@ function grainBuyer(g, nid, econ) {
   }
   if (best !== null) return best;
   return T.worldExportCapRaw > 0 ? -1 : null;
+}
+/* What it would take for `by` to lift its embargoes on us: the lift term alone if they would accept it, else the
+   payment that makes their government say yes (evaluateDeal: a point is 1% of their output a year, a payment counts
+   once times how much they care for money), plus one point to spare. Null when the deal cannot be offered. */
+function liftOffer(w, g, nid, by) {
+  if (typeof REQUEST_TYPES === "undefined" || !REQUEST_TYPES.includes("lift_embargo")) return null;   // letters cannot ask for it (10f)
+  const lift = { type: "lift_embargo", by };
+  if (validateDeal(g, w, nid, by, [lift])) return null;
+  const ev = evaluateDeal(g, w, by, nid, [lift], { noCounter: true });
+  if (ev.points >= 1) return { terms: [lift], amount: 0 };
+  const gdpE = Math.max(1, computeEconomy(w, g, by).gdp), mw = Math.max(0.3, personality(g.nations[by]).moneyWeight);
+  const amount = Math.max(0.1, Math.ceil((1 - ev.points) / 100 * gdpE / mw * 10) / 10);
+  const terms = [lift, { type: "payment", from: nid, amount }];
+  return validateDeal(g, w, nid, by, terms) ? null : { terms, amount };
 }
 /* An embargo on us always asks the government for an answer (no chance involved). The engine notes each one in
    g.trade.pendingDecisions when it is declared; the decision is made at the end of that season, once the new
