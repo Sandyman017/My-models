@@ -416,7 +416,7 @@ function embargoLetterBody(g, n, o) {
     case "pressure": return O && O.by === n.id && o.target === PLAYER ? `Until you give us ${O.town}, our merchants sell you no ${good}. You may still choose peace.` : `You refused our just demands. Until you think again, our merchants sell you no ${good}.`;
     case "war_goods": return `You sell the means of war to our enemy. Until that stops, our merchants sell you no ${good}.`;
     case "ally_war": return `You make war on our ally. We will not supply your armies: our merchants sell you no more ${good}.`;
-    case "grudge": return `We have not forgotten how you have treated us. From today our merchants sell you no ${good}.`;
+    case "hostility": return `We have not forgotten how you have treated us. From today our merchants sell you no ${good}.`;
     default: return `Your army grows on our border, and we will not help it grow. From today our merchants sell you no ${good}.`;
   }
 }

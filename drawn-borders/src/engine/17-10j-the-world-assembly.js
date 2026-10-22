@@ -99,10 +99,14 @@ function assemblyStance(g, w, X, t) {
     // what our trade with them is really worth (10t): a need they fill weighs most; sanctions would end it
     const ex = tradeExposure(g, X, T), book = !!(g.trade && g.trade.v), sanc = t.kind === "sanction";
     if (book) {
-      if (ex.buy && ex.buy.share >= EMBARGO_AI.dependShare) add(-(sanc ? 1 + 3 * ex.buy.share : 0.5 + ex.buy.share), `we buy ${pct(ex.buy.share)} of our ${goodWord(ex.buy.k)} from the ${nameOf(g, T)}`);
-      if (ex.sellPct >= EMBARGO_AI.material) add(-(sanc ? clamp(1 + 50 * ex.sellPct, 1, 3) : 0.6), `the ${nameOf(g, T)} buys our ${goodWord(ex.sell.k)} (${pct1(ex.sellPct)} of our output)`);
+      if (ex.buy && ex.buy.share >= EMBARGO_AI.dependShare) add(-(sanc ? 1 + 3 * ex.buy.share : 0.5 + ex.buy.share), `we buy ${pct(ex.buy.share)} of our ${tradeGoodWord(ex.buy.k)} from the ${nameOf(g, T)}`);
+      if (ex.sellPct >= EMBARGO_AI.material) add(-(sanc ? clamp(1 + 50 * ex.sellPct, 1, 3) : 0.6), `the ${nameOf(g, T)} buys our ${tradeGoodWord(ex.sell.k)} (${pct1(ex.sellPct)} of our output)`);
       if (!ex.material && hasTreaty(g, X, T, "trade")) add(sanc ? -1 : -0.5, `we have a trade agreement with the ${nameOf(g, T)}`);
     } else if (hasTreaty(g, X, T, "trade")) add(sanc ? -3 : -1, `we trade with the ${nameOf(g, T)}`);
+    // trade used as a weapon (10t): their embargo on us, hunger, and a government that uses embargoes itself
+    if (book && embargoesBy(g, T, X).length) add(1.5, `the ${nameOf(g, T)} cut off our trade (${embargoGoodsText(embargoesBy(g, T, X))})`);
+    if (t.why === "starve") add(hasTrait(nx, "honorable") ? 2.5 : 1.5, "hunger must never be a weapon");
+    if (t.why === "bully" && embargoesBy(g, X).filter(e => e.why !== "retaliation").length >= 2) add(-1.5, "we use embargoes ourselves");
     if (hasTreaty(g, X, T, "tribute")) add(-1.5, "tribute binds us");
     const started = g.stats.warsStarted[T] || 0;
     const aggressor = g.wars.some(war => war.sideA[0] === T);

@@ -27,18 +27,18 @@ const EMBARGO_AI = {
   aidCooldown: 8,       // the same donor helps the same nation at most once in two years
   preferBand: 0.05,     // rivals buy from an ally or trade partner first when it is at most 5% dearer than the cheapest
 };
-const EMBARGO_WHY = {   // the main reason a government gives for an embargo (stored on the entry as `why`)
+const EMBARGO_AIMS = {   // the main reason a government gives for an embargo (stored on the entry as `why`)
   retaliation: "to answer their embargo",
   pressure: "to press its claim",
   threat: "to keep a dangerous neighbor from growing stronger",
-  grudge: "out of old grudges",
+  hostility: "out of old grudges",
   ally_war: "because they make war on its ally",
   war_goods: "because they sell war goods to its enemy",
 };
 
 /* ---------- Reading the book (no economy worked out) ---------- */
 /* The last output on record (a year): the scale for points without working out an economy. */
-function lastGdp(g, nid, w) {
+function lastRecordedGdp(g, nid, w) {
   const n = g.nations[nid];
   const h = n && n.history && n.history.length ? n.history[n.history.length - 1] : null;
   if (h && h.gdp > 0) return h.gdp;
@@ -52,32 +52,32 @@ function tradeSells(g, s, b) {
   for (const k in o) for (const f of o[k]) if (f.b === b && !tradeBlocked(g, s, b, k)) out[k] = (out[k] || 0) + f.q;
   return out;
 }
-function tradeValue(g, k, q) { return q * GOODS[k].price * priceOf(g, k); }
-function goodWord(k) { return k === "all" ? "goods" : GOODS[k].label.toLowerCase(); }
+function goodsWorth(g, k, q) { return q * GOODS[k].price * priceOf(g, k); }
+function tradeGoodWord(k) { return k === "all" ? "goods" : GOODS[k].label.toLowerCase(); }
 /* A reason inside a sentence: only its first letter goes small (names keep their capitals). */
 function lcFirst(s) { return s ? s.charAt(0).toLowerCase() + s.slice(1) : ""; }
 /* "oil and metals", or "all trade", for a list of embargoes. */
 function embargoGoodsText(es) {
   if (es.some(e => e.k === "all")) return "all trade";
-  return bJoin([...new Set(es.map(e => goodWord(e.k)))]);
+  return bJoin([...new Set(es.map(e => tradeGoodWord(e.k)))]);
 }
 /* How much X's trade hangs on T: the largest share of a need X buys from T (material goods only), and the value of
    X's sales to and purchases from T as shares of X's output. */
 function tradeExposure(g, X, T) {
   const ex = { buy: null, sell: null, buyPct: 0, sellPct: 0, material: false };
   if (!g.trade || !g.trade.v || X === T) return ex;
-  const gdp = Math.max(1, lastGdp(g, X));
+  const gdp = Math.max(1, lastRecordedGdp(g, X));
   const need = g.trade.need || {};
   const buys = tradeSells(g, T, X), sells = tradeSells(g, X, T);
   for (const k of TRADE_GOODS) {
     if (buys[k]) {
-      const v = tradeValue(g, k, buys[k]), n = need[k] ? need[k][X] || 0 : 0;
+      const v = goodsWorth(g, k, buys[k]), n = need[k] ? need[k][X] || 0 : 0;
       const share = n > 0 ? Math.min(1, buys[k] / n) : 0;
       ex.buyPct += v / gdp;
       if ((v / gdp >= EMBARGO_AI.material || TRADE.key.includes(k)) && (!ex.buy || share > ex.buy.share)) ex.buy = { k, share, v };
     }
     if (sells[k]) {
-      const v = tradeValue(g, k, sells[k]);
+      const v = goodsWorth(g, k, sells[k]);
       ex.sellPct += v / gdp;
       if (!ex.sell || v > ex.sell.v) ex.sell = { k, v };
     }
@@ -101,8 +101,8 @@ function tradeOpinionItems(g, from, to, noEmbargo) {
   }
   // what binds us: a need they fill, good customers, a government that buys from us first
   const ex = tradeExposure(g, from, to);
-  if (ex.buy && ex.buy.share >= EMBARGO_AI.dependShare) items.push({ label: `We buy ${ex.buy.share >= 0.5 ? "most" : "much"} of our ${goodWord(ex.buy.k)} from them`, value: 3 });
-  if (ex.sell && ex.sell.v / Math.max(1, lastGdp(g, from)) >= EMBARGO_AI.material) items.push({ label: `Good customers for our ${goodWord(ex.sell.k)}`, value: 2 });
+  if (ex.buy && ex.buy.share >= EMBARGO_AI.dependShare) items.push({ label: `We buy ${ex.buy.share >= 0.5 ? "most" : "much"} of our ${tradeGoodWord(ex.buy.k)} from them`, value: 3 });
+  if (ex.sell && ex.sell.v / Math.max(1, lastRecordedGdp(g, from)) >= EMBARGO_AI.material) items.push({ label: `Good customers for our ${tradeGoodWord(ex.sell.k)}`, value: 2 });
   if ((T.prefer || []).some(p => p.by === to && p.from === from)) items.push({ label: "Buys from us first", value: 2 });
   return items;
 }
@@ -117,7 +117,7 @@ function embargoPair(w, g, x, y) {
   const n = g.nations[x];
   const O = g.opening;
   return {
-    x, y, n, per: personality(n), gdp: Math.max(1, lastGdp(g, x, w)),
+    x, y, n, per: personality(n), gdp: Math.max(1, lastRecordedGdp(g, x, w)),
     th: threatFrom(w, g, x, y),
     op: opinionDetail(g, x, y, { noEmbargo: true }).value,
     ally: alliesOf(g, x).find(a => atWar(g, a, y)),
@@ -153,7 +153,7 @@ function embargoReasonLines(g, P, k, est, ctx = {}) {
   const army = est.armyDrop || 0;
   if (army > 0 && P.th > 0) add("threat", `Their army would lose fuel or weapons (${pct(army)} of what it needs)`, 8 * army * Math.min(1, P.th) * per.aggression);
   if (P.th > 0.3 && est.lossThem > 0) add("threat", `It weakens a dangerous neighbor (their output −${fmtMoney(est.lossThem)} a year)`, flow(est.lossThem) * (P.th - 0.3) * per.aggression);
-  if (P.op < -40) add("grudge", `Old grudges (our opinion of them ${signed(P.op)}, not counting embargoes)`, Math.min(6, (-P.op - 40) / 5));
+  if (P.op < -40) add("hostility", `Old grudges (our opinion of them ${signed(P.op)}, not counting embargoes)`, Math.min(6, (-P.op - 40) / 5));
   if (P.ally !== undefined && (k === "all" || TRADE.strategic.includes(k))) add("ally_war", `They make war on our ally, the ${nameOf(g, P.ally)}`, 5);
   return lines;
 }
@@ -170,8 +170,8 @@ function embargoCostLines(g, P, est) {
   if (hasTreaty(g, x, y, "trade")) add("Our trade agreement with them", -4);
   return lines;
 }
-function sumPts(lines) { return lines.reduce((s, l) => s + l.pts, 0); }
-function mainWhy(lines) { const top = lines.filter(l => l.code !== "cost").sort((a, b) => b.pts - a.pts)[0]; return top ? top.code : "choice"; }
+function embargoPtsSum(lines) { return lines.reduce((s, l) => s + l.pts, 0); }
+function embargoMainWhy(lines) { const top = lines.filter(l => l.code !== "cost").sort((a, b) => b.pts - a.pts)[0]; return top ? top.code : "choice"; }
 
 /* A quick estimate of cutting good k that x sells to y (only the two economies, which a menu has worked out already). */
 function embargoEstimate(w, g, x, y, k) {
@@ -179,7 +179,7 @@ function embargoEstimate(w, g, x, y, k) {
   const E = computeEconomy(w, g, y);
   const need = g.trade.need[k] ? g.trade.need[k][y] || 0 : 0;
   const share = need > 0 ? Math.min(1, q / need) : 0;
-  const v = tradeValue(g, k, q);
+  const v = goodsWorth(g, k, q);
   let armyDrop = 0, foodDrop = 0;
   if (k === "food") foodDrop = Math.min(1, q / Math.max(0.001, E.pop));
   else {
@@ -231,7 +231,7 @@ function rivalEmbargoOptions(w, g, n) {
       P = P || embargoPair(w, g, x, y);
       const reasons = embargoReasonLines(g, P, k, est, { original: orig });
       if (!reasons.length) continue;
-      cands.push({ y, k, est, orig, self: sumPts(reasons) + sumPts(embargoCostLines(g, P, est)) });
+      cands.push({ y, k, est, orig, self: embargoPtsSum(reasons) + embargoPtsSum(embargoCostLines(g, P, est)) });
     }
   }
   if (cands.length) {
@@ -243,19 +243,19 @@ function rivalEmbargoOptions(w, g, n) {
       const P = embargoPair(w, g, x, c.y);
       const reasons = embargoReasonLines(g, P, c.k, est, { original: c.orig });
       const costs = embargoCostLines(g, P, est);
-      const self = Math.min(EMBARGO_AI.cap, sumPts(reasons) + sumPts(costs));
+      const self = Math.min(EMBARGO_AI.cap, embargoPtsSum(reasons) + embargoPtsSum(costs));
       if (reasons.length && self >= 1) {
-        const why = mainWhy(reasons);
+        const why = embargoMainWhy(reasons);
         out.push({ kind: "embargo", target: c.y, good: c.k, dir: "sell", food: c.k === "food", why, answers: c.orig ? c.orig.id : null, terms: [], threat: false,
           self: Math.round(self), other: 0, likely: "it takes effect at once",
-          label: `Stop selling ${goodWord(c.k)} to the ${nameOf(g, c.y)} (${EMBARGO_WHY[why] || "an embargo"})`,
+          label: `Stop selling ${tradeGoodWord(c.k)} to the ${nameOf(g, c.y)} (${EMBARGO_AIMS[why] || "an embargo"})`,
           lines: [...reasons, ...costs, ...pv.lines.filter(l => /^Their|^Fuel|^Metal/.test(l.label)).slice(0, 3).map(l => ({ code: "info", label: `${l.label}: ${l.value}`, pts: 0 }))],
           est: { q: est.q, hurt: sr(est.hurt, 2), keyDrop: sr(est.keyDrop, 3), armyDrop: sr(est.armyDrop, 3), lossThem: sr(est.lossThem, 3), lossUs: sr(est.lossUs, 3) } });
       }
     }
   }
   // lifting our own: worth it when its reasons are gone, or what it costs us outweighs them
-  const per = personality(n), gdp = Math.max(1, lastGdp(g, x, w));
+  const per = personality(n), gdp = Math.max(1, lastRecordedGdp(g, x, w));
   for (const e of embargoesBy(g, x)) {
     const c = embargoCause(w, g, e);
     const gain = (100 * (e.cost || 0) * DIPLO.horizonYears) / gdp * per.tradeWeight;
@@ -307,7 +307,7 @@ function embargoCause(w, g, e, opts = {}) {
   const est = { hurt: e.hurt || 0, keyDrop: e.keyDrop ?? (e.hurt || 0) / 6, armyDrop: e.armyDrop ?? 0, lossThem: e.lossThem ?? 0, lossUs: 0 };
   const P = embargoPair(w, g, e.by, e.on);
   const lines = embargoReasonLines(g, P, e.k, est, { original: orig, inForce: true });
-  const score = Math.min(EMBARGO_AI.cap, sumPts(lines));
+  const score = Math.min(EMBARGO_AI.cap, embargoPtsSum(lines));
   const has = code => lines.some(l => l.code === code);
   const endText = { pressure: g.opening && g.opening.by === e.by ? "the claim is settled" : "the quarrel over the refused demands is over", ally_war: "the war it was about is over", war_goods: "the trade in war goods it was about has stopped" };
   const ended = !!endText[e.why] && !has(e.why);
@@ -329,8 +329,8 @@ function executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say) {
   const est = estFromPreview(pv, q);
   if (est.hurt < EMBARGO_AI.minHurt && est.keyDrop < EMBARGO_AI.minDrop) return false;
   const reasons = embargoReasonLines(g, embargoPair(w, g, x, y), o.good, est, { original: orig });
-  if (sumPts(reasons) < EMBARGO_AI.liftCause) return false;                     // the cause no longer stands
-  const code = mainWhy(reasons);
+  if (embargoPtsSum(reasons) < EMBARGO_AI.liftCause) return false;                     // the cause no longer stands
+  const code = embargoMainWhy(reasons);
   const r = declareEmbargo(w, g, x, y, o.good, o.dir, code, { preview: pv, answers: orig ? orig.id : null, food: !!o.food, letter: letterText || templateLetter(g, n, { ...o, why: code }) });
   if (!r.ok) return false;
   Object.assign(r.e, { keyDrop: sr(est.keyDrop, 3), armyDrop: sr(est.armyDrop, 3), lossThem: sr(est.lossThem, 3), cost: sr(est.lossUs, 3) });
@@ -338,7 +338,7 @@ function executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say) {
   const top = reasons.slice().sort((a, b) => b.pts - a.pts)[0];
   if (y === PLAYER) {
     const it = g.inbox[g.inbox.length - 1];
-    if (it && it.kind === "embargo" && it.from === x) { it.why = code; it.reason = top ? top.label : EMBARGO_WHY[code] || ""; }
+    if (it && it.kind === "embargo" && it.from === x) { it.why = code; it.reason = top ? top.label : EMBARGO_AIMS[code] || ""; }
     const key = o.good === "all" || TRADE.key.includes(o.good);
     dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${top ? ` (${lcFirst(top.label)})` : ""}. Our merchants will look for other sellers when next season's contracts are signed.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
   }
@@ -393,7 +393,7 @@ function reviewEmbargoes(w, g, dispatch) {
       if (!n || !n.alive || n.isPlayer) continue;
       const c = embargoCause(w, g, e);
       const age = g.turn - e.since;
-      const lossPts = (100 * (e.cost || 0) * DIPLO.horizonYears) / Math.max(1, lastGdp(g, e.by)) * personality(n).tradeWeight;
+      const lossPts = (100 * (e.cost || 0) * DIPLO.horizonYears) / Math.max(1, lastRecordedGdp(g, e.by)) * personality(n).tradeWeight;
       let why = null;
       if (c.ended) why = c.text;
       else if (age >= EMBARGO_AI.liftAge && c.score < EMBARGO_AI.liftCause) why = "its reasons have faded";
@@ -431,14 +431,14 @@ function refreshEmbargoes(w, g) {
     if (!e.q0 || !g.nations[e.by].alive || !g.nations[e.on].alive || atWar(g, e.by, e.on)) continue;
     let cut = 0, still = 0, cost = 0;
     for (const [k, q] of Object.entries(e.q0.in)) {
-      const v = tradeValue(g, k, q);
+      const v = goodsWorth(g, k, q);
       cut += v; still += v * Math.min(1, left("unmet", k, e.on) / Math.max(1e-6, q));
-      cost += tradeValue(g, k, Math.min(q, left("unsold", k, e.by)));
+      cost += goodsWorth(g, k, Math.min(q, left("unsold", k, e.by)));
     }
     for (const [k, q] of Object.entries(e.q0.out)) {
-      const v = tradeValue(g, k, q);
+      const v = goodsWorth(g, k, q);
       cut += v; still += v * Math.min(1, left("unsold", k, e.on) / Math.max(1e-6, q));
-      cost += tradeValue(g, k, Math.min(q, left("unmet", k, e.by)));
+      cost += goodsWorth(g, k, Math.min(q, left("unmet", k, e.by)));
     }
     if (cut <= 1e-6) continue;
     const f = still / cut, h0 = e.hurt0 ?? e.hurt ?? 0;
@@ -488,7 +488,7 @@ function tradeEarlyWarning(w, g, n, menu, orders, dispatch) {
   warned[n.id] = g.turn;
   const top = o.lines.filter(l => l.pts > 0).sort((a, b) => b.pts - a.pts)[0];
   const d = dependence(g, PLAYER, o.good).find(x => x.from === n.id);
-  dispatch.warnings.push(`The ${n.name}'s merchants talk of cutting off your ${goodWord(o.good)}.${d ? ` ${pct(d.share)} of your ${goodWord(o.good)} comes from them.` : ""}${top ? ` Their government's reason: ${lcFirst(top.label)}.` : ""} Other sellers, a trade road or a harbor would make you less dependent.`);
+  dispatch.warnings.push(`The ${n.name}'s merchants talk of cutting off your ${tradeGoodWord(o.good)}.${d ? ` ${pct(d.share)} of your ${tradeGoodWord(o.good)} comes from them.` : ""}${top ? ` Their government's reason: ${lcFirst(top.label)}.` : ""} Other sellers, a trade road or a harbor would make you less dependent.`);
 }
 
 /* ---------- Food aid from rival governments, after the contracts are signed ----------
@@ -510,7 +510,7 @@ function rivalFoodAid(w, g, dispatch) {
       const dPop = (d.history.slice(-1)[0] || {}).pop || 0;
       const stock = (d.granary && d.granary.stock) || 0;
       if (monthsOfFood(stock, dPop) < EMBARGO_AI.aidMonths) continue;
-      donors.push({ d, gdp: lastGdp(g, d.id), spare: stock - EMBARGO_AI.aidKeep * dPop / 12 });
+      donors.push({ d, gdp: lastRecordedGdp(g, d.id), spare: stock - EMBARGO_AI.aidKeep * dPop / 12 });
     }
     donors.sort((a, b) => b.gdp - a.gdp || a.d.id - b.d.id);
     for (const x of donors) {
@@ -567,8 +567,8 @@ function tradeLeverage(g, E, P, k) {
   const strength = clamp(Math.max(share, sales), 0, 1);
   const byShare = share >= sales && good;
   return { strength, k: good,
-    why: byShare ? `they buy ${pct(share)} of their ${goodWord(good)} from you` : `they sell you goods worth ${pct1(ex.sellPct)} of their output`,
-    whyUs: byShare ? `we buy ${pct(share)} of our ${goodWord(good)} from you` : `we sell you goods worth ${pct1(ex.sellPct)} of our output` };
+    why: byShare ? `they buy ${pct(share)} of their ${tradeGoodWord(good)} from you` : `they sell you goods worth ${pct1(ex.sellPct)} of their output`,
+    whyUs: byShare ? `we buy ${pct(share)} of our ${tradeGoodWord(good)} from you` : `we sell you goods worth ${pct1(ex.sellPct)} of our output` };
 }
 /* A good named in a letter ("your oil", "grain"), or null. */
 function goodInText(t) {
@@ -589,12 +589,12 @@ function tradeBrief(g, n, econ) {
   const buys = [], sells = [];
   for (const { k, G } of goods) {
     const from = G.from.filter(f => !f.code).slice(0, 2).map(f => `${who(f.nid)}${f.share >= 0.05 ? ` (${pct(f.share)} of our need)` : ""}`);
-    if (from.length) buys.push(`${goodWord(k)} from ${bJoin(from)}`);
+    if (from.length) buys.push(`${tradeGoodWord(k)} from ${bJoin(from)}`);
     const to = G.to.filter(f => !f.code).slice(0, 2).map(f => who(f.nid));
-    if (to.length) sells.push(`${goodWord(k)} to ${bJoin(to)}`);
+    if (to.length) sells.push(`${tradeGoodWord(k)} to ${bJoin(to)}`);
   }
   const on = embargoesOn(g, n.id).map(e => `the ${nameOf(g, e.by)} ${embargoVerb(e)} us since ${seasonLabel(e.since)}`);
-  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} the ${nameOf(g, e.on)} (${EMBARGO_WHY[e.why] ? EMBARGO_WHY[e.why].replace(/\bits\b/g, "our") : "our choice"})`);
+  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} the ${nameOf(g, e.on)} (${EMBARGO_AIMS[e.why] ? EMBARGO_AIMS[e.why].replace(/\bits\b/g, "our") : "our choice"})`);
   const closed = econ && econ.trade && !(econ.trade.worldImportCapRaw > 0);
   return `Trade (a year): we buy ${buys.join("; ") || "nothing from abroad"}; we sell ${sells.join("; ") || "nothing abroad"}${closed ? "; the world market beyond the map is closed to us (no harbor on the ocean, and no trade partner with one)" : ""}${on.length ? `. Embargoes on us: ${on.join("; ")}` : ""}${by.length ? `. Our embargoes: ${by.join("; ")}` : ""}.`;
 }
@@ -602,7 +602,7 @@ function tradeRelationBrief(g, a, b) {
   const T = g.trade;
   if (!T || !T.v) return "";
   const t = tradeWith(g, a, b);
-  const part = (o, whose) => Object.entries(o).filter(([, x]) => !x.blocked && x.v >= 0.05).sort((p, q) => q[1].v - p[1].v).slice(0, 3).map(([k, x]) => `${goodWord(k)} ${fmtMoney(x.v)}${x.shareOfNeed >= 0.05 ? ` (${pct(x.shareOfNeed)} of ${whose} need)` : ""}`);
+  const part = (o, whose) => Object.entries(o).filter(([, x]) => !x.blocked && x.v >= 0.05).sort((p, q) => q[1].v - p[1].v).slice(0, 3).map(([k, x]) => `${tradeGoodWord(k)} ${fmtMoney(x.v)}${x.shareOfNeed >= 0.05 ? ` (${pct(x.shareOfNeed)} of ${whose} need)` : ""}`);
   const weSell = part(t.aSells, "their"), weBuy = part(t.bSells, "our");
   const emb = t.embargoes.map(e => (e.by === a ? `our embargo: we ${embargoVerb(e)} them` : `their embargo: they ${embargoVerb(e)} us`));
   const link = t.link ? { land: "across our border", over: "by caravan across wild land", sea: `by sea, ${Math.round(t.link.d).toLocaleString("en-US")} km` }[t.link.m] : null;
@@ -614,7 +614,7 @@ function tradeFacts(g, nid) {
   const T = g.trade;
   if (!T || !T.v) return "";
   const tr = tradeOf(g, nid);
-  const ps = tr.partners.filter(p => !p.blocked && p.sellV + p.buyV > 0.01).slice(0, 3).map(p => `${nameOf(g, p.nid)} (sells them ${bJoin(Object.keys(p.sell).map(goodWord)) || "nothing"}, buys ${bJoin(Object.keys(p.buy).map(goodWord)) || "nothing"})`);
+  const ps = tr.partners.filter(p => !p.blocked && p.sellV + p.buyV > 0.01).slice(0, 3).map(p => `${nameOf(g, p.nid)} (sells them ${bJoin(Object.keys(p.sell).map(tradeGoodWord)) || "nothing"}, buys ${bJoin(Object.keys(p.buy).map(tradeGoodWord)) || "nothing"})`);
   const emb = embargoesBy(g, nid).map(e => `${embargoVerb(e)} ${nameOf(g, e.on)}`);
   return `${ps.length ? `, trades with ${ps.join(", ")}` : ""}${emb.length ? `, has ${emb.join(" and ")}` : ""}`;
 }
