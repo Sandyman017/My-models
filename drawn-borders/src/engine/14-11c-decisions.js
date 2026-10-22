@@ -580,9 +580,10 @@ const DECISIONS = {
       const pick = o => Object.keys(o).filter(k => !o[k].blocked && o[k].q > 1e-4 && (k !== "food" || food)).sort((a, b) => o[b].v - o[a].v || TRADE_GOODS.indexOf(a) - TRADE_GOODS.indexOf(b))[0];
       let k2 = pick(tw.aSells), dir2 = "sell";
       if (!k2) { k2 = pick(tw.bSells); dir2 = "buy"; }
-      if (k2 && !embargoBlock(g, nid, by, k2, dir2)) {
+      if (!k2) { k2 = "all"; dir2 = "both"; }   // nothing flows any more: all trade, as they did
+      if (!embargoBlock(g, nid, by, k2, dir2)) {
         const pv = embargoPreview(c.w, g, nid, by, k2, dir2, false);
-        options.push({ id: "c", tag: "proud", label: `Answer in kind: stop ${dir2 === "sell" ? `selling them ${goodWord(k2)}` : `buying their ${goodWord(k2)}`}`, effects: [{ t: "embargo", on: by, k: k2, dir: dir2, why: "retaliation", answers: E[0].id, pv: embargoPv(pv) }] });
+        options.push({ id: "c", tag: "proud", label: `Answer in kind: ${k2 === "all" ? "cut off all trade with them" : dir2 === "sell" ? `stop selling them ${goodWord(k2)}` : `stop buying their ${goodWord(k2)}`}`, effects: [{ t: "embargo", on: by, k: k2, dir: dir2, why: "retaliation", answers: E[0].id, pv: embargoPv(pv) }] });
       }
       // e: pay them to lift it, as much as their government would want (weighed exactly as a letter would be), but
       //    never more than the trade it cut is worth over the years nations plan for (DIPLO.horizonYears)

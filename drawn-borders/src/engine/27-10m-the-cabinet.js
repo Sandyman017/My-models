@@ -372,7 +372,10 @@ function economyTradeOrders(w, g, n, econ) {
     if (b && b.v >= 0.01) embs.push([p.nid, b.k, "buy"]);
     if (p.sellV + p.buyV >= 0.02) embs.push([p.nid, "all", "both"]);
   }
-  for (const [on, k, dir] of embs.slice(0, 6)) { const o = embargoOrder(w, g, n, econ, on, k, dir, k === "all" ? { label: `Stop all trade with the ${nameOf(g, on)} (a full embargo; food still allowed)` } : {}); if (o) out.push(o); }
+  // a nation with an embargo on us can be answered with a full embargo, even when it has cut all our trade already
+  for (const by of [...new Set(embargoesOn(g, nid).map(e => e.by))].sort((a, b) => a - b))
+    if (g.nations[by] && g.nations[by].alive && !atWar(g, nid, by) && !embs.some(x => x[0] === by && x[1] === "all")) embs.push([by, "all", "both"]);
+  for (const [on, k, dir] of embs.slice(0, 8)) { const o = embargoOrder(w, g, n, econ, on, k, dir, k === "all" ? { label: `Stop all trade with the ${nameOf(g, on)} (a full embargo; food still allowed)` } : {}); if (o) out.push(o); }
   // lifting our own embargoes
   for (const e of embargoesBy(g, nid)) {
     const young = g.turn - e.since < TRADE.minEmbargo;
