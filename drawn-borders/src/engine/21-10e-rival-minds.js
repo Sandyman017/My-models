@@ -365,7 +365,7 @@ function executeDiplomacy(g, w, n, o, why, letterText, dispatch, say) {
     applyDeal(g, w, x, y, o.terms);
     if (o.threat) addTreaty(g, "truce", x, y);
     const best = ev.lines.filter(l => l.pts > 0).sort((a, b) => b.pts - a.pts)[0];
-    say(`Agreed with the ${nameOf(g, y)} on ${termsText(g, o.terms)}.`, why + (best ? ` The ${nameOf(g, y)} accepted: ${best.label.toLowerCase()}.` : ""));
+    say(`Agreed with the ${nameOf(g, y)} on ${termsText(g, o.terms)}.`, why + (best ? ` The ${nameOf(g, y)} accepted: ${lcFirst(best.label)}.` : ""));
     addChronicle(g, `The ${nameOf(g, x)} and the ${nameOf(g, y)} agreed on ${termsText(g, o.terms)}.`, "neutral", x);
     noteFor(g.nations[y], g, `Accepted the ${nameOf(g, x)}'s proposal of ${termsText(g, o.terms)}.`, best ? best.label : null, "rules");
   } else {
@@ -373,7 +373,7 @@ function executeDiplomacy(g, w, n, o, why, letterText, dispatch, say) {
     n.lastAsked[`${family}:${y}`] = g.turn + 10; // a refusal stings: wait about four years before asking again
     if (o.threat) addCommitment(g, x, y, termsText(g, o.terms));
     const worst = ev.lines.filter(l => l.pts < 0).sort((a, b) => a.pts - b.pts)[0];
-    say(`Proposed ${termsText(g, o.terms)} to the ${nameOf(g, y)}, who refused${worst ? `: ${worst.label.toLowerCase()}` : ""}.`, why);
+    say(`Proposed ${termsText(g, o.terms)} to the ${nameOf(g, y)}, who refused${worst ? `: ${lcFirst(worst.label)}` : ""}.`, why);
     remember(g, x, `The ${nameOf(g, y)} refused our proposal of ${termsText(g, o.terms)}.`);
   }
   return true;

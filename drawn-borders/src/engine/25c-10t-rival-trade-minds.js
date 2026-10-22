@@ -293,7 +293,7 @@ function rivalEmbargoOptions(w, g, n) {
    what it takes (and still worth it to us). */
 function pushLiftAsk(out, g, w, x, y) {
   const mutual = embargoesBy(g, x, y).length > 0;
-  const terms = [{ type: "lift_embargo", by: mutual ? "both" : y }];
+  const terms = [mutual ? { type: "lift_embargo", by: "both" } : { type: "lift_embargo", by: y, on: x }];
   const before = out.length;
   pushDeal(out, g, w, x, y, terms, "lift_embargo", false);
   if (out.length > before) return;
@@ -550,6 +550,16 @@ function rivalFoodAidRaw(w, g, dispatch, T) {
   }
 }
 
+/* ---------- Comparing an imagined world with the real one ---------- */
+/* The economy an imagined world (`hypothetical`) is measured against: the real one, unless imagined worlds settle trade
+   by a different rule than the real game (merchants finding new sellers), in which case a copy imagined with no change,
+   so that only the change itself is valued. */
+function econBaseFor(w, g, nid, econ) {
+  const h0 = hypothetical(g, {});
+  if (!!h0.reroute === !!g.reroute && !!h0.noReroute === !!g.noReroute) return econ || computeEconomy(w, g, nid);
+  return computeEconomy(w, h0, nid);
+}
+
 /* ---------- War and trade: what a war would cost in trade, and when an embargo is a just cause ---------- */
 /* Output x would lose a year if all trade with y stopped (once its merchants have found other sellers), or null when
    there is no trade book yet (the old flat cost of a trade agreement applies then). A war also ends every treaty, so a
@@ -562,7 +572,7 @@ function warTradeLoss(w, g, x, y, econX) {
   if (!treaty && !((ix.pairV[`${x}>${y}`] || 0) + (ix.pairV[`${y}>${x}`] || 0) > 0)) return 0;
   const h = hypothetical(g, { embargo: { id: -1, by: x, on: y, k: "all", dir: "both", food: true, since: g.turn, why: "war", hurt: 0, answers: null } });
   if (treaty) h.treaties = g.treaties.filter(t => !(t.type === "trade" && ((t.a === x && t.b === y) || (t.a === y && t.b === x))));
-  return Math.max(0, (econX || computeEconomy(w, g, x)).gdp - computeEconomy(w, h, x).gdp);
+  return Math.max(0, econBaseFor(w, g, x, econX).gdp - computeEconomy(w, h, x).gdp);
 }
 /* y's embargo on x as a cause for war: food cut off while x is hungry (strong), or trade strangled (a real share of
    x's output or a key supply), while it stands or for two years after. */

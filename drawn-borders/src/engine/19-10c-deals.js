@@ -12,10 +12,11 @@ function termText(g, t) {
     case "city": { const c = g.cities.find(x => x.id === t.cityId); return `${nameOf(g, t.from)} hands over ${c ? c.name : "a town"} and its land`; }
     case "peace": return "peace";
     case "lift_embargo": {
-      if (t.by === "both") return "both sides lift their embargoes on each other";
+      // a noun phrase like the other terms ("agreed on an end to ..."); the goods while the embargo still stands
+      if (t.by === "both") return "an end to the embargoes on both sides";
       const es = embargoesBy(g, t.by, t.on);
-      const ons = [...new Set(es.map(e => e.on))];
-      return `the ${nameOf(g, t.by)} lifts its embargo${ons.length === 1 ? ` on the ${nameOf(g, ons[0])} (${embargoGoodsText(es)})` : ""}`;
+      const ons = t.on !== undefined ? [t.on] : [...new Set(es.map(e => e.on))];
+      return `an end to the ${nameOf(g, t.by)}'s embargo${ons.length === 1 ? ` on the ${nameOf(g, ons[0])}${es.length ? ` (${embargoGoodsText(es)})` : ""}` : ""}`;
     }
     default: return "an unknown term";
   }
@@ -183,18 +184,19 @@ function evaluateDeal(g, w, E, P, terms, ctx = {}) {
     }
     if (t.type === "lift_embargo") {
       // each side's embargoes, worked out on a copy of the world where they are lifted (merchants find their old buyers)
+      const baseE = econBaseFor(w, g, E, econE);
       for (const L of t.by === "both" ? [P, E] : [t.by]) {
         const V = L === E ? P : E;
         const es = embargoesBy(g, L, V);
         if (!es.length) continue;
         const hE = computeEconomy(w, hypothetical(g, { lift: { by: L, on: V } }), E);
-        const dE = hE.gdp - econE.gdp;
+        const dE = hE.gdp - baseE.gdp;
         const goods = embargoGoodsText(es);
         if (L === P) {
           // their embargo on us ends; worth half to us, since it would end some day anyway
           if (dE > 0.005) add(`Their embargo on our trade ends (${goods}): ${fmtSignedMoney(dE)} a year for us`, flow(dE) * per.tradeWeight * 0.5);
           // fuel, arms and food count as in an embargo's hurt: a whole key supply is worth 6% of output a year
-          const fuel = (hE.fuelSat ?? 1) - (econE.fuelSat ?? 1), arms = (hE.armsSat ?? 1) - (econE.armsSat ?? 1), fed = econE.famineShare - hE.famineShare;
+          const fuel = (hE.fuelSat ?? 1) - (baseE.fuelSat ?? 1), arms = (hE.armsSat ?? 1) - (baseE.armsSat ?? 1), fed = baseE.famineShare - hE.famineShare;
           const key = Math.max(fuel, arms, fed, 0);
           const keyText = fed >= Math.max(fuel, arms) ? `${pct(key)} more of our people would be fed` : fuel >= arms ? `Our army would get back ${pct(key)} of the fuel it needs` : `Our arms factories would get back ${pct(key)} of the metal and parts they need`;
           if (key >= 0.02) add(keyText, 0.5 * DIPLO.horizonYears * 6 * key);

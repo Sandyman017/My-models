@@ -151,7 +151,7 @@ function processLetter(g, w, to, text, formalTerms, explicitThreat, analysis) {
   let terms = formalTerms.slice();
   let inferred = false;
   if (!terms.length && analysis.requests.length) {
-    const simple = [...new Set(analysis.requests.filter(x => ["trade", "nap", "alliance", "border", "peace", "lift_embargo"].includes(x)))].map(type => (type === "lift_embargo" ? { type, by: E } : { type }));
+    const simple = [...new Set(analysis.requests.filter(x => ["trade", "nap", "alliance", "border", "peace", "lift_embargo"].includes(x)))].map(type => (type === "lift_embargo" ? { type, by: E, on: P } : { type }));
     const ok = simple.filter(t => !validateDeal(g, w, P, E, [t]));
     if (ok.length) { terms = ok; inferred = true; }
   }
