@@ -300,7 +300,7 @@ function specialOrders(w, g, n, econ, key) {
     const lack = new Map(all.map(z => [z.id, sellsWhatWeLack(g, nid, z.id)]));
     const near = all.slice().sort((a, b) => (sharesBorder(g, nid, b.id) ? 1 : 0) - (sharesBorder(g, nid, a.id) ? 1 : 0) || (a.minor ? 1 : 0) - (b.minor ? 1 : 0)).slice(0, 5);
     const traders = all.filter(z => !near.includes(z) && lack.get(z.id).v >= 0.002 * Y && !hasTreaty(g, nid, z.id, "trade") && !atWar(g, nid, z.id)).sort((a, b) => lack.get(b.id).v - lack.get(a.id).v || a.id - b.id).slice(0, 2);
-    const others = near.concat(traders).sort((a, b) => lack.get(b.id).v - lack.get(a.id).v || near.indexOf(a) - near.indexOf(b));
+    const others = near.concat(traders);
     for (const z of others) {
       const op = opinionDetail(g, z.id, nid).value;
       const war = atWar(g, nid, z.id);

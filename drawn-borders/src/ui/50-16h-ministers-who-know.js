@@ -234,20 +234,23 @@ function embargoLinesNow() {
   return out;
 }
 // words that make a sentence about trade between nations: such questions go to the ministry that runs that trade
-const TRADE_TOPIC = /\b(embargo\w*|boycott\w*|sanctions?|suppliers?|sellers?|buyers?|customers?|stop (selling|buying)|depend\w*|rely|relies|reliant|trade partners?|bans?|cut off|(food|grain) aid|send (grain|food)|(sell|buy)\w* abroad)\b/;
+const TRADE_TOPIC = /\b(embargo\w*|boycott\w*|sanctions?|suppliers?|sellers?|buyers?|customers?|stop (selling|buying)|depend\w*|rely|relies|reliant|trade partners?|trade bans?|(food|grain) aid|send (grain|food)|(sell|buy)\w* abroad)\b/;
 const TRADE_DEAL = /\b(buy|buying|bought|sell|selling|sold)\b[^.?!]*\b(from|to)\b/;
 /* What a sentence about trade asks for, so that only an order of that kind can answer it ("send food aid" is
-   never "buy grain"), and which way an embargo goes ("stop selling" is not "stop buying"). */
-function tradeIntent(t) {
+   never "buy grain"), and which way an embargo goes ("stop selling" is not "stop buying"). A word that also has a
+   meaning at home ("ban", "relief", "buy", "instead") counts only next to a good, a nation or a trade word. */
+function tradeIntent(t, good, nat) {
   const sell = /\b(sell\w*|sold|export\w*)\b/.test(t), buy = /\b(buy\w*|bought|import\w*|purchas\w*)\b/.test(t);
   const dir = sell && !buy ? "sell" : buy && !sell ? "buy" : null;
   const food = /\b(food|grain|wheat|bread)\b/.test(t);
-  if (/^lift\b/.test(t) || /\b(lift|end|remove|cancel|drop)\b[^.?!]*\b(embargo\w*|bans?|boycott\w*)/.test(t) || /\bstop (the|our) (embargo|ban|boycott)/.test(t)) return { kind: "lift", re: /^lift:/ };
-  if (/\b(aid|relief)\b/.test(t) || /\b(send|give|ship)\b[^.?!]*\b(grain|food|wheat)\b[^.?!]*\bto\b/.test(t) || /\bfeed (them|the)\b/.test(t)) return { kind: "aid", re: /^aid:/ };
-  if (/\b(embargo\w*|boycott\w*|ban|cut off|stop (selling|buying|trading|all trade|trade)|no (more )?trade)\b/.test(t)) return { kind: "embargo", re: /^embargo:/, dir };
-  if (/\b(diversify|prefer\w*|instead)\b/.test(t) || /\b(find|second|another|other|new|secure)\b[^.?!]*\b(suppl\w*|sellers?|sources?)\b/.test(t)) return { kind: "prefer", re: /^prefer:/ };
+  const about = !!good || !!nat || sell || buy || /\b(trade|trading|abroad|foreign)\b/.test(t);
+  const embW = /\b(embargo\w*|boycott\w*)\b/.test(t);
+  if ((/^lift\b/.test(t) && (embW || nat)) || /\b(lift|end|remove|cancel|drop)\b[^.?!]*\b(embargo\w*|bans?|boycott\w*)/.test(t) || /\bstop (the|our) (embargo|ban|boycott)/.test(t)) return { kind: "lift", re: /^lift:/ };
+  if ((/\baid\b/.test(t) && (food || nat || /abroad|foreign/.test(t))) || /\b(send|give|ship)\b[^.?!]*\b(grain|food|wheat)\b[^.?!]*\bto\b/.test(t) || (/\bfeed (them|the)\b/.test(t) && nat)) return { kind: "aid", re: /^aid:/ };
+  if (embW || (/\b(ban|cut off|stop (selling|buying|trading|all trade|trade)|no (more )?trade)\b/.test(t) && about)) return { kind: "embargo", re: /^embargo:/, dir };
+  if ((/\b(diversify|prefer\w*|instead)\b/.test(t) && (good || nat)) || /\b(find|second|another|other|new|secure)\b[^.?!]*\b(suppl\w*|sellers?|sources?)\b/.test(t)) return { kind: "prefer", re: /^prefer:/ };
   if (buy && food) return { kind: "buygrain", re: /^fx:buygrain$/ };
-  if (buy) return { kind: "prefer", re: /^prefer:/ };
+  if (buy && (good || nat) && !/\b(tanks?|planes?|ships?|weapons?|arms|divisions?)\b/.test(t)) return { kind: "prefer", re: /^prefer:/ };
   if (/\btrade (agreement|deal|treaty|pact)\b/.test(t)) return { kind: "treaty", re: /^envoy:trade:/ };
   return null;
 }
@@ -264,8 +267,8 @@ function ruleMinisterReply(key, text, orders, m) {
   // an order about another good or another nation than the one named is never the right one; a sentence about
   // trade between nations is answered only by a trade order ("send food aid" is not a food factory)
   const tGood = findGoodIn(t), tNat = findNationIn(g, t, PLAYER);
-  const trade = TRADE_TOPIC.test(t) || TRADE_DEAL.test(t) || /\b(embargo\w*|boycott\w*|cut off)\b/.test(t);
-  const intent = tradeIntent(t);
+  const intent = tradeIntent(t, tGood, tNat);
+  const trade = TRADE_TOPIC.test(t) || TRADE_DEAL.test(t) || !!intent;
   const tradeOrder = o => o.group === "Trade" || /^(embargo|lift|prefer|aid|fx:buygrain|envoy:trade)/.test(o.id);
   const fit = o => {
     if (trade && !tradeOrder(o)) return null;
@@ -276,7 +279,7 @@ function ruleMinisterReply(key, text, orders, m) {
       const d = (o.id.match(/^embargo:(\w+):/) || [])[1];
       if (intent.dir && d && d !== intent.dir && d !== "both") return null;
       if (intent.kind === "embargo" && !intent.dir && d === "both") b += 0.5;   // "embargo them": all trade, both ways
-      b += 1;
+      b += 1 + Math.max(0, o.score || 0) * 0.01;   // between equal matches, the one the minister would advise
     }
     if (o.allGoods) { if (tGood) return null; b += 0.5; }
     if (tGood && o.good) { if (o.good !== tGood) return null; b += 2; }
@@ -443,7 +446,9 @@ Reply only with JSON: {"answers": [{"minister": "one key from the list of minist
 }
 function ruleTopic(t) {
   // trade between nations first: "stop selling oil to the X" is trade, not energy; grain trade and food aid are agriculture's
-  if ((TRADE_TOPIC.test(t) || TRADE_DEAL.test(t)) && !/\b(ally|allies|alliances?|war|army|armies|attack\w*)\b/.test(t)) return /\b(food|grain|wheat|bread|harvests?|famine|hunger|hungry)\b/.test(t) ? "agriculture" : "economy";
+  const intent = tradeIntent(t, findGoodIn(t), findNationIn(game, t, PLAYER));
+  if (intent && intent.kind === "treaty") return "foreign";
+  if ((TRADE_TOPIC.test(t) || TRADE_DEAL.test(t) || intent) && !/\b(ally|allies|alliances?|war|army|armies|attack\w*)\b/.test(t)) return /\b(food|grain|wheat|bread|harvests?|famine|hunger|hungry)\b/.test(t) ? "agriculture" : "economy";
   return /\b(army|armies|military|soldiers?|divisions?|war|threats?|attack\w*|defen[cs]e|tanks?|navy|warships?|generals?|conscription)\b/.test(t) ? "defence"
     : /\b(food|harvests?|farms?|farming|hunger|hungry|famine|grain|fishing)\b/.test(t) ? "agriculture"
     : /\b(electricity|electric|energy|coal|oil|fuel|blackouts?|power stations?)\b/.test(t) ? "energy"
