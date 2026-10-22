@@ -172,7 +172,6 @@ function legacyHtml() {
     <div class="actions"><button class="btn" type="button" data-action="legacy-open">Legacy of every nation</button></div>
   </div>`;
 }
-function ordinal(k) { return `${k}${k % 10 === 1 && k % 100 !== 11 ? "st" : k % 10 === 2 && k % 100 !== 12 ? "nd" : k % 10 === 3 && k % 100 !== 13 ? "rd" : "th"}`; }
 
 function agendaTabHtml() {
   return pendingDecisionsHtml() + leaderBlockHtml() + ambitionsHtml() + worksHtml() + legacyHtml();

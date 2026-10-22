@@ -6,7 +6,7 @@
    and as lookups) and by the built-in replies when Claude is not available.
    ===================================================================== */
 const BRIEF_ORD = ["", "1st", "2nd", "3rd"];
-function ordinal(k) { return BRIEF_ORD[k] || `${k}th`; }
+function ordinalWord(k) { return BRIEF_ORD[k] || `${k}th`; }   // "second": not ordinal() ("2nd", 10h), which it used to replace
 function bMoney(v) { return Math.abs(v) < 0.05 && v !== 0 ? `$${Math.round(Math.abs(v) * 1000)}M` : fmtMoney(v); }
 function bSigned(v) { return Math.abs(v) < 0.0005 ? "±$0" : `${v > 0 ? "+" : "−"}${bMoney(Math.abs(v))}`; }   // a change of money, small ones in $M
 function bPeople(m) { return m >= 1 ? `${m.toFixed(1)}M` : m >= 0.001 ? `${Math.round(m * 1000)}k` : `${Math.round(m * 1e6)}`; }   // m in millions
@@ -36,7 +36,7 @@ function rankIn(table, key, id, majorsOnly) {
 function rankText(table, key, id) {
   const me = table.find(r => r.id === id), v = me ? me[key] : 0;
   const above = table.filter(r => r[key] > v + 1e-9).length, same = table.filter(r => Math.abs(r[key] - v) <= 1e-9).length;
-  return same > 1 ? `${ordinal(above + 1)} of ${table.length}, tied with ${same - 1} other${same > 2 ? "s" : ""}` : `${ordinal(above + 1)} of ${table.length}`;
+  return same > 1 ? `${ordinalWord(above + 1)} of ${table.length}, tied with ${same - 1} other${same > 2 ? "s" : ""}` : `${ordinalWord(above + 1)} of ${table.length}`;
 }
 function natLabel(g, z) { return `the ${z.name}${z.minor ? " (a small state)" : ""}`; }
 function ratioText(r) { return r >= 0.95 && r <= 1.05 ? "about equal to ours" : r > 1 ? `${r.toFixed(1)} times ours` : `${Math.round(r * 100)}% of ours`; }
