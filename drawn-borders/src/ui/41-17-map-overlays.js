@@ -102,6 +102,7 @@ function dispatchHtml(d) {
     ${warHtml}
     <div class="block"><span class="eyebrow">News</span>${newsHtml}</div>
     ${econHtml}
+    ${tradeDispatchHtml(d)}
     ${citiesDispatchHtml(d)}
     ${groupsDispatchHtml(d)}
     ${peopleDispatchHtml(d)}

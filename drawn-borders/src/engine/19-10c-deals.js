@@ -16,7 +16,8 @@ function termText(g, t) {
       if (t.by === "both") return "an end to the embargoes on both sides";
       const es = embargoesBy(g, t.by, t.on);
       const ons = t.on !== undefined ? [t.on] : [...new Set(es.map(e => e.on))];
-      return `an end to the ${nameOf(g, t.by)}'s embargo${ons.length === 1 ? ` on the ${nameOf(g, ons[0])}${es.length ? ` (${embargoGoodsText(es)})` : ""}` : ""}`;
+      const the = id => (id === PLAYER ? nameOf(g, id) : `the ${nameOf(g, id)}`);   // the player's own name takes no "the"
+      return `an end to ${the(t.by)}'s embargo${ons.length === 1 ? ` on ${the(ons[0])}${es.length ? ` (${embargoGoodsText(es)})` : ""}` : ""}`;
     }
     default: return "an unknown term";
   }

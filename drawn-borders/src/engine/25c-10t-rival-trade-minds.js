@@ -292,7 +292,7 @@ function rivalEmbargoOptions(w, g, n) {
     else if (c.score > 0) lines.push({ code: "cause", label: `It still serves a purpose: ${c.lines[0] ? lcFirst(c.lines[0].label) : "pressure on them"}`, pts: -Math.round(c.score * 10) / 10 });
     out.push({ kind: "lift_embargo_self", target: e.on, embargoId: e.id, good: e.k, terms: [], threat: false, self: Math.round(Math.min(EMBARGO_AI.cap, self)), other: 0,
       likely: young ? "no goodwill: it began less than a year ago" : "they will welcome it",
-      label: `Lift our embargo on the ${nameOf(g, e.on)} (${embargoGoodsText([e])})`, lines });
+      label: `Lift our embargo on ${theNation(g, e.on)} (${embargoGoodsText([e])})`, lines });
   }
   return out;
 }
@@ -332,7 +332,7 @@ function embargoCause(w, g, e, opts = {}) {
   const lines = embargoReasonLines(g, P, e.k, est, { original: orig, inForce: true });
   const score = Math.min(EMBARGO_AI.cap, embargoPtsSum(lines));
   const has = code => lines.some(l => l.code === code);
-  const endText = { pressure: g.opening && g.opening.by === e.by ? "the claim is settled" : "the quarrel over the refused demands is over", ally_war: "the war it was about is over", war_goods: "the trade in war goods it was about has stopped" };
+  const endText = { pressure: g.opening && g.opening.by === e.by ? (g.opening.stage === "over" ? "the claim is settled" : "it will press its claim in other ways") : "the quarrel over the refused demands is over", ally_war: "the war it was about is over", war_goods: "the trade in war goods it was about has stopped" };
   const ended = !!endText[e.why] && !has(e.why);
   return { score, lines, ended, text: ended ? endText[e.why] : "" };
 }
@@ -366,7 +366,7 @@ function executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say) {
     const key = o.good === "all" || TRADE.key.includes(o.good);
     dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${heard ? `, ${heard}` : ""}. Our merchants are looking for other sellers.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
   }
-  say(`${embargoVerb(r.e).replace(/^./, ch => ch.toUpperCase())} the ${nameOf(g, y)}.`, why || (top ? top.label : ""));
+  say(`${embargoVerb(r.e).replace(/^./, ch => ch.toUpperCase())} ${theNation(g, y)}.`, why || (top ? top.label : ""));
   return true;
 }
 function executeRivalLift(g, w, n, o, why, dispatch, say) {
@@ -397,7 +397,7 @@ function tellLift(g, e, why, dispatch, say) {
   if (e.by !== PLAYER) remember(g, e.by, `We lifted our embargo on the ${nameOf(g, e.on)} (${goods})${why ? `: ${why}` : ""}.`);
   if (!dispatch) return;
   if (e.on === PLAYER) dispatch.trade.push({ text: `The ${nameOf(g, e.by)} lifted its embargo on us (${goods})${why ? `: ${why}` : ""}. Our merchants can trade with them again.`, tone: "good", nid: e.by, minister: e.k === "food" ? "agriculture" : "economy" });
-  const text = `Lifted its embargo on the ${nameOf(g, e.on)} (${goods}).`;
+  const text = `Lifted its embargo on ${theNation(g, e.on)} (${goods}).`;
   const cap = why ? why.charAt(0).toUpperCase() + why.slice(1) + "." : null;
   if (say) say(text, cap);
   else if (e.by !== PLAYER) { dispatch.abroad.push({ nid: e.by, text, why: cap }); noteFor(g.nations[e.by], g, text, cap); }
@@ -635,7 +635,7 @@ function tradeBrief(g, n, econ) {
   }
   const list = m => [...m].map(([id, gs]) => `${bJoin(gs)} ${m === buys ? "from" : "to"} ${who(id)}`).join("; ");
   const on = embargoesOn(g, n.id).map(e => `the ${nameOf(g, e.by)} ${embargoVerb(e)} us since ${seasonLabel(e.since)}`);
-  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} the ${nameOf(g, e.on)} since ${seasonLabel(e.since)} (${embargoAim(g, n.id, e.on, e.why)})`);
+  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} ${theNation(g, e.on)} since ${seasonLabel(e.since)} (${embargoAim(g, n.id, e.on, e.why)})`);
   const closed = econ && econ.trade && !(econ.trade.worldImportCapRaw > 0);
   return `Trade (a year): we buy ${list(buys) || "nothing from abroad"}; we sell ${list(sells) || "nothing abroad"}${closed ? `; the world market beyond the map is closed to us${tr.goods.gold && tr.goods.gold.to.some(f => f.nid < 0) ? ", except for gold (its banks buy all we mine)" : ""}: we have no harbor on the ocean, and no trade partner with one` : ""}${on.length ? `. Embargoes on us: ${on.join("; ")}` : ""}${by.length ? `. Our embargoes: ${by.join("; ")}` : ""}.`;
 }

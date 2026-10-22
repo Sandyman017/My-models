@@ -46,6 +46,8 @@ function ensureTrade(g) {
   for (const k in E) if (T[k] === undefined || T[k] === null) T[k] = E[k];
   return T;
 }
+// "the Galstad Directorate", but the player's own name as written ("Testland")
+function theNation(g, id) { return id === PLAYER ? nameOf(g, id) : `the ${nameOf(g, id)}`; }
 function linkKey(a, b) { return a < b ? `${a}-${b}` : `${b}-${a}`; }
 function tradeLink(g, a, b) { return g.trade && g.trade.links ? g.trade.links[linkKey(a, b)] || null : null; }
 
@@ -648,11 +650,11 @@ function declareEmbargo(w, g, by, on, k, dir, why, opts = {}) {
   for (const a of alliesOf(g, on)) if (a !== by) addMod(g, a, by, "embargoed_ally", "Embargoed our ally", -3, 0.5, -6);
   if (opts.food || k === "food") {
     const E = computeEconomy(w, g, on);
-    if (E.famineShare > 0.02) for (const z of liveNations(g)) if (z.id !== by && z.id !== on) addMod(g, z.id, by, "starved", `Let the ${nameOf(g, on)} go hungry`, -6, 0.5, -12);
+    if (E.famineShare > 0.02) for (const z of liveNations(g)) if (z.id !== by && z.id !== on) addMod(g, z.id, by, "starved", `Let ${theNation(g, on)} go hungry`, -6, 0.5, -12);
   }
   // carrying out a threat of embargo counts like carrying out any threat
   if (g.commitments.some(c => c.by === by && c.against === on)) fulfilCommitment(g, by, on, "embargo");
-  const text = `The ${nameOf(g, by)} ${embargoVerb(e)} the ${nameOf(g, on)}${e.food && e.k === "all" ? " (food included)" : ""}.`;
+  const text = `${capFirst(theNation(g, by))} ${embargoVerb(e)} ${theNation(g, on)}${e.food && e.k === "all" ? " (food included)" : ""}.`;
   remember(g, on, `${nameOf(g, by)}: ${label.toLowerCase()}.`);
   remember(g, by, `We placed an embargo on ${nameOf(g, on)}.`);
   addChronicle(g, text, by === PLAYER || on === PLAYER ? "warn" : "neutral", by === PLAYER ? PLAYER : on === PLAYER ? PLAYER : null);
@@ -679,7 +681,7 @@ function liftEmbargo(w, g, id, by, opts = {}) {
   // a retaliation ends when what it answered ends
   for (const x of T.embargoes.filter(x => x.answers === e.id)) x.answers = null;
   if (opts.paid) T.promises = (T.promises || []).filter(p => !(p.by === e.by && p.on === e.on)).concat([{ by: e.by, on: e.on, until: g.turn + TRADE.promise }]);
-  const text = `The ${nameOf(g, e.by)} lifted its embargo on the ${nameOf(g, e.on)} (${e.k === "all" ? "all trade" : GOODS[e.k].label.toLowerCase()}).`;
+  const text = `${capFirst(theNation(g, e.by))} lifted its embargo on ${theNation(g, e.on)} (${e.k === "all" ? "all trade" : GOODS[e.k].label.toLowerCase()}).`;
   remember(g, e.on, `${nameOf(g, e.by)} lifted its embargo on us.`);
   addChronicle(g, text, e.by === PLAYER || e.on === PLAYER ? "good" : "neutral", e.by === PLAYER || e.on === PLAYER ? PLAYER : null);
   return { ok: true, text, e };
@@ -724,7 +726,7 @@ function sendFoodAid(w, g, from, to, months) {
   if (qt.opinion > 0) addMod(g, to, from, "sent_aid", "Sent us aid when we needed it", qt.opinion, 0.25, 20);
   T.aid = (T.aid || []).concat([{ turn: g.turn, from, to, q: sr(qt.q, 4) }]).slice(-TRADE.aidKeep);
   bumpWorld(g);
-  const text = `The ${nameOf(g, from)} sent grain to the ${nameOf(g, to)}: food for ${fmtPeople(qt.q * 12 / Math.max(1e-6, qt.months))} people for ${qt.months.toFixed(1)} months.`;
+  const text = `${capFirst(theNation(g, from))} sent grain to ${theNation(g, to)}: food for ${fmtPeople(qt.q * 12 / Math.max(1e-6, qt.months))} people for ${qt.months.toFixed(1)} months.`;
   remember(g, to, `${nameOf(g, from)} sent us grain when we were hungry.`);
   addChronicle(g, text, from === PLAYER || to === PLAYER ? "good" : "neutral", from === PLAYER || to === PLAYER ? PLAYER : null);
   return { ok: true, text, ...qt };

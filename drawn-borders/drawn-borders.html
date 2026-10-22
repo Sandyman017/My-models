@@ -6701,7 +6701,8 @@ function termText(g, t) {
       if (t.by === "both") return "an end to the embargoes on both sides";
       const es = embargoesBy(g, t.by, t.on);
       const ons = t.on !== undefined ? [t.on] : [...new Set(es.map(e => e.on))];
-      return `an end to the ${nameOf(g, t.by)}'s embargo${ons.length === 1 ? ` on the ${nameOf(g, ons[0])}${es.length ? ` (${embargoGoodsText(es)})` : ""}` : ""}`;
+      const the = id => (id === PLAYER ? nameOf(g, id) : `the ${nameOf(g, id)}`);   // the player's own name takes no "the"
+      return `an end to ${the(t.by)}'s embargo${ons.length === 1 ? ` on ${the(ons[0])}${es.length ? ` (${embargoGoodsText(es)})` : ""}` : ""}`;
     }
     default: return "an unknown term";
   }
@@ -10888,6 +10889,8 @@ function ensureTrade(g) {
   for (const k in E) if (T[k] === undefined || T[k] === null) T[k] = E[k];
   return T;
 }
+// "the Galstad Directorate", but the player's own name as written ("Testland")
+function theNation(g, id) { return id === PLAYER ? nameOf(g, id) : `the ${nameOf(g, id)}`; }
 function linkKey(a, b) { return a < b ? `${a}-${b}` : `${b}-${a}`; }
 function tradeLink(g, a, b) { return g.trade && g.trade.links ? g.trade.links[linkKey(a, b)] || null : null; }
 
@@ -11490,11 +11493,11 @@ function declareEmbargo(w, g, by, on, k, dir, why, opts = {}) {
   for (const a of alliesOf(g, on)) if (a !== by) addMod(g, a, by, "embargoed_ally", "Embargoed our ally", -3, 0.5, -6);
   if (opts.food || k === "food") {
     const E = computeEconomy(w, g, on);
-    if (E.famineShare > 0.02) for (const z of liveNations(g)) if (z.id !== by && z.id !== on) addMod(g, z.id, by, "starved", `Let the ${nameOf(g, on)} go hungry`, -6, 0.5, -12);
+    if (E.famineShare > 0.02) for (const z of liveNations(g)) if (z.id !== by && z.id !== on) addMod(g, z.id, by, "starved", `Let ${theNation(g, on)} go hungry`, -6, 0.5, -12);
   }
   // carrying out a threat of embargo counts like carrying out any threat
   if (g.commitments.some(c => c.by === by && c.against === on)) fulfilCommitment(g, by, on, "embargo");
-  const text = `The ${nameOf(g, by)} ${embargoVerb(e)} the ${nameOf(g, on)}${e.food && e.k === "all" ? " (food included)" : ""}.`;
+  const text = `${capFirst(theNation(g, by))} ${embargoVerb(e)} ${theNation(g, on)}${e.food && e.k === "all" ? " (food included)" : ""}.`;
   remember(g, on, `${nameOf(g, by)}: ${label.toLowerCase()}.`);
   remember(g, by, `We placed an embargo on ${nameOf(g, on)}.`);
   addChronicle(g, text, by === PLAYER || on === PLAYER ? "warn" : "neutral", by === PLAYER ? PLAYER : on === PLAYER ? PLAYER : null);
@@ -11521,7 +11524,7 @@ function liftEmbargo(w, g, id, by, opts = {}) {
   // a retaliation ends when what it answered ends
   for (const x of T.embargoes.filter(x => x.answers === e.id)) x.answers = null;
   if (opts.paid) T.promises = (T.promises || []).filter(p => !(p.by === e.by && p.on === e.on)).concat([{ by: e.by, on: e.on, until: g.turn + TRADE.promise }]);
-  const text = `The ${nameOf(g, e.by)} lifted its embargo on the ${nameOf(g, e.on)} (${e.k === "all" ? "all trade" : GOODS[e.k].label.toLowerCase()}).`;
+  const text = `${capFirst(theNation(g, e.by))} lifted its embargo on ${theNation(g, e.on)} (${e.k === "all" ? "all trade" : GOODS[e.k].label.toLowerCase()}).`;
   remember(g, e.on, `${nameOf(g, e.by)} lifted its embargo on us.`);
   addChronicle(g, text, e.by === PLAYER || e.on === PLAYER ? "good" : "neutral", e.by === PLAYER || e.on === PLAYER ? PLAYER : null);
   return { ok: true, text, e };
@@ -11566,7 +11569,7 @@ function sendFoodAid(w, g, from, to, months) {
   if (qt.opinion > 0) addMod(g, to, from, "sent_aid", "Sent us aid when we needed it", qt.opinion, 0.25, 20);
   T.aid = (T.aid || []).concat([{ turn: g.turn, from, to, q: sr(qt.q, 4) }]).slice(-TRADE.aidKeep);
   bumpWorld(g);
-  const text = `The ${nameOf(g, from)} sent grain to the ${nameOf(g, to)}: food for ${fmtPeople(qt.q * 12 / Math.max(1e-6, qt.months))} people for ${qt.months.toFixed(1)} months.`;
+  const text = `${capFirst(theNation(g, from))} sent grain to ${theNation(g, to)}: food for ${fmtPeople(qt.q * 12 / Math.max(1e-6, qt.months))} people for ${qt.months.toFixed(1)} months.`;
   remember(g, to, `${nameOf(g, from)} sent us grain when we were hungry.`);
   addChronicle(g, text, from === PLAYER || to === PLAYER ? "good" : "neutral", from === PLAYER || to === PLAYER ? PLAYER : null);
   return { ok: true, text, ...qt };
@@ -12151,7 +12154,7 @@ function rivalEmbargoOptions(w, g, n) {
     else if (c.score > 0) lines.push({ code: "cause", label: `It still serves a purpose: ${c.lines[0] ? lcFirst(c.lines[0].label) : "pressure on them"}`, pts: -Math.round(c.score * 10) / 10 });
     out.push({ kind: "lift_embargo_self", target: e.on, embargoId: e.id, good: e.k, terms: [], threat: false, self: Math.round(Math.min(EMBARGO_AI.cap, self)), other: 0,
       likely: young ? "no goodwill: it began less than a year ago" : "they will welcome it",
-      label: `Lift our embargo on the ${nameOf(g, e.on)} (${embargoGoodsText([e])})`, lines });
+      label: `Lift our embargo on ${theNation(g, e.on)} (${embargoGoodsText([e])})`, lines });
   }
   return out;
 }
@@ -12191,7 +12194,7 @@ function embargoCause(w, g, e, opts = {}) {
   const lines = embargoReasonLines(g, P, e.k, est, { original: orig, inForce: true });
   const score = Math.min(EMBARGO_AI.cap, embargoPtsSum(lines));
   const has = code => lines.some(l => l.code === code);
-  const endText = { pressure: g.opening && g.opening.by === e.by ? "the claim is settled" : "the quarrel over the refused demands is over", ally_war: "the war it was about is over", war_goods: "the trade in war goods it was about has stopped" };
+  const endText = { pressure: g.opening && g.opening.by === e.by ? (g.opening.stage === "over" ? "the claim is settled" : "it will press its claim in other ways") : "the quarrel over the refused demands is over", ally_war: "the war it was about is over", war_goods: "the trade in war goods it was about has stopped" };
   const ended = !!endText[e.why] && !has(e.why);
   return { score, lines, ended, text: ended ? endText[e.why] : "" };
 }
@@ -12225,7 +12228,7 @@ function executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say) {
     const key = o.good === "all" || TRADE.key.includes(o.good);
     dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${heard ? `, ${heard}` : ""}. Our merchants are looking for other sellers.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
   }
-  say(`${embargoVerb(r.e).replace(/^./, ch => ch.toUpperCase())} the ${nameOf(g, y)}.`, why || (top ? top.label : ""));
+  say(`${embargoVerb(r.e).replace(/^./, ch => ch.toUpperCase())} ${theNation(g, y)}.`, why || (top ? top.label : ""));
   return true;
 }
 function executeRivalLift(g, w, n, o, why, dispatch, say) {
@@ -12256,7 +12259,7 @@ function tellLift(g, e, why, dispatch, say) {
   if (e.by !== PLAYER) remember(g, e.by, `We lifted our embargo on the ${nameOf(g, e.on)} (${goods})${why ? `: ${why}` : ""}.`);
   if (!dispatch) return;
   if (e.on === PLAYER) dispatch.trade.push({ text: `The ${nameOf(g, e.by)} lifted its embargo on us (${goods})${why ? `: ${why}` : ""}. Our merchants can trade with them again.`, tone: "good", nid: e.by, minister: e.k === "food" ? "agriculture" : "economy" });
-  const text = `Lifted its embargo on the ${nameOf(g, e.on)} (${goods}).`;
+  const text = `Lifted its embargo on ${theNation(g, e.on)} (${goods}).`;
   const cap = why ? why.charAt(0).toUpperCase() + why.slice(1) + "." : null;
   if (say) say(text, cap);
   else if (e.by !== PLAYER) { dispatch.abroad.push({ nid: e.by, text, why: cap }); noteFor(g.nations[e.by], g, text, cap); }
@@ -12494,7 +12497,7 @@ function tradeBrief(g, n, econ) {
   }
   const list = m => [...m].map(([id, gs]) => `${bJoin(gs)} ${m === buys ? "from" : "to"} ${who(id)}`).join("; ");
   const on = embargoesOn(g, n.id).map(e => `the ${nameOf(g, e.by)} ${embargoVerb(e)} us since ${seasonLabel(e.since)}`);
-  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} the ${nameOf(g, e.on)} since ${seasonLabel(e.since)} (${embargoAim(g, n.id, e.on, e.why)})`);
+  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} ${theNation(g, e.on)} since ${seasonLabel(e.since)} (${embargoAim(g, n.id, e.on, e.why)})`);
   const closed = econ && econ.trade && !(econ.trade.worldImportCapRaw > 0);
   return `Trade (a year): we buy ${list(buys) || "nothing from abroad"}; we sell ${list(sells) || "nothing abroad"}${closed ? `; the world market beyond the map is closed to us${tr.goods.gold && tr.goods.gold.to.some(f => f.nid < 0) ? ", except for gold (its banks buy all we mine)" : ""}: we have no harbor on the ocean, and no trade partner with one` : ""}${on.length ? `. Embargoes on us: ${on.join("; ")}` : ""}${by.length ? `. Our embargoes: ${by.join("; ")}` : ""}.`;
 }
@@ -23456,12 +23459,13 @@ function newComposer(to, terms = []) {
 function composerTermOptions(g, to) {
   const war = atWar(g, PLAYER, to);
   const opts = war ? [["peace", "Peace"]] : [["trade", "Trade agreement"], ["nap", "Non-aggression pact"], ["alliance", "Defensive alliance"], ["border", "Border accord"]];
-  return opts.concat([["payment", "One-off payment"], ["tribute", "Payment each season"], ["city", "Hand over a town"]]);
+  return opts.concat(liftTermOptions(g, to), [["payment", "One-off payment"], ["tribute", "Payment each season"], ["city", "Hand over a town"]]);
 }
 
 function readComposerTerm(c) {
   const g = game;
   if (["trade", "nap", "alliance", "border", "peace"].includes(c.termType)) return { type: c.termType };
+  if (/^lift_/.test(c.termType)) return readLiftTerm(c);
   if (c.termType === "payment" || c.termType === "tribute") {
     const amount = Math.round(Number(c.amount) * 2) / 2;
     const t = { type: c.termType, from: c.dir === "us" ? PLAYER : c.to, amount };
@@ -23593,6 +23597,7 @@ function envoyImpactLines(g, w, it) {
       if (city) lines.push(t.from === PLAYER ? `You lose ${city.name} and ${fmtMoney(regionValue(w, g, city).gdp)} of output a year` : `You gain ${city.name}`);
     }
     if (t.type === "peace") lines.push("The war ends; occupied land returns to its owners unless handed over");
+    if (t.type === "lift_embargo") lines.push(...liftImpactLines(g, w, t, it.from, it.terms));
   }
   if (it.threat) {
     const ratio = armyPower(g, it.from) / Math.max(1, armyPower(g, PLAYER));
@@ -23603,7 +23608,7 @@ function envoyImpactLines(g, w, it) {
 
 function envoyCardHtml(it) {
   const g = game, n = g.nations[it.from];
-  const label = { call: "Call to arms", warning: "Warning", declaration: "Declaration of war", demand_tribute: "Demand", demand_city: "Demand", peace: "Peace offer", peace_demand: "Peace offer", peace_concede: "Peace offer" }[it.kind] || "Proposal";
+  const label = { call: "Call to arms", warning: "Warning", declaration: "Declaration of war", demand_tribute: "Demand", demand_city: "Demand", peace: "Peace offer", peace_demand: "Peace offer", peace_concede: "Peace offer", embargo: "Embargo" }[it.kind] || (it.terms.some(t => t.type === "lift_embargo") ? "Trade" : "Proposal");
   const status = { accepted: "You accepted", declined: "You declined", ignored: "You left it unanswered", void: "No longer possible", info: "" }[it.status] || "";
   const impact = it.status === "open" ? envoyImpactLines(g, world, it) : [];
   const actions = it.status === "open" ? `<div class="actions">
@@ -23757,6 +23762,7 @@ function rivalCardHtml(n) {
       <div><span>Towns</span><span class="num">${econ.cities.length}</span></div>
     </div>
     <div class="block" style="gap:6px"><span class="eyebrow">Treaties with you</span><div class="chips">${chips}</div>${cancelAsk}</div>
+    ${rivalTradeHtml(n)}
     ${rivalCabinetHtml(n)}
     ${rivalGroupsHtml(n)}
     ${rivalPeopleHtml(n)}
@@ -23783,12 +23789,13 @@ function nationRowHtml(n) {
   const war = atWar(g, PLAYER, n.id);
   const tr = treatiesBetween(g, n.id, PLAYER).map(t => TREATY_INFO[t.type].label.toLowerCase());
   const d = gap(world, g, PLAYER, n.id);
-  const status = war ? `<span class="tone-bad">at war</span>` : tr.length ? escapeHtml(tr.join(", ")) : d === 0 ? "neighbor" : "";
+  const status = war ? `<span class="tone-bad">at war</span>` : tradeRowEmbargo(n.id) ? `<span class="tone-bad">embargo</span>${tr.length ? ` · ${escapeHtml(tr.join(", "))}` : ""}` : tr.length ? escapeHtml(tr.join(", ")) : d === 0 ? "neighbor" : "";
+  const tradeNote = war ? "" : tradeRowNote(n.id);
   const open = ui.openNation === n.id;
   return `<button class="nation-row ${open ? "on" : ""}" type="button" data-action="nation-open" data-nid="${n.id}" aria-expanded="${open}" style="--c:${n.color}">
     <span class="swatch"></span>
     <span class="nr-main"><strong>${escapeHtml(n.name)}</strong><span class="muted small">${n.minor ? "City-state" : ARCHETYPES[n.archetype].label} · ${n.leader ? escapeHtml(leaderName(n)) : ""}</span></span>
-    <span class="nr-side"><span class="num tone-${toneOf(op)}">${signed(op)}</span><span class="small muted">${status}</span>${riskPillHtml(n.id)}</span>
+    <span class="nr-side"><span class="num tone-${toneOf(op)}">${signed(op)}</span><span class="small muted">${status}</span>${tradeNote ? `<span class="small muted">${escapeHtml(tradeNote)}</span>` : ""}${riskPillHtml(n.id)}</span>
   </button>`;
 }
 
@@ -23965,6 +23972,7 @@ function dispatchHtml(d) {
     ${warHtml}
     <div class="block"><span class="eyebrow">News</span>${newsHtml}</div>
     ${econHtml}
+    ${tradeDispatchHtml(d)}
     ${citiesDispatchHtml(d)}
     ${groupsDispatchHtml(d)}
     ${peopleDispatchHtml(d)}
@@ -27729,6 +27737,7 @@ function seasonHeadlines(d) {
   for (const x of d.firsts || []) add(x.nid === PLAYER ? 70 : 44, "star", x.text, x.nid === PLAYER ? "good" : "neutral", { panel: "agenda" });
   for (const x of d.economy || []) add(x.tone === "bad" ? 64 : x.tone === "good" ? 55 : 40, /harvest|food|granar/i.test(x.text) ? "food" : /moved|people/i.test(x.text) ? "people" : "output", x.text, x.tone, { panel: "economy" });
   for (const t of d.diplomacy || []) add(mentionsMe(t) ? 62 : 46, "globe", t, "neutral", { panel: "nations" });
+  for (const x of d.trade || []) add(x.pause ? 94 : x.tone === "bad" ? 70 : x.tone === "warn" ? 62 : x.tone === "good" ? 52 : 40, "freighter", x.text, x.tone, { panel: "trade" });
   for (const a of d.abroad || []) {
     const t = `The ${nameOf(g, a.nid)}: ${a.text.charAt(0).toLowerCase()}${a.text.slice(1)}`;
     const big = /\bwar\b|civil war|collapsed|conquered|Grand Harbor|Railway|Academy|Stock Exchange|World's Fair|Monument|Atomic|Broadcasting|Fortresses|Great Dam/.test(a.text);
@@ -27845,6 +27854,8 @@ function autoPauseReason(d, before) {
   const fresh = g.inbox.filter(it => it.status === "open" && !before.inbox.includes(it.id));
   const letter = fresh.find(it => it.threat) || fresh[0];   // a demand first: it matters most
   if (letter) return { text: `${letter.threat ? "A demand" : "A letter"} from the ${nameOf(g, letter.from)} is waiting for your answer${fresh.length > 1 ? `, and ${fresh.length - 1} more letter${fresh.length > 2 ? "s" : ""}` : ""}.`, act: { label: "Read it", panel: "letters" } };
+  const cut = (d.trade || []).find(x => x.pause);   // a new embargo on food, fuel or what industry cannot do without
+  if (cut) return { text: shortLine(cut.text, 150), act: { label: "Trade", panel: "trade" } };
   if ((d.opening || []).some(x => x.tone === "bad")) return { text: shortLine(d.opening.find(x => x.tone === "bad").text, 150), act: { label: "Army", panel: "army" } };
   return null;
 }
@@ -27899,6 +27910,98 @@ function renderTimeOverlays() {
   if (pb) { const h = playing ? pauseBannerHtml() : ""; pb.hidden = !h; pb.innerHTML = h; }
 }
 
+/* =====================================================================
+   17g. Trade in the Nations panel, the letters and the season's news: what each rival sells us and buys from us,
+        embargoes on the rival card, "lift the embargo" in letters, and the merchants' news in the season report.
+   ===================================================================== */
+/* The short line on a nation's row: the trade that ties us most ("sells us 70% of our oil"). */
+function tradeRowNote(nid) {
+  if (!tradeBookReady()) return "";
+  const W = tradeWith(game, PLAYER, nid);
+  const top = o => Object.entries(o).filter(([, x]) => !x.blocked && x.shareOfNeed >= 0.3).sort((a, b) => b[1].shareOfNeed - a[1].shareOfNeed)[0];
+  const ours = top(W.bSells), theirs = top(W.aSells);
+  if (ours && (!theirs || ours[1].shareOfNeed >= theirs[1].shareOfNeed)) return `sells us ${pct(Math.min(1, ours[1].shareOfNeed))} of our ${goodWord(ours[0])}`;
+  if (theirs) return `buys ${pct(Math.min(1, theirs[1].shareOfNeed))} of its ${goodWord(theirs[0])} from us`;
+  return W.aSellsV + W.bSellsV > 0.05 ? "trades with us" : "";
+}
+function tradeRowEmbargo(nid) { return tradeBookReady() && (embargoesBy(game, PLAYER, nid).length > 0 || embargoesBy(game, nid, PLAYER).length > 0); }
+
+/* The rival card: trade both ways, the route, embargoes, and the buttons to cut or restore it. */
+function rivalTradeHtml(n) {
+  if (!tradeBookReady()) return "";
+  const W = tradeWith(game, PLAYER, n.id), econ = economies()[PLAYER];
+  const line = (k, x, weSell) => `<li><span>${GOODS[k].label}${x.blocked ? ` <span class="tone-bad small">cut</span>` : ""}<span class="muted small"> · ${pct(Math.min(1, x.shareOfNeed))} of ${weSell ? "their" : "our"} need</span></span><span class="num">${fmtMoneyFine(x.v)}</span></li>`;
+  const sells = Object.entries(W.bSells).sort((a, b) => b[1].v - a[1].v).slice(0, 4).map(([k, x]) => line(k, x, false)).join("");
+  const buys = Object.entries(W.aSells).sort((a, b) => b[1].v - a[1].v).slice(0, 4).map(([k, x]) => line(k, x, true)).join("");
+  const L = tradeLinkOf(econ, n.id);
+  const ours = embargoesBy(game, PLAYER, n.id), theirs = embargoesBy(game, n.id, PLAYER);
+  const emb = ours.map(e => `<li><span>We ${escapeHtml(embargoVerb(e))} them<span class="muted small"> · since ${seasonLabel(e.since)}</span></span><button class="btn small" type="button" data-action="trade-lift-open" data-id="${e.id}">Lift…</button></li>`)
+    .concat(theirs.map(e => { const why = embargoWhyHeard(game, e, true); return `<li><span class="tone-bad">${escapeHtml(embargoLabel(game, e))}</span><span class="muted small">since ${seasonLabel(e.since)}${why ? `, ${escapeHtml(why)}` : ""}</span></li>`; })).join("");
+  const war = atWar(game, PLAYER, n.id);
+  return `<div class="block" style="gap:6px"><span class="eyebrow">Trade with you · a year</span>
+    <p class="small muted">${L ? `Route: ${escapeHtml(tradeRouteWord(L))}.` : "No route between us: no shared border, caravan road or sea lane."}${W.promise ? ` ${W.promise.by === PLAYER ? "We" : "They"} promised not to embargo ${W.promise.by === PLAYER ? "them" : "us"} until ${seasonLabel(W.promise.until)}.` : ""}</p>
+    ${sells ? `<span class="small">They sell us</span><ul class="factors">${sells}</ul>` : ""}
+    ${buys ? `<span class="small">They buy from us</span><ul class="factors">${buys}</ul>` : ""}
+    ${!sells && !buys && L ? `<p class="small muted">No contracts between us this season.</p>` : ""}
+    ${emb ? `<ul class="factors">${emb}</ul>` : ""}
+    <div class="trade-btns">
+      ${war ? "" : `<button class="btn small danger" type="button" data-action="trade-embargo-open" data-nid="${n.id}">Embargo…</button>`}
+      ${theirs.length ? `<button class="btn small" type="button" data-action="trade-ask-lift" data-nid="${n.id}">Ask them to lift</button>` : ""}
+      <button class="btn small" type="button" data-action="trade-open" data-nid="${n.id}">In the Trade panel</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- Letters: lifting embargoes ---------- */
+// the composer's lift terms, offered only when such an embargo stands
+function liftTermOptions(g, to) {
+  if (!g.trade || atWar(g, PLAYER, to)) return [];
+  const them = embargoesBy(g, to, PLAYER).length > 0, us = embargoesBy(g, PLAYER, to).length > 0;
+  const out = [];
+  if (them) out.push(["lift_them", "They lift their embargo on us"]);
+  if (us) out.push(["lift_us", "We lift our embargo on them"]);
+  if (them && us) out.push(["lift_both", "Both lift their embargoes"]);
+  return out;
+}
+function readLiftTerm(c) {
+  if (c.termType === "lift_both") return { type: "lift_embargo", by: "both" };
+  return c.termType === "lift_us" ? { type: "lift_embargo", by: PLAYER, on: c.to } : { type: "lift_embargo", by: c.to, on: PLAYER };
+}
+/* What a lift in a proposal would do for us, worked out on a copy of the world where the embargo is gone. */
+function liftImpactLines(g, w, t, other, terms) {
+  const lines = [];
+  const base = computeEconomy(w, g, PLAYER);
+  for (const L of t.by === "both" ? [other, PLAYER] : [t.by]) {
+    const V = L === PLAYER ? other : PLAYER;
+    const es = embargoesBy(g, L, V);
+    if (!es.length) continue;
+    const d = computeEconomy(w, hypothetical(g, { lift: { by: L, on: V } }), PLAYER).gdp - base.gdp;
+    const paid = terms.some(x => (x.type === "payment" || x.type === "tribute") && x.from === V);
+    const money = Math.abs(d) >= 0.0005 ? `: your output ${fmtSignedMoneyFine(d)} a year as trade resumes` : "";
+    if (L === PLAYER) lines.push(`You lift your embargo on them (${embargoGoodsText(es)})${money}${paid ? `. As they pay for it, you promise not to bring it back for ${TRADE.promise / 4} years` : ""}`);
+    else lines.push(`Their embargo on you ends (${embargoGoodsText(es)})${money}${paid ? `. As you pay for it, they promise not to bring it back for ${TRADE.promise / 4} years` : ""}`);
+  }
+  return lines;
+}
+
+/* ---------- The season report: the merchants' news, under the minister who reports it ---------- */
+function tradeDispatchHtml(d) {
+  const list = d.trade || [];
+  if (!list.length) return "";
+  const n = game.nations[PLAYER];
+  const dot = t => (t === "good" ? "var(--good)" : t === "bad" ? "var(--bad)" : t === "warn" ? "var(--warn)" : "var(--muted)");
+  const rows = list.map(x => {
+    const M = x.minister && ministryActive(n, x.minister) ? ministry(n, x.minister).minister : null;
+    return `<li><span class="dot" style="background:${dot(x.tone)}"></span><span>${M ? `<span class="who">${escapeHtml(M.name)} (${escapeHtml(MINISTRIES[x.minister].label)}):</span> ` : ""}${escapeHtml(x.text)}</span></li>`;
+  }).join("");
+  return `<div class="block"><span class="eyebrow">Trade</span><ul class="news">${rows}</ul>
+    <div class="actions"><button class="btn" type="button" data-action="trade-open">Open the Trade panel</button></div></div>`;
+}
+
+Object.assign(ACTIONS, {
+  "trade-open": el => { ui.dispatch = null; ui.tab = "trade"; if (el && el.dataset && el.dataset.nid !== undefined) { ui.tradeOpen = Number(el.dataset.nid); ui.tradeStress = null; } },
+  "trade-lift-open": el => { ui.tab = "trade"; ui.tradeLift = Number(el.dataset.id); },
+});
 /* =====================================================================
    16i. Cities in the panels and on the map: the city file, its mood and loyalty, programs, the Cities panel
    ===================================================================== */
