@@ -250,6 +250,8 @@ function checkCommitments(g) {
     if (g.turn - c.turn < 3) continue;
     g.commitments = g.commitments.filter(x => x !== c);
     if (!g.nations[c.by].alive || !g.nations[c.against].alive) continue;
+    // a threat to cut off trade is carried out by an embargo in force, and made moot by a war (no trade passes)
+    if (commitKind(c) === "embargo" && (atWar(g, c.by, c.against) || embargoesBy(g, c.by, c.against).length)) continue;
     const r = rel(g, c.against, c.by);
     r.cred = clamp(r.cred - 0.25, 0, 1);
     const what = commitKind(c) === "embargo" ? `to cut off ${c.k && GOODS[c.k] ? `our ${GOODS[c.k].label.toLowerCase()}` : "our trade"}` : "war";
