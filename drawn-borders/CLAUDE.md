@@ -26,6 +26,15 @@ Until v33 the game was one hand-edited 2.1 MB file. Now the source is split into
 2. `node tests/engine.test.js [worlds] [seasons]` — plays whole worlds with the engine in Node (default 2 × 12) and checks nothing breaks and the save round-trips.
 3. `node tests/trade.test.js [worlds] [seasons]` — checks trade between nations (default 2 × 10): contracts are sane, the same game signs the same contracts, an embargo cuts supply and its preview says so, grain reaches a hungry nation, the book survives a save and old saves get one.
 4. `node tests/browser.test.js` — opens the built game in Chrome (Playwright), founds a nation, plays 3 seasons, opens the Trade panel and the trade statistics, fails on any error or broken characters; screenshots in `tests/out/`.
+5. At the end of a version only: `node tests/compare.js 8 40 new.json` here and on the previous version (`git worktree add /tmp/old <commit>`, folder `/tmp/old/drawn-borders`), then `node tests/compare.js --diff old.json new.json` (output, stability, wars, the opening war, season time). It takes about 15 minutes of computer time but very little usage.
+
+## How we work (Maz's choice after v37: the same quality, less usage)
+v37 (trade) took about a day and a half and hit the usage limit many times. Most of that went to helper agents (each one re-reads the code from scratch, and their work was lost when the limit cut them off), not to the tests. So:
+- **No helper agents or parallel workers** unless Maz asks for them. Build it yourself, one part after another, committing and pushing after each part.
+- **A short plan, then build.** For a big feature: read the code it touches, give Maz a plan of about 10 lines in simple English, and start when he says yes. No separate research or critic rounds; review your own design against the code instead.
+- **Big ideas in parts** he can play between (each part finished, tested and released), rather than one giant version.
+- **Quality stays the same**: run the quick tests (steps 1–4) after each part; run the 8-world comparison (step 5) once at the end of a version; look at a screenshot of every new or changed screen (once, not again and again).
+- **A new chat for each new feature.** Keep this file and `game-plan.md` up to date, so a fresh chat knows everything it needs.
 
 ## Trade between nations (since v37)
 - **The merchants' book** `game.trade` (saved): once a season, at the end of `runSeason` after the harvest, `clearWorldTrade` signs the next season's contracts — who sells what to whom — by the price at the buyer's border (world price, transport by road, caravan or sea, import tax unless there is a trade agreement, the middlemen's cut from beyond the map). What no nation can sell or buy goes to the world market through harbors and trade partners. No randomness: ties go by nation id.
