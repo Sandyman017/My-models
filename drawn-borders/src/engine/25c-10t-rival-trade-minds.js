@@ -27,14 +27,20 @@ const EMBARGO_AI = {
   aidCooldown: 8,       // the same donor helps the same nation at most once in two years
   preferBand: 0.05,     // rivals buy from an ally or trade partner first when it is at most 5% dearer than the cheapest
 };
-const EMBARGO_AIMS = {   // the main reason a government gives for an embargo (stored on the entry as `why`)
+const EMBARGO_AIMS = {   // the main reason a government gives for its own embargo (the code is stored on the entry as `why`)
   retaliation: "to answer their embargo",
-  pressure: "to press its claim or its demands",
+  pressure: "to press our demands",
   threat: "to keep a dangerous neighbor from growing stronger",
   hostility: "out of old grudges",
-  ally_war: "because they make war on its ally",
-  war_goods: "because they sell war goods to its enemy",
+  ally_war: "because they make war on our ally",
+  war_goods: "because they sell war goods to our enemy",
 };
+/* A government's own words for its embargo on `on` ("to press our claim to Ostard"). */
+function embargoAim(g, by, on, why) {
+  const O = g.opening;
+  if (why === "pressure" && O && O.by === by && on === PLAYER && O.stage !== "over") return `to press our claim to ${O.town}`;
+  return EMBARGO_AIMS[why] || "our own choice";
+}
 
 /* Why `e.by` cut off `e.on`'s trade, as the nation it hurts hears it: a clause to follow a comma ("to press its claim
    to Ostard"). `you`: spoken to the player ("your army") rather than by its ministers ("our army"). */
@@ -264,7 +270,7 @@ function rivalEmbargoOptions(w, g, n) {
         const why = embargoMainWhy(reasons);
         out.push({ kind: "embargo", target: c.y, good: c.k, dir: "sell", food: c.k === "food", why, answers: c.orig ? c.orig.id : null, terms: [], threat: false,
           self: Math.round(self), other: 0, likely: "it takes effect at once",
-          label: `Stop selling ${tradeGoodWord(c.k)} to the ${nameOf(g, c.y)} (${EMBARGO_AIMS[why] || "an embargo"})`,
+          label: `Stop selling ${tradeGoodWord(c.k)} to the ${nameOf(g, c.y)} (${embargoAim(g, x, c.y, why)})`,
           lines: [...reasons, ...costs, ...pv.lines.filter(l => /^Their|^Fuel|^Metal/.test(l.label)).slice(0, 5).map(l => ({ code: "info", label: `${l.label}: ${l.value}`, pts: 0 }))],
           est: { q: est.q, hurt: sr(est.hurt, 2), keyDrop: sr(est.keyDrop, 3), armyDrop: sr(est.armyDrop, 3), lossThem: sr(est.lossThem, 3), lossUs: sr(est.lossUs, 3) } });
       }
@@ -618,18 +624,19 @@ function tradeBrief(g, n, econ) {
   const tr = tradeOf(g, n.id);
   const who = id => (id < 0 ? "the world market" : `the ${nameOf(g, id)}`);
   const val = x => x.v || 0;
-  const goods = Object.entries(tr.goods).map(([k, G]) => ({ k, G, v: G.from.reduce((s, f) => s + (f.code ? 0 : val(f)), 0) + G.to.reduce((s, f) => s + (f.code ? 0 : val(f)), 0) })).sort((a, b) => b.v - a.v).slice(0, 5);
-  const buys = [], sells = [];
+  // the goods worth most, each with its two main sellers and buyers, grouped by partner
+  const goods = Object.entries(tr.goods).map(([k, G]) => ({ k, G, v: G.from.reduce((s, f) => s + (f.code ? 0 : val(f)), 0) + G.to.reduce((s, f) => s + (f.code ? 0 : val(f)), 0) })).sort((a, b) => b.v - a.v).slice(0, 6);
+  const buys = new Map(), sells = new Map();
+  const put = (m, id, text) => { if (!m.has(id)) m.set(id, []); m.get(id).push(text); };
   for (const { k, G } of goods) {
-    const from = G.from.filter(f => !f.code).slice(0, 2).map(f => `${who(f.nid)}${f.share >= 0.05 ? ` (${pct(f.share)} of our need)` : ""}`);
-    if (from.length) buys.push(`${tradeGoodWord(k)} from ${bJoin(from)}`);
-    const to = G.to.filter(f => !f.code).slice(0, 2).map(f => who(f.nid));
-    if (to.length) sells.push(`${tradeGoodWord(k)} to ${bJoin(to)}`);
+    for (const f of G.from.filter(f => !f.code).slice(0, 2)) put(buys, f.nid, `${tradeGoodWord(k)}${f.share >= 0.05 ? ` (${pct(f.share)} of our need)` : ""}`);
+    for (const f of G.to.filter(f => !f.code).slice(0, 2)) put(sells, f.nid, tradeGoodWord(k));
   }
+  const list = m => [...m].map(([id, gs]) => `${bJoin(gs)} ${m === buys ? "from" : "to"} ${who(id)}`).join("; ");
   const on = embargoesOn(g, n.id).map(e => `the ${nameOf(g, e.by)} ${embargoVerb(e)} us since ${seasonLabel(e.since)}`);
-  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} the ${nameOf(g, e.on)} (${EMBARGO_AIMS[e.why] ? EMBARGO_AIMS[e.why].replace(/\bits\b/g, "our") : "our choice"})`);
+  const by = embargoesBy(g, n.id).map(e => `we ${embargoVerb(e)} the ${nameOf(g, e.on)} since ${seasonLabel(e.since)} (${embargoAim(g, n.id, e.on, e.why)})`);
   const closed = econ && econ.trade && !(econ.trade.worldImportCapRaw > 0);
-  return `Trade (a year): we buy ${buys.join("; ") || "nothing from abroad"}; we sell ${sells.join("; ") || "nothing abroad"}${closed ? "; the world market beyond the map is closed to us (no harbor on the ocean, and no trade partner with one)" : ""}${on.length ? `. Embargoes on us: ${on.join("; ")}` : ""}${by.length ? `. Our embargoes: ${by.join("; ")}` : ""}.`;
+  return `Trade (a year): we buy ${list(buys) || "nothing from abroad"}; we sell ${list(sells) || "nothing abroad"}${closed ? `; the world market beyond the map is closed to us${tr.goods.gold && tr.goods.gold.to.some(f => f.nid < 0) ? ", except for gold (its banks buy all we mine)" : ""}: we have no harbor on the ocean, and no trade partner with one` : ""}${on.length ? `. Embargoes on us: ${on.join("; ")}` : ""}${by.length ? `. Our embargoes: ${by.join("; ")}` : ""}.`;
 }
 function tradeRelationBrief(g, a, b) {
   const T = g.trade;

@@ -461,8 +461,10 @@ function optionText(o) {
   if (o.cat === "project") return `${o.id} ${o.label}. Cost ${fmtMoney(o.cost)}.${o.dGdp > 0.05 ? ` Output +${fmtMoney(o.dGdp)} a year.` : ""}${o.dFood > 0.05 ? ` Food for ${o.dFood.toFixed(1)}M more.` : ""} Engine note: ${o.note}`;
   if (o.cat === "law") return `${o.id} Change to ${o.label}, to ${o.why}. Budget ${fmtSignedMoney(o.dBalance)} a season; stability target ${signed1(o.dTarget)}.`;
   if (o.cat === "military") return `${o.id} ${o.label}. Engine note: ${o.why}.`;
-  const why = o.lines.slice().sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts)).slice(0, 4).map(l => `${l.label} (${l.pts > 0 ? "+" : ""}${Math.round(l.pts)})`).join("; ");
-  return `${o.id} ${o.label}. Engine value for us ${o.self > 0 ? "+" : ""}${o.self}${o.likely ? `; ${o.likely}` : ""}. Factors: ${why}.`;
+  const why = o.lines.filter(l => l.code !== "info").sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts)).slice(0, 4).map(l => `${l.label} (${l.pts > 0 ? "+" : ""}${Math.round(l.pts)})`).join("; ");
+  // an embargo also says what it would do to them (from the engine's preview)
+  const effect = o.lines.filter(l => l.code === "info").slice(0, 4).map(l => l.label).join("; ");
+  return `${o.id} ${o.label}. Engine value for us ${o.self > 0 ? "+" : ""}${o.self}${o.likely ? `; ${o.likely}` : ""}. Factors: ${why}.${effect ? ` Effect: ${effect}.` : ""}`;
 }
 
 function seasonPrompt(g, w, rivals, menus) {
