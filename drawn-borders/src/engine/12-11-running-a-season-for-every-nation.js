@@ -223,6 +223,8 @@ function runSeason(w, g, plan) {
     dispatch.diplomacy.push(`You left the ${nameOf(g, it.from)}'s envoy without an answer. They took it as a refusal.`);
   }
   expireDecisions(w, g, dispatch);
+  reviewEmbargoes(w, g, dispatch);   // rivals keep or lift their embargoes, by fixed rules (10t)
+  rivalPreferredSellers(w, g);
 
   for (const n of g.nations) n.navyUpkeep = g.sea ? navyUpkeep(g, n.id) : 0;
   // Rivals act on the decisions they made at the start of the season.
@@ -231,6 +233,7 @@ function runSeason(w, g, plan) {
     const menu = (plan && plan.menus && plan.menus[n.id]) || buildMenu(g, w, n);
     const orders = (plan && plan.orders && plan.orders[n.id]) || ruleOrders(g, w, n, menu);
     applyOrders(g, w, n, orders, menu, dispatch);
+    tradeEarlyWarning(w, g, n, menu, orders, dispatch);
   }
   cabinetSeasonStart(w, g, dispatch);
   const worksPaid = advanceWorks(w, g, dispatch);
@@ -329,7 +332,10 @@ function runSeason(w, g, plan) {
     if (P.alive && (Math.abs(h - 1) >= 0.03 || dry)) dispatch.economy.push({ text: `The harvest is in: ${harvestWord(h)}, ${pct(h)} of a normal year${dry ? ", after the dry summer" : ""}. It feeds the nation until next autumn.${h < 0.95 ? (store >= 0.5 ? ` If the fields can't feed everyone, the national reserve (${fmt1(store)} months of food) makes up the rest while it lasts.` : " There is no grain in the national reserve to make up a shortfall.") : ""}`, tone: h < 0.95 ? "warn" : "good" });
   }
   // merchants sign next season's contracts, with the harvest known (10s); the season's statistics then show them
+  noteEmbargoCuts(g);
   for (const x of clearWorldTrade(w, g, { history: true })) { dispatch.trade.push(x); addChronicle(g, x.text, x.tone === "good" ? "good" : x.tone === "warn" ? "warn" : "neutral", PLAYER); }
+  refreshEmbargoes(w, g);
+  rivalFoodAid(w, g, dispatch);
   checkGrowthDeeds(w, g);
   checkFirsts(w, g, dispatch);
   if (g.nations[PLAYER].alive) checkAmbitions(w, g, dispatch);

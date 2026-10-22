@@ -8,7 +8,7 @@ const ASSEMBLY = { maxOpen: 4, aiCooldown: 8, playerCooldown: 2, aidShare: 0.005
 const MOTIONS = {
   statement: { label: "Statement", vote: false, blurb: "Say something to the whole world. Every government can answer. Nothing is voted on, but who agrees with whom is remembered." },
   condemn:   { label: "Condemnation", vote: true, needsTarget: true, blurb: "Ask the world to condemn a nation. If it passes, every supporter thinks less of it, it is trusted less, and its people lose confidence (−4 stability)." },
-  sanction:  { label: "Sanctions", vote: true, needsTarget: true, blurb: "Ask the world to stop trading with a nation for three years. If it passes, every supporter ends its trade agreement with it and none may sign a new one." },
+  sanction:  { label: "Sanctions", vote: true, needsTarget: true, blurb: "Ask the world to stop trading with a nation for three years. If it passes, no nation that voted for it may buy from it or sell to it, their trade agreements with it end, and none may sign a new one. Its trade with the world beyond the map goes on." },
   peace:     { label: "Call for peace", vote: true, needsWar: true, blurb: "Ask the sides of a war to make peace. If it passes, both sides lean toward peace for two years, and whoever is still fighting a year later angers every supporter." },
   aid:       { label: "Appeal for aid", vote: true, blurb: "Ask the world for help. If it passes, every supporter sends 0.5% of its yearly output to the nation that asked." },
 };
@@ -96,14 +96,20 @@ function assemblyStance(g, w, X, t) {
     add(opA / 40, `our view of the ${nameOf(g, t.author)}`);
     if (atWar(g, X, T)) add(5, `we are at war with the ${nameOf(g, T)}`);
     if (hasTreaty(g, X, T, "alliance")) add(-4, `we are allied with the ${nameOf(g, T)}`);
-    if (hasTreaty(g, X, T, "trade")) add(t.kind === "sanction" ? -3 : -1, `we trade with the ${nameOf(g, T)}`);
+    // what our trade with them is really worth (10t): a need they fill weighs most; sanctions would end it
+    const ex = tradeExposure(g, X, T), book = !!(g.trade && g.trade.v), sanc = t.kind === "sanction";
+    if (book) {
+      if (ex.buy && ex.buy.share >= EMBARGO_AI.dependShare) add(-(sanc ? 1 + 3 * ex.buy.share : 0.5 + ex.buy.share), `we buy ${pct(ex.buy.share)} of our ${goodWord(ex.buy.k)} from the ${nameOf(g, T)}`);
+      if (ex.sellPct >= EMBARGO_AI.material) add(-(sanc ? clamp(1 + 50 * ex.sellPct, 1, 3) : 0.6), `the ${nameOf(g, T)} buys our ${goodWord(ex.sell.k)} (${pct1(ex.sellPct)} of our output)`);
+      if (!ex.material && hasTreaty(g, X, T, "trade")) add(sanc ? -1 : -0.5, `we have a trade agreement with the ${nameOf(g, T)}`);
+    } else if (hasTreaty(g, X, T, "trade")) add(sanc ? -3 : -1, `we trade with the ${nameOf(g, T)}`);
     if (hasTreaty(g, X, T, "tribute")) add(-1.5, "tribute binds us");
     const started = g.stats.warsStarted[T] || 0;
     const aggressor = g.wars.some(war => war.sideA[0] === T);
     if (aggressor) add(per.aggression < 1 ? 1.5 : 0.5, `the ${nameOf(g, T)} started a war`);
     if (started >= 2) add(0.8, "it has started wars before");
     if (hasTrait(nx, "honorable") && aggressor) add(1, "our leader despises aggression");
-    if (hasTrait(nx, "greedy") && t.kind === "sanction" && hasTreaty(g, X, T, "trade")) add(-1.5, "sanctions would cost us money");
+    if (hasTrait(nx, "greedy") && t.kind === "sanction" && (book ? ex.material : hasTreaty(g, X, T, "trade"))) add(-1.5, "sanctions would cost us money");
     // fear: a small or weak state does not provoke a strong neighbor
     const ratio = armyPower(g, T) / Math.max(1, armyPower(g, X));
     if (!atWar(g, X, T) && sharesBorder(g, X, T) && ratio > 1.5) add(-1.2 * per.caution, `we fear the ${nameOf(g, T)}'s army`);
@@ -146,7 +152,9 @@ function assemblyFallback(g, X, t, stance, phase) {
   const pickBy = arr => arr[(X * 7 + t.id * 3 + phase.length) % arr.length];
   if (phase === "open") {
     return {
-      condemn: t.why === "treaty" ? `The ${T} signed a treaty with us and then broke it. If a signature means nothing, no agreement in this hall is safe. We ask the world to condemn it.`
+      condemn: t.why === "starve" ? `The ${T} has cut off grain to a people who are already hungry. Hunger must never be a weapon between nations. We ask the world to condemn it.`
+        : t.why === "bully" ? `The ${T} cuts off the trade of nation after nation to bend them to its will. We ask the world to condemn it, before every market is closed by threats.`
+        : t.why === "treaty" ? `The ${T} signed a treaty with us and then broke it. If a signature means nothing, no agreement in this hall is safe. We ask the world to condemn it.`
         : t.why === "threat" ? `The ${T} gathers its army on our border and answers our questions with silence. We ask the world to condemn these threats before they become a war.`
         : `The ${T} has chosen war over law. We ask every nation in this hall to condemn it, so that no government believes it may take what it wants by force.`,
       sanction: `The ${T} has shown it cannot be trusted. We propose that no nation trade with it until it changes course. Words alone have not stopped it.`,
@@ -345,7 +353,8 @@ function aiOpenTopic(g, w, rng) {
     // a serial aggressor: sanctions from those who fear or hate it
     for (const z of liveNations(g)) {
       if (z.id === n.id) continue;
-      if ((g.stats.warsStarted[z.id] || 0) >= 2 && opinionDetail(g, n.id, z.id).value < -30 && !hasTreaty(g, n.id, z.id, "trade") && !recent("sanction", t => t.target === z.id))
+      const binds = g.trade && g.trade.v ? tradeExposure(g, n.id, z.id).material : hasTreaty(g, n.id, z.id, "trade");   // we would not sanction our own trade
+      if ((g.stats.warsStarted[z.id] || 0) >= 2 && opinionDetail(g, n.id, z.id).value < -30 && !binds && !recent("sanction", t => t.target === z.id))
         cands.push({ score: 1.2, spec: { kind: "sanction", author: n.id, target: z.id } });
     }
     for (const z of liveNations(g)) {
@@ -360,12 +369,14 @@ function aiOpenTopic(g, w, rng) {
     // a new great-power leader introduces the government
     if (!n.minor && n.leader && n.leader.since === g.turn && g.turn > 0 && rng() < 0.6) cands.push({ score: 1, spec: { kind: "statement", author: n.id, title: `A new government in the ${n.name}` } });
   }
+  // grain cut off from the hungry, or a nation that bullies its trading partners (10t)
+  cands.push(...tradeTopicCandidates(w, g, ready, recent));
   const valid = cands.filter(c => !validateTopic(g, c.spec)).sort((a, b) => b.score - a.score);
   if (!valid.length || rng() > 0.75) return null;
   const c = valid[0];
   const t = openTopic(g, c.spec, assemblyFallback(g, c.spec.author, { ...c.spec, id: A.nextId, target: c.spec.target ?? null, warId: c.spec.warId ?? null }, "yes", "open"), true);
   t.why = c.spec.why || null;
-  t.msgs[0].reasons = [{ attacked: `the ${nameOf(g, t.target)} attacked us`, treaty: `the ${nameOf(g, t.target)} broke its treaty with us`, threat: `the ${nameOf(g, t.target)}'s army on our border frightens us` }[c.spec.why] || { peace: "the war must end", aid: "our people are suffering", sanction: "it keeps starting wars", statement: "a new leader takes office and introduces the government" }[t.kind] || "our interests"];
+  t.msgs[0].reasons = [{ attacked: `the ${nameOf(g, t.target)} attacked us`, treaty: `the ${nameOf(g, t.target)} broke its treaty with us`, threat: `the ${nameOf(g, t.target)}'s army on our border frightens us`, starve: `the ${nameOf(g, t.target)} cut off grain while people go hungry`, bully: `the ${nameOf(g, t.target)} bullies its trading partners` }[c.spec.why] || { peace: "the war must end", aid: "our people are suffering", sanction: "it keeps starting wars", statement: "a new leader takes office and introduces the government" }[t.kind] || "our interests"];
   return t;
 }
 

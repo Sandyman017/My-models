@@ -122,7 +122,9 @@ function driftTrust(g) {
   }
 }
 
-function opinionDetail(g, from, to) {
+/* How `from` sees `to`: items worked out from the world now, then remembered events. `opts.noEmbargo` leaves out
+   everything that comes from embargoes (an old grudge must not feed on the embargo it would justify). */
+function opinionDetail(g, from, to, opts = {}) {
   const items = [];
   const A = g.nations[from], B = g.nations[to];
   const aff = affinity(A.archetype, B.archetype);
@@ -146,7 +148,9 @@ function opinionDetail(g, from, to) {
   const fmItem = foreignOpinionItem(B);
   if (fmItem) items.push(fmItem);
   if (A.archetype === "mercantile" && B.laws && B.laws.trade !== (A.laws && A.laws.trade)) items.push({ label: B.laws.trade === "protect" ? "Their tariffs shut out our merchants" : B.laws.trade === "free" ? "Their open markets" : "", value: B.laws.trade === "protect" ? -5 : B.laws.trade === "free" ? 4 : 0 });
-  rel(g, from, to).mods.forEach(m => items.push({ label: m.label, value: Math.round(m.value) }));
+  // trade (10t): their embargo while it stands, a need they fill, good customers (read from the book, no economy)
+  for (const it of tradeOpinionItems(g, from, to, opts.noEmbargo)) items.push(it);
+  rel(g, from, to).mods.forEach(m => { if (!(opts.noEmbargo && embargoModKey(m.key))) items.push({ label: m.label, value: Math.round(m.value) }); });
   const value = clamp(items.reduce((s, x) => s + x.value, 0), -100, 100);
   return { value, items: items.filter(x => x.value !== 0) };
 }
@@ -223,13 +227,17 @@ function payTributes(g) {
   }
 }
 
-/* ---------- Commitments: threats made, and whether they were carried out ---------- */
-function addCommitment(g, by, against, label) {
-  if (g.commitments.some(c => c.by === by && c.against === against)) return;
-  g.commitments.push({ by, against, turn: g.turn, label });
+/* ---------- Commitments: threats made, and whether they were carried out ----------
+   A threat is of war (the default) or of an embargo ({kind: "embargo", k: good or null}). War carries out any
+   threat; an embargo carries out only a threat of embargo. */
+function commitKind(c) { return c.kind || "war"; }
+function addCommitment(g, by, against, label, extra = {}) {
+  const kind = extra.kind || "war";
+  if (g.commitments.some(c => c.by === by && c.against === against && commitKind(c) === kind)) return;
+  g.commitments.push({ by, against, turn: g.turn, label, ...(kind !== "war" ? { kind, k: extra.k ?? null } : {}) });
 }
-function fulfilCommitment(g, by, against) {
-  const kept = g.commitments.filter(c => c.by === by && c.against === against);
+function fulfilCommitment(g, by, against, kind) {
+  const kept = g.commitments.filter(c => c.by === by && c.against === against && (kind !== "embargo" || commitKind(c) === "embargo"));
   if (!kept.length) return;
   const r = rel(g, against, by);
   r.cred = clamp(r.cred + 0.25, 0, 1);
@@ -244,9 +252,10 @@ function checkCommitments(g) {
     if (!g.nations[c.by].alive || !g.nations[c.against].alive) continue;
     const r = rel(g, c.against, c.by);
     r.cred = clamp(r.cred - 0.25, 0, 1);
-    remember(g, c.against, `${nameOf(g, c.by)} threatened war over ${c.label} but never acted.`);
-    if (c.by === PLAYER) news.push(`The ${nameOf(g, c.against)} noted that you never carried out your threat over ${c.label}. Your threats now carry less weight with them.`);
-    if (c.against === PLAYER) news.push(`The ${nameOf(g, c.by)} threatened you over ${c.label} but did not act. Their threats will worry you less.`);
+    const what = commitKind(c) === "embargo" ? `to cut off ${c.k && GOODS[c.k] ? `our ${GOODS[c.k].label.toLowerCase()}` : "our trade"}` : "war";
+    remember(g, c.against, `${nameOf(g, c.by)} threatened ${what} over ${c.label} but never acted.`);
+    if (c.by === PLAYER) news.push(commitKind(c) === "embargo" ? `The ${nameOf(g, c.against)} noted that you never cut off their trade as you threatened over ${c.label}. Your threats now carry less weight with them.` : `The ${nameOf(g, c.against)} noted that you never carried out your threat over ${c.label}. Your threats now carry less weight with them.`);
+    if (c.against === PLAYER) news.push(commitKind(c) === "embargo" ? `The ${nameOf(g, c.by)} threatened to cut off your trade over ${c.label} but did not act. Their threats will worry you less.` : `The ${nameOf(g, c.by)} threatened you over ${c.label} but did not act. Their threats will worry you less.`);
   }
   return news;
 }

@@ -89,6 +89,8 @@ function dealLabel(g, kind, y, terms) {
   const Y = `the ${nameOf(g, y)}`;
   const cities = terms.filter(t => t.type === "city").map(t => (g.cities.find(c => c.id === t.cityId) || {}).name).join(" and ");
   const trib = terms.find(t => t.type === "tribute");
+  const pay = terms.find(t => t.type === "payment" && t.from !== y);
+  const lift = terms.find(t => t.type === "lift_embargo");
   return {
     trade: `Propose a trade agreement to ${Y}`,
     nap: `Propose a non-aggression pact to ${Y}`,
@@ -99,6 +101,9 @@ function dealLabel(g, kind, y, terms) {
     peace: `Offer ${Y} peace without conditions`,
     peace_demand: `Offer ${Y} peace if they hand over ${cities}`,
     peace_concede: `Offer ${Y} peace, handing over ${cities}`,
+    lift_embargo: lift && lift.by === "both" ? `Propose to ${Y} that both sides lift their embargoes${pay ? `, paying ${fmtMoney(pay.amount)}` : ""}` : `Ask ${Y} to lift its embargo on us${pay ? `, offering ${fmtMoney(pay.amount)}` : ""}`,
+    embargo: `Stop selling to ${Y}`,
+    lift_embargo_self: `Lift our embargo on ${Y}`,
   }[kind];
 }
 
@@ -147,6 +152,8 @@ function diplomacyCandidates(g, w, n) {
       if (desire > 15 && lost.length) pushDeal(out, g, w, x, y, [{ type: "peace" }, ...lost.slice(0, 2).map(c => ({ type: "city", from: x, cityId: c.id }))], "peace_concede", false);
       continue;
     }
+    // their embargo on us: ask them to lift it (both ways if we answered it), with money if it takes that (10t)
+    if (embargoesBy(g, y, x).length) pushLiftAsk(out, g, w, x, y);
     if (!hasTreaty(g, x, y, "trade")) pushDeal(out, g, w, x, y, [{ type: "trade" }], "trade", false);
     if (!hasTreaty(g, x, y, "nap") && threatFrom(w, g, x, y) > 0.25) pushDeal(out, g, w, x, y, [{ type: "nap" }], "nap", false);
     if (!hasTreaty(g, x, y, "alliance")) pushDeal(out, g, w, x, y, [{ type: "alliance" }], "alliance", false);
@@ -171,6 +178,8 @@ function diplomacyCandidates(g, w, n) {
       out.push({ kind: "war", target: y, terms: [], threat: false, self: wa.value, other: 0, likely: "", label: `Declare war on the ${other.name}, citing ${wa.cb.label}`, lines: wa.lines });
     }
   }
+  // trade as a weapon: an embargo worth weighing, and lifting our own (10t)
+  out.push(...rivalEmbargoOptions(w, g, n));
   return out.sort((a, b) => b.self - a.self).slice(0, 5);
 }
 
@@ -251,7 +260,7 @@ function rulePlan(g, w, n) {
 
 function ruleReason(o) {
   if (o.cat === "diplomacy") {
-    const pros = o.lines.filter(l => l.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 2).map(l => l.label.toLowerCase());
+    const pros = o.lines.filter(l => l.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 2).map(l => lcFirst(l.label));
     return pros.length ? `${pros.join("; ")}.`.replace(/^./, c => c.toUpperCase()) : "It serves our interests.";
   }
   if (o.cat === "law") return `To ${o.why}.`;
@@ -261,7 +270,8 @@ function ruleReason(o) {
 
 function ruleOrders(g, w, n, menu) {
   const actions = [];
-  const d = menu.diplomacy[0];
+  // the rules mind lifts its embargoes in the season's review (10t), not as a menu pick
+  const d = menu.diplomacy.find(o => o.kind !== "lift_embargo_self");
   if (d && d.self >= (d.kind === "war" ? 6 : 4)) actions.push({ option: d.id, reason: ruleReason(d) });
   let money = n.treasury - 0.04 * menu.gdp;
   const maxProjects = n.treasury > 0.25 * menu.gdp ? 2 : 1;
@@ -331,6 +341,9 @@ function executeDiplomacy(g, w, n, o, why, letterText, dispatch, say) {
     }
     return true;
   }
+  // trade (10t): checked again here, since the menu was made before the player moved
+  if (o.kind === "embargo") return executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say);
+  if (o.kind === "lift_embargo_self") return executeRivalLift(g, w, n, o, why, dispatch, say);
   if (o.kind === "warn") {
     n.lastWarned = { ...(n.lastWarned || {}), [y]: g.turn };
     if (y === PLAYER) g.inbox.push({ id: g.nextId++, from: x, kind: "warning", terms: [], threat: false, turn: g.turn, expires: g.turn, status: "info", text: letterText || templateLetter(g, n, o) });
@@ -386,8 +399,32 @@ function templateLetter(g, n, o) {
     peace_concede: "We are ready to end this war, and will give up the towns your armies hold to do it.",
     warn: "Your new towns press against our border. This is our warning: continue, and we will treat it as a hostile act.",
     war: "Our patience is at an end. From this day, our nations are at war.",
+    embargo: embargoLetterBody(g, n, o),
+    lift_embargo: liftLetterBody(g, o),
+    lift_embargo_self: "Our embargo has served its purpose. From today our merchants may trade with yours again.",
   }[o.kind] || "We write to you on a matter of state.";
   return `${open}\n\n${body}\n\n— ${n.leader ? `${leaderName(n)}, for the ${n.name}` : `The ${n.name}`}`;
+}
+
+/* The letter that comes with an embargo: what is cut off, and why, in the government's own words. */
+function embargoLetterBody(g, n, o) {
+  if (o.kind !== "embargo") return "";
+  const good = o.good === "all" ? "goods of any kind" : GOODS[o.good].label.toLowerCase();
+  const O = g.opening;
+  switch (o.why) {
+    case "retaliation": return `You closed your trade to our merchants. We answer in kind: from today our merchants sell you no ${good}. Lift your embargo, and we will lift ours.`;
+    case "pressure": return O && O.by === n.id && o.target === PLAYER ? `Until you give us ${O.town}, our merchants sell you no ${good}. You may still choose peace.` : `You refused our just demands. Until you think again, our merchants sell you no ${good}.`;
+    case "war_goods": return `You sell the means of war to our enemy. Until that stops, our merchants sell you no ${good}.`;
+    case "ally_war": return `You make war on our ally. We will not supply your armies: our merchants sell you no more ${good}.`;
+    case "grudge": return `We have not forgotten how you have treated us. From today our merchants sell you no ${good}.`;
+    default: return `Your army grows on our border, and we will not help it grow. From today our merchants sell you no ${good}.`;
+  }
+}
+function liftLetterBody(g, o) {
+  const t = (o.terms || []).find(x => x.type === "lift_embargo");
+  const pay = (o.terms || []).find(x => x.type === "payment");
+  if (t && t.by === "both") return `The embargoes between our nations hurt the merchants of both, and they settle nothing. We propose that both of us lift them at once${pay ? `, and we will pay ${fmtMoney(pay.amount)} to seal it` : ""}.`;
+  return `Your embargo hurts the merchants of both our nations, and it settles nothing. We ask you to lift it${pay ? `, and we offer ${fmtMoney(pay.amount)} for your trouble` : ""}.`;
 }
 
 /* ---------- Claude as the rivals' strategic mind ---------- */
@@ -399,12 +436,14 @@ function nationBrief(g, w, n) {
     `State: population ${fmtPop(econ.pop)}; output ${fmtMoney(econ.gdp)} a year${prev ? ` (${signedPct(econ.gdp / prev.gdp - 1, 1)} last season)` : ""}; treasury ${n.treasury >= 0 ? fmtMoney(n.treasury) : `debt of ${fmtMoney(-n.treasury)}`} (${fmtSignedMoney(fc.budget.balance)} a season); stability ${Math.round(n.stability)} of 100, heading toward ${Math.round(fc.target)}; army ${fmtCount(n.soldiers)} soldiers; food ${pct(econ.food / econ.pop)} of need; ${econ.cities.length} towns${econ.isolated.length ? `, ${econ.isolated.length} cut off from the capital` : ""}.`,
     `Laws: ${taxLaw(n.laws.tax).label} taxes, ${SERVICE_LAWS[n.laws.services].label} healthcare, ${EDU_LAWS[n.laws.education].label} education, research ${RESEARCH_LAWS[n.laws.research].label.toLowerCase()}, ${TRADE_LAWS[n.laws.trade].label.toLowerCase()} trade, ${FINANCE_LAWS[n.laws.finance].label.toLowerCase()} finance, conscription ${ARMY_LAWS[n.laws.army].label.toLowerCase()}, arms production ${ARMS_LAWS[n.laws.arms || "low"].label.toLowerCase()}.`,
     economyBrief(n, econ),
+    tradeBrief(g, n, econ),
     militaryBrief(g, w, n, econ),
   ].join("\n");
 }
 
 function relationsBrief(g, w, n) {
-  const relevant = z => z.isPlayer || !z.minor || atWar(g, n.id, z.id) || treatiesBetween(g, n.id, z.id).length || gap(w, g, n.id, z.id) <= 4;
+  const relevant = z => z.isPlayer || !z.minor || atWar(g, n.id, z.id) || treatiesBetween(g, n.id, z.id).length || gap(w, g, n.id, z.id) <= 4
+    || tradeExposure(g, n.id, z.id).material || embargoesBy(g, n.id, z.id).length || embargoesBy(g, z.id, n.id).length;
   return liveNations(g).filter(z => z.id !== n.id && relevant(z)).map(z => {
     const op = opinionDetail(g, n.id, z.id);
     const reasons = op.items.slice().sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 4).map(i => `${i.label} ${signed(i.value)}`).join("; ");
@@ -414,7 +453,7 @@ function relationsBrief(g, w, n) {
     const treaties = treatiesBetween(g, n.id, z.id).map(t => `${TREATY_INFO[t.type].label}${t.type === "tribute" ? ` (${nameOf(g, t.a)} pays ${fmtMoney(t.amount)} a season)` : ""}${t.until ? ` until ${seasonLabel(t.until)}` : ""}`).join(", ") || "none";
     const war = warBetween(g, n.id, z.id);
     const their = opinionDetail(g, z.id, n.id).value;
-    return `- ${z.name}${z.archetype ? ` (${z.minor ? "small city-state" : ARCHETYPES[z.archetype].label.toLowerCase()}${z.leader ? `, led by ${leaderName(z)}, ${z.leader.traits.map(t => LEADER_TRAITS[t].label.toLowerCase()).join(" and ")}` : ""})` : ""}: our opinion of them ${signed(op.value)} [${reasons || "no strong feelings"}]; their opinion of us about ${signed(their)}; our trust in them ${Math.round(r.trust)}/100; we ${r.cred > 0.6 ? "take their threats seriously" : r.cred > 0.35 ? "half-believe their threats" : "no longer believe their threats"}; treaties: ${treaties}; ${d === 0 ? "we share a border" : `${d} cells of wild land separate us`}; their army is ${ratio.toFixed(2)}× ours; their output ${fmtMoney(computeEconomy(w, g, z.id).gdp)} a year${war ? `; AT WAR with us since ${seasonLabel(war.since)}, war score ${signed(sideScore(war, n.id))} (positive means we are winning)` : ""}.`;
+    return `- ${z.name}${z.archetype ? ` (${z.minor ? "small city-state" : ARCHETYPES[z.archetype].label.toLowerCase()}${z.leader ? `, led by ${leaderName(z)}, ${z.leader.traits.map(t => LEADER_TRAITS[t].label.toLowerCase()).join(" and ")}` : ""})` : ""}: our opinion of them ${signed(op.value)} [${reasons || "no strong feelings"}]; their opinion of us about ${signed(their)}; our trust in them ${Math.round(r.trust)}/100; we ${r.cred > 0.6 ? "take their threats seriously" : r.cred > 0.35 ? "half-believe their threats" : "no longer believe their threats"}; treaties: ${treaties}; ${d === 0 ? "we share a border" : `${d} cells of wild land separate us`}; their army is ${ratio.toFixed(2)}× ours; their output ${fmtMoney(computeEconomy(w, g, z.id).gdp)} a year${tradeRelationBrief(g, n.id, z.id)}${war ? `; AT WAR with us since ${seasonLabel(war.since)}, war score ${signed(sideScore(war, n.id))} (positive means we are winning)` : ""}.`;
   }).join("\n");
 }
 
@@ -452,7 +491,7 @@ ${(m.military || []).map(optionText).join("\n") || "(none)"}`;
   }).join("\n\n");
   return `You are the strategic mind of rival governments in a turn-based geopolitical strategy game. It is ${seasonLabel(g.turn)}. For each nation below, decide what its government does this season.
 
-Decide as that nation's real leaders would. Pursue its own interests (security, prosperity, land, standing) in the way its character dictates. Remember past dealings: reward partners who kept their word, punish betrayal, and follow through on threats the nation has made unless that would be ruinous. Be realistic: wars are costly and risky, states avoid strengthening dangerous neighbors, and they seek friends against common threats. Treat the ${player} exactly like any other state, neither friend nor target by default.
+Decide as that nation's real leaders would. Pursue its own interests (security, prosperity, land, standing) in the way its character dictates. Remember past dealings: reward partners who kept their word, punish betrayal, and follow through on threats the nation has made unless that would be ruinous. Be realistic: wars are costly and risky, states avoid strengthening dangerous neighbors, and they seek friends against common threats. An embargo stops the nation's merchants selling a good to another nation until it is lifted: it hurts both sides and is resented, so it is a step short of war, not a habit; lifting one lets trade start again with next season's contracts. Treat the ${player} exactly like any other state, neither friend nor target by default.
 
 The game engine has already listed every legal option with its own estimate ("engine value": positive means good for that nation). You may only choose option ids from that nation's own list. You may pick a lower-valued option, or none at all, when the nation's character or longer-term strategy calls for it.
 

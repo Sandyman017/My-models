@@ -27,7 +27,8 @@ function occupiedShare(g, nid) {
   return own ? occ / own : 0;
 }
 
-function casusBelli(g, x, y) {
+/* x's reason for a war on y, the first that applies (strength 0: none). `w` lets it see hunger (a food embargo). */
+function casusBelli(g, x, y, w) {
   const r = rel(g, x, y);
   if (r.mods.some(m => m.key === "broke_treaty")) return { label: `the ${nameOf(g, y)} broke a treaty with us`, strength: 3 };
   if (r.mods.some(m => m.key === "claim_town")) return { label: `our claim to ${g.opening ? g.opening.town : "a border town"}`, strength: 2 };
@@ -37,7 +38,11 @@ function casusBelli(g, x, y) {
   if (ally !== undefined) return { label: `defending our ally, the ${nameOf(g, ally)}`, strength: 3 };
   if (r.mods.some(m => m.key === "abandoned")) return { label: `the ${nameOf(g, y)} betrayed us in war`, strength: 2 };
   if (r.mods.some(m => m.key === "settled_near" && m.value <= -8)) return { label: "a border dispute over settled land", strength: 2 };
-  if (g.commitments.some(c => c.by === x && c.against === y)) return { label: `the ${nameOf(g, y)} rejected our demands`, strength: 1 };
+  // their embargo on us (10t): food cut off while our people go hungry, or trade strangled
+  const st = strangledTrade(g, x, y, w);
+  if (st && st.food) return { label: `the ${nameOf(g, y)} cut off our food while our people went hungry`, strength: 2 };
+  if (st) return { label: `the ${nameOf(g, y)} strangled our trade`, strength: 1 };
+  if (g.commitments.some(c => c.by === x && c.against === y && commitKind(c) === "war")) return { label: `the ${nameOf(g, y)} rejected our demands`, strength: 1 };
   if (r.mods.some(m => ["insult", "threatened", "deceived"].includes(m.key))) return { label: "insults to our honor", strength: 1 };
   return { label: "a war of conquest", strength: 0 };
 }
@@ -78,9 +83,8 @@ function warAssessment(w, g, x, y) {
   if (wantsPort) lines.push({ label: `${wantsPort}: a harbor on the open sea, which we lack`, pts: 0 });
   const cost = 14 * per.caution;
   v -= cost; lines.push({ label: "Cost of war: lives, money and unrest", pts: -Math.round(cost) });
-  if (hasTreaty(g, x, y, "trade")) { v -= 6; lines.push({ label: "We would lose our trade with them", pts: -6 }); }
   if ((g.treaties || []).some(t => t.type === "tribute" && t.a === y && t.b === x)) { v -= 30; lines.push({ label: "They pay us tribute", pts: -30 }); }
-  const cb = casusBelli(g, x, y);
+  const cb = casusBelli(g, x, y, w);
   if (hasTreaty(g, x, y, "truce") && cb.strength < 3) return null;
   if (hasTreaty(g, x, y, "nap")) {
     const c = (nx.archetype === "militarist" ? 25 : 45) + (hasTrait(nx, "honorable") ? 30 : 0);
@@ -90,13 +94,20 @@ function warAssessment(w, g, x, y) {
   if (cb.strength === 0 && opNow > -15 && !(nx.archetype === "militarist" && ratio > 1.8)) return null;
   if (cb.strength === 0) { v -= 10 * per.caution; lines.push({ label: "No just cause; others will condemn us", pts: -Math.round(10 * per.caution) }); }
   else { v += cb.strength * 4; lines.push({ label: `Just cause: ${cb.label}`, pts: cb.strength * 4 }); }
+  // the trade a war would end: what it is really worth with a trade book (10s), a flat cost for a treaty without one
+  const lostTrade = warTradeLoss(w, g, x, y, econX);
+  if (lostTrade === null) { if (hasTreaty(g, x, y, "trade")) { v -= 6; lines.push({ label: "We would lose our trade with them", pts: -6 }); } }
+  else if (lostTrade > 0) {
+    const tp = Math.min(10, (100 * lostTrade * DIPLO.horizonYears) / Math.max(1, econX.gdp) * per.tradeWeight);
+    if (tp >= 0.5) { v -= tp; lines.push({ label: `We would lose our trade with them (${fmtMoney(lostTrade)} of output a year)`, pts: -Math.round(tp) }); }
+  }
   const op = opinionDetail(g, x, y).value;
   v += -op / 5; lines.push({ label: `Our feelings toward them (${signed(op)})`, pts: Math.round(-op / 5) });
   if (workHolder(g, "atomic") === y) { v -= 25; lines.push({ label: "They have the atomic bomb", pts: -25 }); }
   if (workHolder(g, "forts") === y) { v -= 6; lines.push({ label: "Their Line of Fortresses", pts: -6 }); }
   if (nx.stability < 45) { v -= 15; lines.push({ label: "Too unstable at home", pts: -15 }); }
   if (busy) { v -= 10 * busy; lines.push({ label: "Already fighting elsewhere", pts: -10 * busy }); }
-  if (g.commitments.some(c => c.by === x && c.against === y)) { v += 12; lines.push({ label: "Our threat must be honored", pts: 12 }); }
+  if (g.commitments.some(c => c.by === x && c.against === y && commitKind(c) === "war")) { v += 12; lines.push({ label: "Our threat must be honored", pts: 12 }); }
   const ob = openingWarBonus(g, x, y, winChance);
   if (ob) { v += ob; lines.push({ label: `${g.opening.town} is rightfully ours`, pts: ob }); }
   if (g.turn < OPENING.grace && openingWarAllowed(g, x, y) && winChance < 0.45) return null;   // an early war only if they expect to win it
@@ -111,7 +122,7 @@ function peaceDesire(g, nid, war) {
 }
 
 function declareWar(g, w, attacker, defender) {
-  const cb = casusBelli(g, attacker, defender);
+  const cb = casusBelli(g, attacker, defender, w);
   for (const t of treatiesBetween(g, attacker, defender)) endTreaty(g, t, BINDING.includes(t.type) && t.type !== "tribute" ? attacker : null);
   const war = { id: g.nextId++, sideA: [attacker], sideB: [defender], since: g.turn, cb: cb.label, cbStrength: cb.strength, score: 0, lastBattles: [] };
   g.wars.push(war);
@@ -261,6 +272,7 @@ function checkEliminations(g) {
       if (!war.sideA.length || !war.sideB.length) g.wars = g.wars.filter(v => v !== war);
     }
     g.inbox.forEach(it => { if (it.from === n.id && it.status === "open") it.status = "void"; });
+    tradeForgetDead(g);   // its embargoes, promises and preferred-seller choices go with it (10s)
     news.push(`The ${n.name} has ceased to exist.`);
     bumpWorld(g);
   }
