@@ -29,7 +29,7 @@ const EMBARGO_AI = {
 };
 const EMBARGO_AIMS = {   // the main reason a government gives for an embargo (stored on the entry as `why`)
   retaliation: "to answer their embargo",
-  pressure: "to press its claim",
+  pressure: "to press its claim or its demands",
   threat: "to keep a dangerous neighbor from growing stronger",
   hostility: "out of old grudges",
   ally_war: "because they make war on its ally",
@@ -137,12 +137,12 @@ function embargoReasonLines(g, P, k, est, ctx = {}) {
   const qualifies = est.hurt >= EMBARGO_AI.minHurt || est.keyDrop >= EMBARGO_AI.minDrop;
   // retaliation: their embargo on us, answered once; a retaliation is never answered again
   const orig = ctx.original;
-  if (orig) add("retaliation", `They cut off our trade (${embargoGoodsText([orig])}): we answer in kind`, Math.min(9, 5 + 0.5 * DIPLO.horizonYears * (orig.hurt || 0)));
+  if (orig) add("retaliation", `${orig.k === "all" ? "They cut off all trade with us" : `They cut off our trade in ${embargoGoodsText([orig])}`}: we answer in kind`, Math.min(9, 5 + 0.5 * DIPLO.horizonYears * (orig.hurt || 0)));
   if (P.n.minor) return lines;                      // a small state only ever answers an embargo
   const pressure = () => {
     if ((P.claim || P.demand) && qualifies) add("pressure", P.claim ? `Pressure to give up ${g.opening.town}, which is rightfully ours` : `Pressure: they refused our demands`, 4 + 4 * Math.min(1, est.keyDrop + est.hurt / 2));
   };
-  if (P.early && !ctx.inForce) { pressure(); return lines; }   // a new nation's first years: only its claimant and answers
+  if (P.early && !ctx.inForce) { if (P.claim) pressure(); return lines; }   // a new nation's first years: only its claimant and answers
   if (P.enemies.length) {
     // at war: no new quarrels with third parties, except with those who arm our enemy (when we are their main seller)
     const z = P.enemies.find(e => TRADE.strategic.some(s => (tradeSells(g, y, e)[s] || 0) > 1e-4));
@@ -340,7 +340,7 @@ function executeRivalEmbargo(g, w, n, o, why, letterText, dispatch, say) {
     const it = g.inbox[g.inbox.length - 1];
     if (it && it.kind === "embargo" && it.from === x) { it.why = code; it.reason = top ? top.label : EMBARGO_AIMS[code] || ""; }
     const key = o.good === "all" || TRADE.key.includes(o.good);
-    dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${top ? ` (${lcFirst(top.label)})` : ""}. Our merchants will look for other sellers when next season's contracts are signed.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
+    dispatch.trade.push({ text: `The ${n.name} ${embargoVerb(r.e)} us${top ? ` (${lcFirst(top.label)})` : ""}. Our merchants are looking for other sellers.`, tone: key ? "bad" : "warn", nid: x, minister: o.good === "food" ? "agriculture" : "economy", pause: key, key });
   }
   say(`${embargoVerb(r.e).replace(/^./, ch => ch.toUpperCase())} the ${nameOf(g, y)}.`, why || (top ? top.label : ""));
   return true;
@@ -372,7 +372,7 @@ function tellLift(g, e, why, dispatch, say) {
   const goods = embargoGoodsText([e]);
   if (e.by !== PLAYER) remember(g, e.by, `We lifted our embargo on the ${nameOf(g, e.on)} (${goods})${why ? `: ${why}` : ""}.`);
   if (!dispatch) return;
-  if (e.on === PLAYER) dispatch.trade.push({ text: `The ${nameOf(g, e.by)} lifted its embargo on us (${goods})${why ? `: ${why}` : ""}. Our merchants can buy from them again when next season's contracts are signed.`, tone: "good", nid: e.by, minister: e.k === "food" ? "agriculture" : "economy" });
+  if (e.on === PLAYER) dispatch.trade.push({ text: `The ${nameOf(g, e.by)} lifted its embargo on us (${goods})${why ? `: ${why}` : ""}. Our merchants can trade with them again.`, tone: "good", nid: e.by, minister: e.k === "food" ? "agriculture" : "economy" });
   const text = `Lifted its embargo on the ${nameOf(g, e.on)} (${goods}).`;
   const cap = why ? why.charAt(0).toUpperCase() + why.slice(1) + "." : null;
   if (say) say(text, cap);
@@ -497,6 +497,9 @@ function tradeEarlyWarning(w, g, n, menu, orders, dispatch) {
 function rivalFoodAid(w, g, dispatch) {
   const T = g.trade;
   if (!T || !T.v) return;
+  withEconMemo(g, () => rivalFoodAidRaw(w, g, dispatch, T));
+}
+function rivalFoodAidRaw(w, g, dispatch, T) {
   const hungry = [];
   for (const v of liveNations(g)) { const E = computeEconomy(w, g, v.id); if (E.famineShare > EMBARGO_AI.aidFamine) hungry.push({ v, E }); }
   for (const { v, E } of hungry) {
@@ -532,13 +535,16 @@ function rivalFoodAid(w, g, dispatch) {
 
 /* ---------- War and trade: what a war would cost in trade, and when an embargo is a just cause ---------- */
 /* Output x would lose a year if all trade with y stopped (once its merchants have found other sellers), or null when
-   there is no trade between them to lose. */
+   there is no trade book yet (the old flat cost of a trade agreement applies then). A war also ends every treaty, so a
+   trade agreement's buyers leave the market with it. */
 function warTradeLoss(w, g, x, y, econX) {
   const T = g.trade;
   if (!T || !T.v) return null;
   const ix = tradeIndex(g);
-  if (!((ix.pairV[`${x}>${y}`] || 0) + (ix.pairV[`${y}>${x}`] || 0) > 0)) return 0;
+  const treaty = hasTreaty(g, x, y, "trade");
+  if (!treaty && !((ix.pairV[`${x}>${y}`] || 0) + (ix.pairV[`${y}>${x}`] || 0) > 0)) return 0;
   const h = hypothetical(g, { embargo: { id: -1, by: x, on: y, k: "all", dir: "both", food: true, since: g.turn, why: "war", hurt: 0, answers: null } });
+  if (treaty) h.treaties = g.treaties.filter(t => !(t.type === "trade" && ((t.a === x && t.b === y) || (t.a === y && t.b === x))));
   return Math.max(0, (econX || computeEconomy(w, g, x)).gdp - computeEconomy(w, h, x).gdp);
 }
 /* y's embargo on x as a cause for war: food cut off while x is hungry (strong), or trade strangled (a real share of

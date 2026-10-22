@@ -413,7 +413,7 @@ function embargoLetterBody(g, n, o) {
   const O = g.opening;
   switch (o.why) {
     case "retaliation": return `You closed your trade to our merchants. We answer in kind: from today our merchants sell you no ${good}. Lift your embargo, and we will lift ours.`;
-    case "pressure": return O && O.by === n.id && o.target === PLAYER ? `Until you give us ${O.town}, our merchants sell you no ${good}. You may still choose peace.` : `You refused our just demands. Until you think again, our merchants sell you no ${good}.`;
+    case "pressure": return O && O.by === n.id && o.target === PLAYER ? `Until you give us ${O.town}, our merchants sell you no ${good}. Hand it over, and trade will flow again; refuse, and worse may follow.` : `You refused our just demands. Until you think again, our merchants sell you no ${good}.`;
     case "war_goods": return `You sell the means of war to our enemy. Until that stops, our merchants sell you no ${good}.`;
     case "ally_war": return `You make war on our ally. We will not supply your armies: our merchants sell you no more ${good}.`;
     case "hostility": return `We have not forgotten how you have treated us. From today our merchants sell you no ${good}.`;
@@ -491,7 +491,7 @@ ${(m.military || []).map(optionText).join("\n") || "(none)"}`;
   }).join("\n\n");
   return `You are the strategic mind of rival governments in a turn-based geopolitical strategy game. It is ${seasonLabel(g.turn)}. For each nation below, decide what its government does this season.
 
-Decide as that nation's real leaders would. Pursue its own interests (security, prosperity, land, standing) in the way its character dictates. Remember past dealings: reward partners who kept their word, punish betrayal, and follow through on threats the nation has made unless that would be ruinous. Be realistic: wars are costly and risky, states avoid strengthening dangerous neighbors, and they seek friends against common threats. An embargo stops the nation's merchants selling a good to another nation until it is lifted: it hurts both sides and is resented, so it is a step short of war, not a habit; lifting one lets trade start again with next season's contracts. Treat the ${player} exactly like any other state, neither friend nor target by default.
+Decide as that nation's real leaders would. Pursue its own interests (security, prosperity, land, standing) in the way its character dictates. Remember past dealings: reward partners who kept their word, punish betrayal, and follow through on threats the nation has made unless that would be ruinous. Be realistic: wars are costly and risky, states avoid strengthening dangerous neighbors, and they seek friends against common threats. An embargo stops the nation's merchants selling a good to another nation until it is lifted: it hurts both sides and is resented, so it is a step short of war, not a habit; lifting one lets trade flow again, and lifting it after at least a year earns some goodwill. Treat the ${player} exactly like any other state, neither friend nor target by default.
 
 The game engine has already listed every legal option with its own estimate ("engine value": positive means good for that nation). You may only choose option ids from that nation's own list. You may pick a lower-valued option, or none at all, when the nation's character or longer-term strategy calls for it.
 

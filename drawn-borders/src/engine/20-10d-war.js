@@ -99,7 +99,7 @@ function warAssessment(w, g, x, y) {
   if (lostTrade === null) { if (hasTreaty(g, x, y, "trade")) { v -= 6; lines.push({ label: "We would lose our trade with them", pts: -6 }); } }
   else if (lostTrade > 0) {
     const tp = Math.min(10, (100 * lostTrade * DIPLO.horizonYears) / Math.max(1, econX.gdp) * per.tradeWeight);
-    if (tp >= 0.5) { v -= tp; lines.push({ label: `We would lose our trade with them (${fmtMoney(lostTrade)} of output a year)`, pts: -Math.round(tp) }); }
+    if (tp >= 0.5) { v -= tp; lines.push({ label: `We would lose our trade${hasTreaty(g, x, y, "trade") ? " and our trade agreement" : ""} with them (${fmtMoney(lostTrade)} of output a year)`, pts: -Math.round(tp) }); }
   }
   const op = opinionDetail(g, x, y).value;
   v += -op / 5; lines.push({ label: `Our feelings toward them (${signed(op)})`, pts: Math.round(-op / 5) });

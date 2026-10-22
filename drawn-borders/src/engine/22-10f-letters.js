@@ -169,7 +169,7 @@ function processLetter(g, w, to, text, formalTerms, explicitThreat, analysis) {
     if (outcome.verdict === "accept") applyDeal(g, w, P, E, terms);
     else if (outcome.verdict === "reject" && ctx.threat) addCommitment(g, P, E, termsText(g, terms));
     // a refused threat of embargo is a promise to act: carried out by declaring it, or it costs credibility (10t)
-    if (outcome.verdict !== "accept" && ctx.tradeThreat) addCommitment(g, P, E, termsText(g, terms), { kind: "embargo", k: ctx.tradeThreat.k });
+    if (outcome.verdict === "reject" && ctx.tradeThreat) addCommitment(g, P, E, termsText(g, terms), { kind: "embargo", k: ctx.tradeThreat.k });
   } else {
     outcome = { verdict: "message", points: 0, lines: ctx.extraLines.map(l => ({ label: l.label, pts: Math.round(l.pts * 10) / 10 })), counter: null };
   }
