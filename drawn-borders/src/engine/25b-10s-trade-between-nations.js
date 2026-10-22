@@ -646,7 +646,7 @@ function declareEmbargo(w, g, by, on, k, dir, why, opts = {}) {
     if (E.famineShare > 0.02) for (const z of liveNations(g)) if (z.id !== by && z.id !== on) addMod(g, z.id, by, "starved", `Let the ${nameOf(g, on)} go hungry`, -6, 0.5, -12);
   }
   // carrying out a threat of embargo counts like carrying out any threat
-  if (g.commitments.some(c => c.by === by && c.against === on)) fulfilCommitment(g, by, on);
+  if (g.commitments.some(c => c.by === by && c.against === on)) fulfilCommitment(g, by, on, "embargo");
   const text = `The ${nameOf(g, by)} ${embargoVerb(e)} the ${nameOf(g, on)}${e.food && e.k === "all" ? " (food included)" : ""}.`;
   remember(g, on, `${nameOf(g, by)}: ${label.toLowerCase()}.`);
   remember(g, by, `We placed an embargo on ${nameOf(g, on)}.`);
@@ -664,6 +664,7 @@ function liftEmbargo(w, g, id, by, opts = {}) {
   if (!e) return { ok: false, reason: "No such embargo." };
   if (by !== undefined && e.by !== by) return { ok: false, reason: "Only the nation that declared it can lift it." };
   T.embargoes = T.embargoes.filter(x => x !== e);
+  T.ended = (T.ended || []).concat([{ by: e.by, on: e.on, k: e.k, hurt: e.hurt || 0, turn: g.turn }]).slice(-24);   // for "they strangled our trade" (10t)
   bumpWorld(g);
   const r = rel(g, e.on, e.by);
   if (g.turn - e.since >= TRADE.minEmbargo || opts.paid) {

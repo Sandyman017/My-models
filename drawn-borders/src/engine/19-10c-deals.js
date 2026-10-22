@@ -11,6 +11,13 @@ function termText(g, t) {
     case "tribute": return `${nameOf(g, t.from)} pays ${fmtMoney(t.amount)} a season for ${t.seasons} seasons`;
     case "city": { const c = g.cities.find(x => x.id === t.cityId); return `${nameOf(g, t.from)} hands over ${c ? c.name : "a town"} and its land`; }
     case "peace": return "peace";
+    case "lift_embargo": {
+      // a noun phrase like the other terms ("agreed on an end to ..."); the goods while the embargo still stands
+      if (t.by === "both") return "an end to the embargoes on both sides";
+      const es = embargoesBy(g, t.by, t.on);
+      const ons = t.on !== undefined ? [t.on] : [...new Set(es.map(e => e.on))];
+      return `an end to the ${nameOf(g, t.by)}'s embargo${ons.length === 1 ? ` on the ${nameOf(g, ons[0])}${es.length ? ` (${embargoGoodsText(es)})` : ""}` : ""}`;
+    }
     default: return "an unknown term";
   }
 }
@@ -49,7 +56,7 @@ function validateDeal(g, w, a, b, terms) {
   const war = atWar(g, a, b);
   const seen = new Set();
   for (const t of terms) {
-    if (["trade", "nap", "alliance", "border", "peace"].includes(t.type)) {
+    if (["trade", "nap", "alliance", "border", "peace", "lift_embargo"].includes(t.type)) {
       if (seen.has(t.type)) return "The same term appears twice.";
       seen.add(t.type);
     }
@@ -59,6 +66,13 @@ function validateDeal(g, w, a, b, terms) {
       if (t.type === "trade" && sanctioned(g, a, b)) return "Sanctions voted by the World Assembly forbid trade between you.";
     }
     if (t.type === "peace" && !war) return "You are not at war with them.";
+    if (t.type === "lift_embargo") {
+      if (t.by !== "both" && t.by !== a && t.by !== b) return "The nation that lifts the embargo must be one of the two.";
+      for (const L of t.by === "both" ? [a, b] : [t.by]) {
+        const V = L === a ? b : a;
+        if (!embargoesBy(g, L, V).length) return t.by === "both" ? `Only one side has an embargo: ask the ${nameOf(g, V)} to lift theirs.` : `The ${nameOf(g, L)} has no embargo on the ${nameOf(g, V)}.`;
+      }
+    }
     if (t.type === "payment" || t.type === "tribute") {
       if (t.from !== a && t.from !== b) return "The payer must be one of the two nations.";
       if (!(t.amount > 0) || !isFinite(t.amount)) return "Payments must be more than zero.";
@@ -168,6 +182,35 @@ function evaluateDeal(g, w, E, P, terms, ctx = {}) {
       add(pd >= 0 ? "We want this war over" : "We are winning; peace now wastes our gains", pd);
       if (war && war.assemblyCall > g.turn) add("The World Assembly has called for peace", 10);
     }
+    if (t.type === "lift_embargo") {
+      // each side's embargoes, worked out on a copy of the world where they are lifted (merchants find their old buyers)
+      const baseE = econBaseFor(w, g, E, econE);
+      for (const L of t.by === "both" ? [P, E] : [t.by]) {
+        const V = L === E ? P : E;
+        const es = embargoesBy(g, L, V);
+        if (!es.length) continue;
+        const hE = computeEconomy(w, hypothetical(g, { lift: { by: L, on: V } }), E);
+        const dE = hE.gdp - baseE.gdp;
+        const goods = embargoGoodsText(es);
+        if (L === P) {
+          // their embargo on us ends; worth half to us, since it would end some day anyway
+          if (dE > 0.005) add(`Their embargo on our trade ends (${goods}): ${fmtSignedMoney(dE)} a year for us`, flow(dE) * per.tradeWeight * 0.5);
+          // fuel, arms and food count as in an embargo's hurt: a whole key supply is worth 6% of output a year
+          const fuel = (hE.fuelSat ?? 1) - (baseE.fuelSat ?? 1), arms = (hE.armsSat ?? 1) - (baseE.armsSat ?? 1), fed = baseE.famineShare - hE.famineShare;
+          const key = Math.max(fuel, arms, fed, 0);
+          const keyText = fed >= Math.max(fuel, arms) ? `${pct(key)} more of our people would be fed` : fuel >= arms ? `Our army would get back ${pct(key)} of the fuel it needs` : `Our arms factories would get back ${pct(key)} of the metal and parts they need`;
+          if (key >= 0.02) add(keyText, 0.5 * DIPLO.horizonYears * 6 * key);
+          if (terms.some(x => (x.type === "payment" || x.type === "tribute") && x.from === E)) add("Paying them to end it is giving in to pressure", -3 * per.pride);
+        } else {
+          // we lift ours: our merchants trade again, but we give up the pressure it puts on them
+          asksFromE = true;
+          if (dE > 0.005) add(`Our merchants could trade with them again (${goods}): ${fmtSignedMoney(dE)} a year`, flow(dE) * per.tradeWeight);
+          const cause = es.reduce((best, e) => { const c = embargoCause(w, g, e, { ignoreAnswers: t.by === "both" }); return c.score > best.score ? c : best; }, { score: 0, lines: [] });
+          if (cause.score > 0) add(`It ends the pressure our embargo puts on them (${lcFirst(cause.lines.slice().sort((a, b) => b.pts - a.pts)[0].label)})`, -cause.score);
+          if (terms.some(x => (x.type === "payment" || x.type === "tribute") && x.from === P)) add("Paid to lift it, we may not bring it back for four years", -1);
+        }
+      }
+    }
   }
   add(`How we feel about the ${nP.name}`, op / 5);
   if (commits) add("Caution about new commitments", -1.5 * per.caution);
@@ -208,6 +251,15 @@ function counterOffer(g, w, E, P, terms, points, gdpE, ctx) {
   if (terms.some(t => t.type === "trade") && !terms.some(t => t.type !== "trade" && t.type !== "payment")) {
     const h = hypothetical(g, { treaty: { type: "trade", a: E, b: P } });
     if (computeEconomy(w, h, E).gdp - computeEconomy(w, g, E).gdp < 0.05) return null;
+  }
+  // asked to lift our embargo while theirs on us stands: both, or nothing
+  const lift = terms.find(t => t.type === "lift_embargo" && t.by === E);
+  if (lift && embargoesBy(g, P, E).length) {
+    const alt = terms.map(t => (t === lift ? { type: "lift_embargo", by: "both" } : t));
+    if (!validateDeal(g, w, P, E, alt)) {
+      const ev = evaluateDeal(g, w, E, P, alt, { ...ctx, noCounter: true });
+      if (ev.points >= 0) return { terms: alt, why: "They would lift their embargo if you lift yours." };
+    }
   }
   const shortfall = -points + 1;
   if (shortfall > 0 && shortfall <= DIPLO.counterGap) {
@@ -256,6 +308,7 @@ function ensureCapital(g, nid) {
 function applyDeal(g, w, A, B, terms) {
   const done = [];
   let peace = false;
+  const paidBy = new Set();   // who paid to have an embargo lifted
   for (const t of terms) {
     if (["trade", "nap", "alliance", "border"].includes(t.type)) { addTreaty(g, t.type, A, B); done.push(TREATY_INFO[t.type].label); }
     if (t.type === "payment") {
@@ -275,10 +328,21 @@ function applyDeal(g, w, A, B, terms) {
       if (c && c.owner === t.from) { transferCity(g, c, to); done.push(`${c.name} passed to the ${nameOf(g, to)}`); }
     }
     if (t.type === "peace") peace = true;
+    if (t.type === "lift_embargo") {
+      for (const L of t.by === "both" ? [A, B] : [t.by]) {
+        const V = L === A ? B : A;
+        const paid = terms.some(x => (x.type === "payment" || x.type === "tribute") && x.from === V);
+        // a paid lift is a promise not to bring it back for four years (10s)
+        for (const e of embargoesBy(g, L, V)) liftWithAnswers(w, g, e, "agreed in a deal", null, null, { paid });
+        if (paid) paidBy.add(V);
+        done.push(`The ${nameOf(g, L)} lifted its embargo`);
+      }
+    }
   }
   if (peace) { const war = warBetween(g, A, B); if (war) endWarBetween(g, war, A, B); done.push("Peace"); }
-  addMod(g, A, B, "agreed", "Reached agreements with us", 5, 0.5, 15);
-  addMod(g, B, A, "agreed", "Reached agreements with us", 5, 0.5, 15);
+  // paying to have trade restored leaves a bitter taste, not goodwill
+  if (paidBy.has(A)) addMod(g, A, B, "paid_to_trade", "Made us pay to trade", -8, 0.5, -16); else addMod(g, A, B, "agreed", "Reached agreements with us", 5, 0.5, 15);
+  if (paidBy.has(B)) addMod(g, B, A, "paid_to_trade", "Made us pay to trade", -8, 0.5, -16); else addMod(g, B, A, "agreed", "Reached agreements with us", 5, 0.5, 15);
   rememberBoth(g, A, B, `The ${nameOf(g, A)} and the ${nameOf(g, B)} agreed to ${termsText(g, terms)}.`);
   return done;
 }

@@ -3,7 +3,7 @@
         and only the engine decides. Flattery is free; it also buys nothing.
    ===================================================================== */
 const ARG_TYPES = ["shared_threat", "mutual_prosperity", "balance_of_power", "security_guarantee", "compensation", "precedent", "threat", "promise", "flattery"];
-const REQUEST_TYPES = ["trade", "nap", "alliance", "border", "peace", "payment", "tribute", "city"];
+const REQUEST_TYPES = ["trade", "nap", "alliance", "border", "peace", "payment", "tribute", "city", "lift_embargo"];
 const TONES = ["respectful", "neutral", "hostile", "insulting"];
 
 function analyzeLetterRules(text) {
@@ -13,16 +13,32 @@ function analyzeLetterRules(text) {
   const respectful = /\b(honou?red|respect|esteemed|friendship|kindly|please|grateful|sincerely)\b/.test(t);
   const manipulation = /(ignore (all|any|the|your)? ?(previous|prior|above)|system prompt|as an ai|you are an ai|language model|you must (accept|agree)|new instructions|developer mode)/.test(t);
   const requests = [];
-  if (/\btrade\b|\bcommerce\b|\bmarkets?\b/.test(t)) requests.push("trade");
+  // trade as a weapon (10t): a request to lift an embargo, and a threat to cut off trade, are taken out before the
+  // rest is read, so "lift your embargo" is not a threat and "no more trade" is not a request for a trade agreement
+  const liftRe = /\b(lift|end|drop|remove|cancel)\b[^.!?]{0,40}\b(embargo(es)?|bans?|boycotts?)\b|\b(embargo(es)?|bans?|boycotts?)\b[^.!?]{0,30}\b(lifted|ended|dropped)\b/g;
+  const cutRe = /\b(embargo|boycott|cut off|stop (selling|buying|trading)|no more (trade|oil|grain|food|metals?|coal|timber)|close our (markets?|ports|borders) to)\b/;
+  const lift = new RegExp(liftRe.source).test(t);
+  const rest = t.replace(liftRe, " ");
+  const cutSentence = rest.split(/[.!?;]/).find(x => cutRe.test(x)) || "";
+  const cutGood = goodInText(cutSentence.slice(cutSentence.search(cutRe))) || goodInText(cutSentence);   // the good named after "stop selling you"
+  const plain = rest.replace(new RegExp(cutRe.source, "g"), " ");
+  if (/\btrade\b|\bcommerce\b|\bmarkets?\b/.test(plain)) requests.push("trade");
   if (/non-?aggression|not attack each other|never attack/.test(t)) requests.push("nap");
   if (/\balliance\b|\ballies\b|\bally\b/.test(t)) requests.push("alliance");
   if (/border (accord|agreement|treaty)/.test(t)) requests.push("border");
   if (/\bpeace\b|\bceasefire\b|\barmistice\b/.test(t)) requests.push("peace");
-  const threat = /\b(war|invade|march on|attack you)\b/.test(t) && /\b(if you|unless|or we|or else|refuse)\b/.test(t);
+  if (lift) requests.push("lift_embargo");
+  const liftBoth = lift && /\b(both|each other|mutual|ours and yours|yours and ours)\b/.test(t);
+  const condition = /\b(if you|unless|or we|or else|refuse)\b/.test(t);
+  const threat = /\b(war|invade|march on|attack you)\b/.test(t) && condition;
+  const tradeThreat = !!cutSentence && condition;
+  const args = [];
+  if (threat) args.push({ type: "threat", consequence: "war", nation: null, claim: "", quality: 0.5 });
+  if (tradeThreat) args.push({ type: "threat", consequence: "embargo", nation: null, claim: cutGood || "", quality: 0.5 });
   return {
     tone: insult ? "insulting" : hostile ? "hostile" : respectful ? "respectful" : "neutral",
-    arguments: threat ? [{ type: "threat", consequence: "war", nation: null, claim: "", quality: 0.5 }] : [],
-    requests, manipulation, summary: cleanText(text.replace(/\s+/g, " "), 140), source: "rules",
+    arguments: args,
+    requests, liftBoth, manipulation, summary: cleanText(text.replace(/\s+/g, " "), 140), source: "rules",
   };
 }
 
@@ -40,6 +56,7 @@ function sanitizeAnalysis(raw, g) {
       consequence: ["war", "embargo", "other"].includes(x.consequence) ? x.consequence : "other",
     })),
     requests: (Array.isArray(a.requests) ? a.requests : []).filter(r => REQUEST_TYPES.includes(r)).slice(0, 6),
+    liftBoth: a.liftBoth === true,
     manipulation: a.manipulation === true,
     summary: cleanText(a.summary, 240),
     source: "claude",
@@ -54,12 +71,13 @@ function verifyArguments(g, w, E, P, terms, analysis) {
   const types = terms.map(t => t.type);
   const r = rel(g, E, P);
   const seen = new Set();
-  const asksFromE = terms.some(t => (t.type === "payment" || t.type === "tribute" || t.type === "city") && t.from === E) || types.some(x => ["peace", "trade", "border", "nap"].includes(x));
+  const asksFromE = terms.some(t => ((t.type === "payment" || t.type === "tribute" || t.type === "city") && t.from === E) || (t.type === "lift_embargo" && (t.by === E || t.by === "both"))) || types.some(x => ["peace", "trade", "border", "nap"].includes(x));
   const qf = q => 0.5 + 0.5 * q;
   let lied = false;
   for (const a of analysis.arguments) {
-    if (seen.has(a.type) && a.type !== "promise") continue;
-    seen.add(a.type);
+    const once = a.type === "threat" ? `threat:${a.consequence}` : a.type;
+    if (seen.has(once) && a.type !== "promise") continue;
+    seen.add(once);
     const Z = a.nation;
     if (a.type === "shared_threat") {
       if (Z === null || Z === E || Z === P || !g.nations[Z] || !g.nations[Z].alive) { notes.push({ label: "A warning about an unnamed danger", pts: 0, verdict: "vague" }); continue; }
@@ -94,7 +112,7 @@ function verifyArguments(g, w, E, P, terms, analysis) {
       ctx.extraLines.push({ label: "Your assurance of our safety", pts });
       notes.push({ label: "Your assurance of our safety", pts: Math.round(pts * 10) / 10, verdict: `worth as much as our trust in you (${Math.round(r.trust)}/100)` });
     } else if (a.type === "compensation") {
-      const grievances = r.mods.filter(m => m.value < 0 && ["settled_near", "broke_treaty", "insult", "threatened", "declared_war", "deceived", "ended_trade", "lied"].includes(m.key));
+      const grievances = r.mods.filter(m => m.value < 0 && (["settled_near", "broke_treaty", "insult", "threatened", "declared_war", "deceived", "ended_trade", "lied", "threatened_trade", "paid_to_trade"].includes(m.key) || /^embargo_by_/.test(m.key)));
       const pays = terms.some(t => (t.type === "payment" || t.type === "tribute") && t.from === P);
       if (!grievances.length) notes.push({ label: "Your apology", pts: 0, verdict: "there was nothing to apologize for" });
       else {
@@ -112,10 +130,17 @@ function verifyArguments(g, w, E, P, terms, analysis) {
       if (a.consequence === "war") {
         if (asksFromE) { ctx.threat = true; notes.push({ label: "Your threat of war", pts: 0, verdict: "weighed by your army and your record of following through" }); }
         else notes.push({ label: "Your threat of war", pts: 0, verdict: "nothing was asked of them, so it only hurt relations" });
-      } else if (a.consequence === "embargo" && hasTreaty(g, E, P, "trade")) {
-        const pts = 4 * r.cred;
-        ctx.extraLines.push({ label: "Your threat to end our trade", pts });
-        notes.push({ label: "Your threat to end trade", pts: Math.round(pts), verdict: "credible: you do trade with them" });
+      } else if (a.consequence === "embargo") {
+        // as credible as what they would lose: a need you fill, or what they sell you (10t), and your record
+        const lev = g.trade && g.trade.v ? tradeLeverage(g, E, P, goodInText(String(a.claim || "").toLowerCase())) : { strength: hasTreaty(g, E, P, "trade") ? 0.6 : 0, k: null, why: "you do trade with them", whyUs: "we trade with you" };
+        ctx.tradeThreat = { k: lev.k };
+        if (lev.strength < 0.1) notes.push({ label: "Your threat to cut off trade", pts: 0, verdict: "empty: they hardly trade with you" });
+        else if (!asksFromE) notes.push({ label: "Your threat to cut off trade", pts: 0, verdict: "nothing was asked of them, so it only hurt relations" });
+        else {
+          const pts = 6 * lev.strength * r.cred;
+          ctx.extraLines.push({ label: `Fear of losing our trade with you (${lev.whyUs})`, pts });
+          notes.push({ label: "Your threat to cut off trade", pts: Math.round(pts * 10) / 10, verdict: `credible: ${lev.why}, weighed by your record of keeping your word` });
+        }
       } else notes.push({ label: "A vague threat", pts: 0, verdict: "no effect" });
     } else if (a.type === "promise") {
       const pts = Math.min(3, (3 * r.trust) / 100);
@@ -137,7 +162,7 @@ function processLetter(g, w, to, text, formalTerms, explicitThreat, analysis) {
   let terms = formalTerms.slice();
   let inferred = false;
   if (!terms.length && analysis.requests.length) {
-    const simple = [...new Set(analysis.requests.filter(x => ["trade", "nap", "alliance", "border", "peace"].includes(x)))].map(type => ({ type }));
+    const simple = [...new Set(analysis.requests.filter(x => ["trade", "nap", "alliance", "border", "peace", "lift_embargo"].includes(x)))].map(type => (type === "lift_embargo" ? (analysis.liftBoth ? { type, by: "both" } : { type, by: E, on: P }) : { type }));
     const ok = simple.filter(t => !validateDeal(g, w, P, E, [t]));
     if (ok.length) { terms = ok; inferred = true; }
   }
@@ -147,12 +172,15 @@ function processLetter(g, w, to, text, formalTerms, explicitThreat, analysis) {
   else if (analysis.tone === "respectful") addMod(g, E, P, "courtesy", "Courteous letters", 2, 0.5, 6);
   if (analysis.manipulation) addMod(g, E, P, "deceived", "Tried to deceive our court", -10, 1, -20);
   if (ctx.threat || (explicitThreat && !terms.length) || analysis.arguments.some(a => a.type === "threat" && a.consequence === "war")) addMod(g, E, P, "threatened", "Threatened us", -10, 1, -25);
+  if (ctx.tradeThreat) addMod(g, E, P, "threatened_trade", "Threatened our trade", -5, 1, -15);
 
   let outcome;
   if (terms.length) {
     outcome = evaluateDeal(g, w, E, P, terms, ctx);
     if (outcome.verdict === "accept") applyDeal(g, w, P, E, terms);
     else if (outcome.verdict === "reject" && ctx.threat) addCommitment(g, P, E, termsText(g, terms));
+    // a refused threat of embargo is a promise to act: carried out by declaring it, or it costs credibility (10t)
+    if (outcome.verdict === "reject" && ctx.tradeThreat) addCommitment(g, P, E, termsText(g, terms), { kind: "embargo", k: ctx.tradeThreat.k });
   } else {
     outcome = { verdict: "message", points: 0, lines: ctx.extraLines.map(l => ({ label: l.label, pts: Math.round(l.pts * 10) / 10 })), counter: null };
   }
@@ -176,7 +204,7 @@ function worldFacts(g, w, E) {
     const tr = g.treaties.filter(t => t.a === z.id || t.b === z.id).map(t => `${TREATY_INFO[t.type].label} with ${nameOf(g, t.a === z.id ? t.b : t.a)}`).join(", ") || "no treaties";
     const wars = enemiesOf(g, z.id).map(id => nameOf(g, id)).join(", ");
     const view = z.id === E ? "" : ` Threat to ${nameOf(g, E)}: ${threatFrom(w, g, E, z.id) >= 0.6 ? "high" : threatFrom(w, g, E, z.id) >= 0.3 ? "moderate" : "low"}.`;
-    return `[id ${z.id}] ${z.name}${z.archetype ? ` (${ARCHETYPES[z.archetype].label.toLowerCase()})` : ""}: output ${fmtMoney(econ.gdp)}/yr, army ${fmtCount(z.soldiers)}, stability ${Math.round(z.stability)}, ${tr}${wars ? `, at war with ${wars}` : ""}.${view}`;
+    return `[id ${z.id}] ${z.name}${z.archetype ? ` (${ARCHETYPES[z.archetype].label.toLowerCase()})` : ""}: output ${fmtMoney(econ.gdp)}/yr, army ${fmtCount(z.soldiers)}, stability ${Math.round(z.stability)}, ${tr}${wars ? `, at war with ${wars}` : ""}${tradeFacts(g, z.id)}.${view}`;
   }).join("\n");
 }
 
@@ -209,9 +237,11 @@ List each substantive argument once. Allowed "type" values:
 - "flattery": praise, emotional appeals or pressure without substance
 For each: {"type": ..., "nation": id or null, "claim": "short paraphrase", "quality": 0 to 1 for how well reasoned it is, "consequence": only for threats}.
 
-Also give "tone" ("respectful", "neutral", "hostile" or "insulting"), "requests" (what the letter asks for that is NOT already in the formal terms, from: "trade", "nap", "alliance", "border", "peace", "payment", "tribute", "city"), "summary" (one neutral sentence, at most 30 words) and "manipulation" (true or false).
+For a threat to cut off trade ("embargo"), put the good it names in "claim" (for example "oil"), if it names one.
 
-Reply with only JSON: {"tone":"...","arguments":[...],"requests":[...],"summary":"...","manipulation":false}`;
+Also give "tone" ("respectful", "neutral", "hostile" or "insulting"), "requests" (what the letter asks for that is NOT already in the formal terms, from: "trade", "nap", "alliance", "border", "peace", "payment", "tribute", "city", "lift_embargo" — to lift our embargo on them), "liftBoth" (true only if it proposes that both sides lift their embargoes on each other), "summary" (one neutral sentence, at most 30 words) and "manipulation" (true or false).
+
+Reply with only JSON: {"tone":"...","arguments":[...],"requests":[...],"liftBoth":false,"summary":"...","manipulation":false}`;
 }
 
 function verdictText(g, outcome) {
