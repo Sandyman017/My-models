@@ -604,6 +604,7 @@ function seaTradeHtml(econ) {
   return `<div class="block"><span class="eyebrow">Sea trade and shipping</span>
     ${rows.length ? `<div class="rows">${rows.join("")}</div>` : `<p class="muted small">Your harbors open the world market: what you can't make you can import, what you can't use you can sell.</p>`}
     ${why ? `<p class="small tone-warn">${escapeHtml(why)}</p>` : ""}
+    ${seaLanesLineHtml()}
     ${links.length ? `<p class="small">Joined to your market by sea: ${escapeHtml(links.flatMap(l => l.towns.map(id => (cityById(id) || {}).name)).filter(Boolean).join(", "))} (${links.reduce((s, l) => s + l.freighters, 0)} freighters on the run).</p>` : ""}
     ${river.length ? `<p class="small">Joined by barges on the rivers: ${escapeHtml(river.join(", "))}.</p>` : ""}
     <p class="muted small">Goods weigh what they weigh: a million people's food is about a million tons a year, coal four tons a unit, electronics almost nothing. Ships and port room are counted in those tons.</p>

@@ -4289,6 +4289,7 @@ function renderMapNow() {
     drawSeaZones(ctx, cs);
     drawRoads(ctx, cs);
     if (motion.on || ui.play) drawTraffic(ctx, cs, motion.now);
+    drawTradeFlows(ctx, cs, motion.now);
     if (motion.on) drawTownTraffic(ctx, cs, motion.now);
     drawFronts(ctx, cs);
     drawNationLabels(ctx, cs);

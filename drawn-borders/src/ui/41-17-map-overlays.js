@@ -24,6 +24,7 @@ function turnboxHtml() {
 }
 
 function tooltipHtml(i) {
+  if (ui.phase === "play" && ui.tradeHover && !ui.hoverQuote) return tradeLaneTooltipHtml(ui.tradeHover);
   if (i < 0) return "";
   if (ui.phase === "play" && ui.hoverQuote) {
     const q = ui.hoverQuote;

@@ -435,6 +435,7 @@ Object.assign(ACTIONS, {
   },
   "trade-map": () => { ui.tradeMap = !ui.tradeMap; },
   "trade-ideas": () => { ui.tradeIdeasAll = !ui.tradeIdeasAll; },
+  "trade-lanes-show": () => { ui.tradeMap = true; },
 });
 
 /* The Economy panel's line on trade: how many nations our merchants reach, and whether the world market is open. */
