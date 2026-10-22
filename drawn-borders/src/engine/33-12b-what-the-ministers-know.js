@@ -118,7 +118,7 @@ function whoName(g, id) { return id < 0 ? "the world market" : `the ${nameOf(g, 
 function goodWord(k) { return GOODS[k].label.toLowerCase(); }
 // why an embargo was declared, as its victim hears it
 const EMBARGO_WHY = { retaliation: "in answer to our own embargo", pressure: "to press its claim on our land, until the claim is settled", hostility: "out of old hatred", grudge: "out of old hatred",
-  war_goods: "because we sell war goods to its enemy", ally: "because we are at war with its ally", danger: "to weaken an army it fears", threat: "as it threatened to" };
+  war_goods: "because we sell war goods to its enemy", ally: "because we are at war with its ally", ally_war: "because we are at war with its ally", danger: "to weaken an army it fears", threat: "as it threatened to" };
 // what each strategic good does for an army (the engine's arms supply needs metals, machinery and chemicals; fuel is oil)
 // why losing a key good would hurt us more than its price says
 const KEY_USE = { food: "it feeds our people", oil: "our tanks, planes and ships run on it", metals: "our arms factories need metal", machinery: "our arms factories and new industries need machinery", chemicals: "our arms factories need chemicals", coal: "our power stations and steel mills burn it" };

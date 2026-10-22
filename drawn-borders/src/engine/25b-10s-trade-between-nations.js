@@ -90,12 +90,13 @@ function tradeBlocked(g, s, b, k) {
 }
 function tradeBlockedText(g, code, s, b, k) {
   const good = k && GOODS[k] ? GOODS[k].label.toLowerCase() : "goods";
+  const subj = id => (id === PLAYER ? "we" : `the ${nameOf(g, id)}`), obj = id => (id === PLAYER ? "us" : `the ${nameOf(g, id)}`);   // the player reads these
   switch (code) {
     case "dead": return "that nation is gone";
     case "war": return "war between them";
     case "sanctions": return "World Assembly sanctions";
-    case "embargo_by_seller": return `the ${nameOf(g, s)} stopped selling ${good} to the ${nameOf(g, b)}`;
-    case "embargo_by_buyer": return `the ${nameOf(g, b)} stopped buying ${good} from the ${nameOf(g, s)}`;
+    case "embargo_by_seller": return `${subj(s)} stopped selling ${good} to ${obj(b)}`;
+    case "embargo_by_buyer": return `${subj(b)} stopped buying ${good} from ${obj(s)}`;
     case "port": return "no usable harbor on the ocean (blockade or lost port)";
     default: return "";
   }
@@ -439,6 +440,8 @@ function tradeOffers(w, g, nid, k) {
   const T = g.trade;
   if (!T) return { sellers: [], buyers: [] };
   const ix = tradeIndex(g), sellers = [], buyers = [];
+  const econ = computeEconomy(w, g, nid);
+  const pos = econ.trade.positions[k] || { short: 0, surplus: 0 };
   const bought = {}, sold = {};
   for (const f of ((ix.into[nid] || {})[k] || [])) bought[f.s] = (bought[f.s] || 0) + f.q;
   for (const f of ((ix.outOf[nid] || {})[k] || [])) sold[f.b] = (sold[f.b] || 0) + f.q;
@@ -454,18 +457,20 @@ function tradeOffers(w, g, nid, k) {
     else if (!L) whyNot = "no route between us";
     else if (offered <= 1e-4) whyNot = "they have none to sell";
     else if ((T.unsold[k] ? T.unsold[k][n.id] || 0 : 0) > 1e-4 && (T.unmet[k] ? T.unmet[k][nid] || 0 : 0) > 1e-4) whyNot = "the route is full";
+    else if (!bought[n.id]) whyNot = pos.short <= 1e-4 ? "we make enough ourselves" : "others sold to us cheaper";
     sellers.push({ nid: n.id, link: L ? L.m : null, d: L ? L.d : 0, price: pIn, offered, bought: bought[n.id] || 0, whyNot, preferred: (T.prefer || []).some(x => x.by === nid && x.k === k && x.from === n.id) });
     const wanted = (T.unmet[k] ? T.unmet[k][n.id] || 0 : 0) + (sold[n.id] || 0);
     let whyNotOut = null;
     if (codeOut) whyNotOut = tradeBlockedText(g, codeOut, nid, n.id, k);
     else if (!L) whyNotOut = "no route between us";
     else if (wanted <= 1e-4) whyNotOut = "they need none";
+    else if (!sold[n.id]) whyNotOut = pos.surplus <= 1e-4 ? "we have none to spare" : "others sold to them cheaper";
     buyers.push({ nid: n.id, link: L ? L.m : null, wanted, sold: sold[n.id] || 0, whyNot: whyNotOut });
   }
-  const econ = computeEconomy(w, g, nid);
   const wp = deliveredPrice(g, k, -1, nid, "world", 0);
   sellers.push({ nid: -1, link: "world", d: 0, price: wp, offered: econ.trade.worldImportCapRaw > 0 ? Infinity : 0, bought: bought[-1] || 0, whyNot: econ.trade.worldImportCapRaw > 0 ? null : "the world market is closed to us: we need a harbor on the ocean or a trade partner who has one", preferred: false });
-  buyers.push({ nid: -1, link: "world", wanted: econ.trade.worldExportCapRaw > 0 || k === "gold" ? Infinity : 0, sold: sold[-1] || 0, whyNot: econ.trade.worldExportCapRaw > 0 || k === "gold" ? null : "the world market is closed to us" });
+  const worldBuys = econ.trade.worldExportCapRaw > 0 || k === "gold";
+  buyers.push({ nid: -1, link: "world", wanted: worldBuys ? Infinity : 0, sold: sold[-1] || 0, whyNot: !worldBuys ? "the world market is closed to us" : !sold[-1] && pos.surplus <= 1e-4 ? "we have none to spare" : null });
   sellers.sort((a, b) => b.bought - a.bought || (a.price ? a.price.p : 99) - (b.price ? b.price.p : 99));
   buyers.sort((a, b) => b.sold - a.sold);
   return { sellers, buyers };

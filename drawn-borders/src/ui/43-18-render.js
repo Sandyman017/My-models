@@ -1,7 +1,7 @@
 /* =====================================================================
    18. Render
    ===================================================================== */
-const PANELS = [["realm", "crown", "Realm", "1"], ["cities", "city", "Cities", "c"], ["groups", "groups", "Groups", "p"], ["people", "toolbox", "People", "o"], ["cabinet", "cabinet", "Ministries", "m"], ["agenda", "flag", "Agenda", "2"], ["economy", "output", "Economy", "3"], ["army", "army", "Army", "4"], ["navy", "anchor", "Navy", "9"], ["selected", "select", "Inspect", "5"], ["nations", "globe", "Nations", "6"], ["letters", "mail", "Letters", "7"], ["chronicle", "scroll", "Log", "8"]];
+const PANELS = [["realm", "crown", "Realm", "1"], ["cities", "city", "Cities", "c"], ["groups", "groups", "Groups", "p"], ["people", "toolbox", "People", "o"], ["cabinet", "cabinet", "Ministries", "m"], ["agenda", "flag", "Agenda", "2"], ["economy", "output", "Economy", "3"], ["trade", "freighter", "Trade", "x"], ["army", "army", "Army", "4"], ["navy", "anchor", "Navy", "9"], ["selected", "select", "Inspect", "5"], ["nations", "globe", "Nations", "6"], ["letters", "mail", "Letters", "7"], ["chronicle", "scroll", "Log", "8"]];
 function dockHtml() {
   const letters = game.inbox.filter(it => it.status === "open").length;
   const unread = assemblyUnread(game);
@@ -18,7 +18,7 @@ function renderHud() {
   hud.classList.toggle("play", !!game && ui.phase !== "draw");
   const dock = document.getElementById("dock");
   dock.hidden = !game || ui.phase !== "play";
-  if (!dock.hidden) dock.innerHTML = dockHtml();
+  if (!dock.hidden) { dock.innerHTML = dockHtml(); dock.style.setProperty("--n", dock.querySelectorAll(".dock-btn").length); }
   const nav = document.getElementById("mapnav");
   if (!nav) return;
   nav.hidden = !game || ui.phase === "draw" || !!ui.play;

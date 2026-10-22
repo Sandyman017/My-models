@@ -97,7 +97,7 @@ function hudHtml() {
       ${stat("coin", "Treasury", treasury, `${fmtSignedMoney(fc.budget.balance - myWorkPay())}/season`, toneOf(fc.budget.balance - myWorkPay(), 0.05))}
       ${stat("output", "Output", `${fmtMoney(econ.gdp)}/yr`, prev ? signedPct(gdpD, 1) : "", toneOf(gdpD, 0.0005), "economy")}
       ${stat("people", "Population", fmtPop(econ.pop), prev ? signedPct(popD, 1) : "", toneOf(popD, 0.0002))}
-      ${stat("food", "Food", pct(foodRatio), econ.famineShare > 0.01 ? "shortage" : econ.granary && econ.granary.release > 0.0005 ? "+ store" : "of need", econ.famineShare > 0.01 ? "bad" : foodRatio < 1.1 || (econ.granary && econ.granary.release > 0.0005) ? "warn" : "neutral")}
+      ${stat("food", "Food", pct(foodRatio), econ.famineShare > 0.01 ? "shortage" : econ.granary && econ.granary.release > 0.0005 ? "+ store" : (econ.foodIn || 0) > 0.01 * econ.pop ? "+ imports" : "of need", econ.famineShare > 0.01 ? "bad" : foodRatio < 1.1 || (econ.granary && econ.granary.release > 0.0005) ? "warn" : "neutral")}
       ${stat("stability", "Stability", `${Math.round(n.stability)}`, `→ ${Math.round(fc.target)}`, toneOf(fc.target - n.stability, 0.5))}
       ${stat("army", "Army", `${game.divisions.filter(d => d.owner === PLAYER).length} div`, enemiesOf(game, PLAYER).length ? "at war" : fmtCount(n.soldiers), enemiesOf(game, PLAYER).length ? "bad" : "neutral", "army")}
       ${stat("star", "Prestige", `${n.prestige || 0}`, liveNations(game).some(z => (z.prestige || 0) > 0) ? ordinal(legacyRank(game, PLAYER).rank) : "", legacyRank(game, PLAYER).rank === 1 ? "good" : "neutral", "agenda")}
@@ -179,7 +179,7 @@ function lawEffectTextBase(law, value) {
     if (law === "services") return `Costs ${fmtMoney(now.budget.services)} a season`;
     if (law === "education") return `Skill heading to ${pct(EDU_LAWS[value].skill)} · ${fmtMoney(now.budget.education)} a season`;
     if (law === "research") return `${fmtNum(researchPoints(n, now.econ))} research a season · ${fmtMoney(now.budget.research)}`;
-    if (law === "trade") return now.econ.access > 0 ? `Tariffs ${fmtMoney(now.budget.tariffs)} a season` : "No port or trade partner yet";
+    if (law === "trade") return tradeBookReady() ? tradeLawText(now, value, true) : now.econ.access > 0 ? `Tariffs ${fmtMoney(now.budget.tariffs)} a season` : "No port or trade partner yet";
     if (law === "finance") return `Investors put ${fmtMoney((now.econ.gdp / 4) * FINANCE_LAWS[value].invest)} a season into industry`;
     if (law === "arms") return `${fmtMoney(now.budget.arms.spend)} a season on equipment`;
     if (law === "granary") return granaryLawText(now, value, true);
@@ -189,6 +189,7 @@ function lawEffectTextBase(law, value) {
   if (law === "granary") return granaryLawText(now, value, false);
   if (law === "army") return `If chosen: up to ${fmtCount(manpowerCap({ ...n, laws: { ...n.laws, army: value } }, now.econ))} may serve, stability target ${signed1(alt.target - now.target)}`;
   if (law === "finance") return `If chosen: investors put ${fmtMoney((now.econ.gdp / 4) * FINANCE_LAWS[value].invest)} a season into industry${FINANCE_LAWS[value].crisis > 0.01 ? "; banking crises become likely" : FINANCE_LAWS[value].crisis === 0 ? "; no banking crises" : ""}`;
+  if (law === "trade" && tradeBookReady()) return tradeLawText(now, value, false);
   if (law === "trade") return `If chosen: imports up to ×${TRADE_LAWS[value].imports}, exports ×${TRADE_LAWS[value].exports}, tariff ${pct(TRADE_LAWS[value].tariff)}, stability ${signed1(alt.target - now.target)}`;
   if (law === "arms") return `If chosen: ${fmtMoney(alt.budget.arms.spend)} on equipment (${fmtSignedMoney(alt.budget.balance - now.budget.balance)}), stability target ${signed1(alt.target - now.target)}`;
   return `If chosen: ${fmtSignedMoney(alt.budget.balance - now.budget.balance)} a season, stability target ${signed1(alt.target - now.target)}`;
@@ -323,14 +324,16 @@ function fmtWorkers(m) { return m >= 1 ? `${m.toFixed(1)}M` : `${Math.round(m * 
 function goodsHtml(econ) {
   const rows = GOOD_ORDER.map(k => {
     const st = goodStatus(econ, k);
-    const trade = econ.goods.imports[k] > 0.01 ? `−${fmtNum(econ.goods.imports[k])}` : econ.goods.exports[k] > 0.01 ? `+${fmtNum(econ.goods.exports[k])}` : "";
-    return `<tr title="${escapeHtml(GOOD_USES[k])}"><td>${GOODS[k].label}<span class="sub">${escapeHtml(GOOD_USES[k])}</span></td><td class="num">${fmtNum(econ.goods.supply[k])}</td><td class="num">${fmtNum(econ.goods.demand[k])}</td><td class="num small">${trade}</td><td class="small tone-${st.tone}">${st.text}</td></tr>`;
+    const T = econ.trade || {}, im = econ.goods.imports[k], ex = econ.goods.exports[k];
+    const trade = im > 0.01 ? `−${fmtNum(im)}` : ex > 0.01 ? `+${fmtNum(ex)}` : "";
+    const who = tradeBookReady() ? (im > 0.01 ? tradeWhoShort(T.importsFrom && T.importsFrom[k], "from", im, 1) : ex > 0.01 ? tradeWhoShort(T.exportsTo && T.exportsTo[k], "to", ex, 1) : "") : "";
+    return `<tr title="${escapeHtml(GOOD_USES[k])}"><td>${GOODS[k].label}<span class="sub">${escapeHtml(GOOD_USES[k])}</span></td><td class="num">${fmtNum(econ.goods.supply[k])}</td><td class="num">${fmtNum(econ.goods.demand[k])}</td><td class="num small">${trade}${who ? `<span class="sub">${escapeHtml(who)}</span>` : ""}</td><td class="small tone-${st.tone}">${st.text}</td></tr>`;
   }).join("");
-  const access = econ.access > 0 ? `Your ports and trade partners let you buy up to ${pct(Math.min(1, econ.access * TRADE_LAWS[game.nations[PLAYER].laws.trade].imports))} of what you lack, at a premium.` : "You have no port and no trade partner, so nothing can be imported or sold abroad. Build a port or sign a trade agreement.";
+  const access = tradeBookReady() ? tradeAccessShort(econ) : econ.access > 0 ? `Your ports and trade partners let you buy up to ${pct(Math.min(1, econ.access * TRADE_LAWS[game.nations[PLAYER].laws.trade].imports))} of what you lack, at a premium.` : "You have no port and no trade partner, so nothing can be imported or sold abroad. Build a port or sign a trade agreement.";
   return `<div class="block">
     <span class="eyebrow">Goods · a year</span>
     <table class="regions goods"><thead><tr><th>Good</th><th class="num">Made</th><th class="num">Wanted</th><th class="num">Trade</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="muted small">${access} Imports cost ${fmtMoney(econ.importBill)} a year; exports earn ${fmtMoney(econ.exportValue)}.</p>
+    <p class="muted small">${access} Imports cost ${fmtMoney(econ.importBill)} a year; exports earn ${fmtMoney(econ.exportValue)}.${tradeBookReady() ? ` <button class="linkbtn" type="button" data-tab="trade">Trade panel</button>` : ""}</p>
   </div>`;
 }
 
@@ -709,7 +712,7 @@ function sidebarHtml() {
   if (ui.phase === "collapsed") return collapsedHtml();
   if (!PANELS.some(([k]) => k === ui.tab)) { ui.tab = null; return ""; }
   const panel = PANELS.find(([k]) => k === ui.tab);
-  const body = { realm: realmTabHtml, cities: citiesTabHtml, groups: groupsTabHtml, people: peopleTabHtml, cabinet: cabinetTabHtml, agenda: agendaTabHtml, economy: econTabHtml, army: armyTabHtml, selected: selectedTabHtml, nations: nationsTabHtml, letters: lettersTabHtml, chronicle: chronicleTabHtml, navy: navyTabHtml }[ui.tab]();
+  const body = { realm: realmTabHtml, cities: citiesTabHtml, groups: groupsTabHtml, people: peopleTabHtml, cabinet: cabinetTabHtml, agenda: agendaTabHtml, economy: econTabHtml, trade: tradeTabHtml, army: armyTabHtml, selected: selectedTabHtml, nations: nationsTabHtml, letters: lettersTabHtml, chronicle: chronicleTabHtml, navy: navyTabHtml }[ui.tab]();
   const restart = ui.confirmRestart
     ? `<div class="confirm"><p>Start a new world? ${escapeHtml(game.nations[PLAYER].name)} stays in Saved games as an earlier game, so you can come back to it.</p><div class="actions"><button class="btn danger" type="button" data-action="restart-now">New world</button><button class="btn" type="button" data-action="restart-cancel">Keep playing</button></div></div>`
     : `<button class="btn" type="button" data-action="restart-ask" style="justify-self:start">New game</button>`;
