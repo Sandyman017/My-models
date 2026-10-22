@@ -79,7 +79,7 @@ function effectText(g, e, nid) {
     }
     case "foodAid": {
       const mo = e.got ?? e.months ?? 1;   // months of their food it covers (less than asked when our reserve is small)
-      return { text: `Send grain from our reserve to the ${nameOf(g, e.to)}: food for ${fmtPeople((e.q || 0) * 12 / Math.max(0.01, mo))} people for ${fmt1(mo)} month${mo === 1 ? "" : "s"}${e.ours ? ` (${fmt1(e.ours)} month${e.ours === 1 ? "" : "s"} of our own reserve)` : ""}${e.opinion > 0 ? `; their opinion of you +${Math.round(e.opinion)}` : ""}`, tone: "neutral" };
+      return { text: `Send grain from our reserve to the ${nameOf(g, e.to)}: food for ${fmtPeople((e.q || 0) * 12 / Math.max(0.01, mo))} people for ${monthsText(mo)}${e.ours ? ` (${monthsText(e.ours)} of our own reserve)` : ""}${e.opinion > 0 ? `; their opinion of you +${Math.round(e.opinion)}` : ""}`, tone: "neutral" };
     }
     case "prefer": return e.from !== null && e.from !== undefined && e.from >= 0
       ? { text: `Our merchants buy ${goodWord(e.k)} from the ${nameOf(g, e.from)} first: they count its price ${pct(TRADE.prefer)} lower when they sign contracts`, tone: "neutral" }
@@ -114,6 +114,7 @@ function embargoPvLines(pv) {
   if (pv.war > 0) out.push(`Their wish for war with us +${pv.war}`);
   return out;
 }
+function monthsText(m) { return `${fmt1(m)} month${Math.abs(m - 1) < 0.05 ? "" : "s"}`; }
 function fmtPeople(m) { return m >= 1 ? `${m.toFixed(1)}M` : `${Math.max(1, Math.round(m * 1000))}k`; }
 
 function applyEffects(w, g, nid, effects) {

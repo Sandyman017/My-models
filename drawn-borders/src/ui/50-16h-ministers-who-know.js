@@ -166,11 +166,11 @@ function ruleAnswer(key, text) {
     const L = nationFile(world, g, PLAYER, nat.id, table, 1);
     const intel = L.find(l => /^Intelligence|^WE ARE AT WAR/.test(l));
     const tradeL = L.find(l => /^Trade with us/.test(l));
-    if (has(/\baid\b|hungry|hunger|famine|starv/) && tradeL) {
+    if (has(/\baid\b|hungry|hunger|famine|starv|\b(send|give|ship)\b[^.?!]*\b(grain|food|wheat)\b/) && tradeL) {
       // food aid: what they lack, and what our reserve could send them (the same quote the order uses)
       const row = table.find(r => r.id === nat.id), q = foodAidQuote(world, g, PLAYER, nat.id, 1);
       const hungry = row && row.econ.famineShare > 0.001;
-      out = [hungry ? `${pct(row.econ.famineShare)} of the ${nat.name}'s people go hungry. ${q.ok ? `We could send them grain from our reserve: food for ${fmtPeople(q.q * 12 / Math.max(0.01, q.months))} people for ${fmt1(q.months)} months${q.opinion > 0 ? ` (their opinion of us +${Math.round(q.opinion)})` : ""}.` : `We cannot send them grain: ${q.reason.charAt(0).toLowerCase()}${q.reason.slice(1)}`}` : `Nobody goes hungry in the ${nat.name}, so they need no food aid.`, tradeL];
+      out = [hungry ? `${pct(row.econ.famineShare)} of the ${nat.name}'s people go hungry. ${q.ok ? `We could send them grain from our reserve: food for ${fmtPeople(q.q * 12 / Math.max(0.01, q.months))} people for ${monthsText(q.months)}${q.opinion > 0 ? ` (their opinion of us +${Math.round(q.opinion)})` : ""}.` : `We cannot send them grain: ${q.reason.charAt(0).toLowerCase()}${q.reason.slice(1)}`}` : `Nobody goes hungry in the ${nat.name}, so they need no food aid.`, tradeL];
     } else if (has(tradeWords) && tradeL) out = [tradeL].concat(fileSection("economy", "Trade dependence").filter(l => l.includes(nat.name)).slice(0, 3));
     else if (has(/army|armies|military|soldier|division|strong|tank|plane|attack|war\b|threat/)) out = [L[2], intel || "They are not thinking of war against us."];
     else if (has(/econom|rich|money|gdp/)) out = [L[1]];
@@ -205,7 +205,7 @@ function ruleAnswer(key, text) {
     if (!armies.slice(0, 4).some(l => l.includes("(us):"))) out.push(armies.find(l => l.includes("(us):")));
   } else if (has(/\bwar\b|threat|attack|danger|enem|invade|risk|safe/)) out = fileSection("defence", "Our wars").concat(fileSection("defence", "Threats")).slice(0, 4);
   else if (has(/budget|money|treasur|debt|tax|spend|income|deficit|afford/)) out = fileSection("economy", "The budget");
-  else if (has(/import|export|trade|partner|merchant/)) {
+  else if (has(/import|export|trade|partner|merchant|\b(sell|buy)\w* abroad|\bwe (sell|buy)\b/)) {
     const G = econ.goods;
     const im = GOOD_ORDER.filter(k => (G.imports[k] || 0) > 0.01).map(k => GOODS[k].label.toLowerCase()), ex = GOOD_ORDER.filter(k => (G.exports[k] || 0) > 0.01).map(k => GOODS[k].label.toLowerCase());
     const short = GOOD_ORDER.filter(k => (econ.sat[k] ?? 1) < 0.95 && (G.demand[k] || 0) > 0.02).map(k => GOODS[k].label.toLowerCase());
@@ -234,8 +234,23 @@ function embargoLinesNow() {
   return out;
 }
 // words that make a sentence about trade between nations: such questions go to the ministry that runs that trade
-const TRADE_TOPIC = /\b(embargo\w*|boycott\w*|sanctions?|suppliers?|sellers?|buyers?|customers?|stop (selling|buying)|depend\w*|rely|relies|reliant|trade partners?|trade bans?|(food|grain) aid|send (grain|food))\b/;
+const TRADE_TOPIC = /\b(embargo\w*|boycott\w*|sanctions?|suppliers?|sellers?|buyers?|customers?|stop (selling|buying)|depend\w*|rely|relies|reliant|trade partners?|bans?|cut off|(food|grain) aid|send (grain|food)|(sell|buy)\w* abroad)\b/;
 const TRADE_DEAL = /\b(buy|buying|bought|sell|selling|sold)\b[^.?!]*\b(from|to)\b/;
+/* What a sentence about trade asks for, so that only an order of that kind can answer it ("send food aid" is
+   never "buy grain"), and which way an embargo goes ("stop selling" is not "stop buying"). */
+function tradeIntent(t) {
+  const sell = /\b(sell\w*|sold|export\w*)\b/.test(t), buy = /\b(buy\w*|bought|import\w*|purchas\w*)\b/.test(t);
+  const dir = sell && !buy ? "sell" : buy && !sell ? "buy" : null;
+  const food = /\b(food|grain|wheat|bread)\b/.test(t);
+  if (/^lift\b/.test(t) || /\b(lift|end|remove|cancel|drop)\b[^.?!]*\b(embargo\w*|bans?|boycott\w*)/.test(t) || /\bstop (the|our) (embargo|ban|boycott)/.test(t)) return { kind: "lift", re: /^lift:/ };
+  if (/\b(aid|relief)\b/.test(t) || /\b(send|give|ship)\b[^.?!]*\b(grain|food|wheat)\b[^.?!]*\bto\b/.test(t) || /\bfeed (them|the)\b/.test(t)) return { kind: "aid", re: /^aid:/ };
+  if (/\b(embargo\w*|boycott\w*|ban|cut off|stop (selling|buying|trading|all trade|trade)|no (more )?trade)\b/.test(t)) return { kind: "embargo", re: /^embargo:/, dir };
+  if (/\b(diversify|prefer\w*|instead)\b/.test(t) || /\b(find|second|another|other|new|secure)\b[^.?!]*\b(suppl\w*|sellers?|sources?)\b/.test(t)) return { kind: "prefer", re: /^prefer:/ };
+  if (buy && food) return { kind: "buygrain", re: /^fx:buygrain$/ };
+  if (buy) return { kind: "prefer", re: /^prefer:/ };
+  if (/\btrade (agreement|deal|treaty|pact)\b/.test(t)) return { kind: "treaty", re: /^envoy:trade:/ };
+  return null;
+}
 function ruleMinisterReply(key, text, orders, m) {
   const g = game, n = g.nations[PLAYER], econ = economies()[PLAYER];
   const t = text.toLowerCase().trim();
@@ -250,13 +265,23 @@ function ruleMinisterReply(key, text, orders, m) {
   // trade between nations is answered only by a trade order ("send food aid" is not a food factory)
   const tGood = findGoodIn(t), tNat = findNationIn(g, t, PLAYER);
   const trade = TRADE_TOPIC.test(t) || TRADE_DEAL.test(t) || /\b(embargo\w*|boycott\w*|cut off)\b/.test(t);
+  const intent = tradeIntent(t);
   const tradeOrder = o => o.group === "Trade" || /^(embargo|lift|prefer|aid|fx:buygrain|envoy:trade)/.test(o.id);
   const fit = o => {
     if (trade && !tradeOrder(o)) return null;
     let b = 0;
+    if (intent) {
+      // an order of the kind asked for counts as a match by itself; any other order is not an answer
+      if (!intent.re.test(o.id)) return null;
+      const d = (o.id.match(/^embargo:(\w+):/) || [])[1];
+      if (intent.dir && d && d !== intent.dir && d !== "both") return null;
+      if (intent.kind === "embargo" && !intent.dir && d === "both") b += 0.5;   // "embargo them": all trade, both ways
+      b += 1;
+    }
     if (o.allGoods) { if (tGood) return null; b += 0.5; }
     if (tGood && o.good) { if (o.good !== tGood) return null; b += 2; }
     if (tNat && o.target !== undefined && o.target !== null) { if (o.target !== tNat.id) return null; b += 2; }
+    else if (tNat && intent && intent.kind === "prefer") return null;   // "buy oil from the X": an order about the X, or none
     return b;
   };
   let best = null, bestScore = 0, blockedBest = null, blockedScore = 0;
@@ -266,14 +291,14 @@ function ruleMinisterReply(key, text, orders, m) {
     if (o.blocked) {
       const L = `${o.label} ${o.id}`.toLowerCase();
       const ws = words.filter(wd => L.includes(wd.slice(0, Math.min(6, wd.length)))).length;
-      const sc = ws ? ws + bonus : 0;
+      const sc = ws || intent ? ws + bonus : 0;
       if (sc > blockedScore) { blockedScore = sc; blockedBest = o; }
       continue;
     }
     const L = `${o.label} ${o.id} ${LAW_NAMES[o.law] || ""}`.toLowerCase();
     let sc = 0;
     for (const wd of words) if (L.includes(wd.slice(0, Math.min(6, wd.length)))) sc += 1;
-    if (sc > 0) sc += bonus;
+    if (sc > 0 || intent) sc += bonus;
     if (sc > 0 && o.kind === "law") {
       const higher = o.law === "tax" ? o.value > n.laws.tax : (lawSteps(o.law) || []).indexOf(o.value) > (lawSteps(o.law) || []).indexOf(n.laws[o.law]);
       if ((up && higher) || (down && !higher)) sc += 1.5;
@@ -293,7 +318,9 @@ function ruleMinisterReply(key, text, orders, m) {
       let none = "";
       if (tNat && tGood) {
         const tw = tradeWith(g, PLAYER, tNat.id), gw = GOODS[tGood].label.toLowerCase();
-        if (/\bsell\w*\b/.test(t) && !tw.aSells[tGood]) none = ` We sell the ${tNat.name} no ${gw}.`;
+        const dep = dependence(g, PLAYER, tGood).find(x => x.from === tNat.id);
+        if (intent && intent.kind === "prefer" && dep && dep.share > 0.005) none = ` We already buy ${pct(dep.share)} of our ${gw} from the ${tNat.name}.`;
+        else if (/\bsell\w*\b/.test(t) && !tw.aSells[tGood]) none = ` We sell the ${tNat.name} no ${gw}.`;
         else if (/\bbuy\w*\b/.test(t) && !tw.bSells[tGood]) none = ` We buy no ${gw} from the ${tNat.name}.`;
       }
       const seek = /\b(find|second|another|suppl\w*|sellers?|import\w*)\b/.test(t) && !/\bstop\b/.test(t);

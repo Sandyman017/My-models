@@ -119,6 +119,8 @@ function goodWord(k) { return GOODS[k].label.toLowerCase(); }
 // why an embargo was declared, as its victim hears it
 const EMBARGO_WHY = { retaliation: "in answer to ours", pressure: "to press its claim on us", hostility: "out of old hatred", war_goods: "because we sell war goods to its enemy", threat: "as it threatened" };
 // what each strategic good does for an army (the engine's arms supply needs metals, machinery and chemicals; fuel is oil)
+// why losing a key good would hurt us more than its price says
+const KEY_USE = { food: "it feeds our people", oil: "our tanks, planes and ships run on it", metals: "our arms factories need metal", machinery: "our arms factories and new industries need machinery", chemicals: "our arms factories need chemicals", coal: "our power stations and steel mills burn it" };
 const STRATEGIC_USE = { metals: "their arms factories need metal", machinery: "their arms factories need machinery", chemicals: "their arms factories need chemicals", oil: "their tanks, planes and ships run on it", electronics: "modern weapons need it" };
 function tradeRouteWord(L) {
   if (!L) return "no route between us (no shared border, caravan route or sea lane)";
@@ -235,7 +237,8 @@ function tradeRiskLines(w, g, nid, econ) {
   const out = [];
   const gdp = Math.max(1, econ.gdp);
   const R = tradeRisks(w, g, nid, econ, { cheap: true });
-  for (const r of R.slice(0, 6)) out.push(`${r.level >= 2 ? "DANGER: " : r.level >= 1 ? "RISK: " : ""}${r.text} (worth ${bMoney(r.lossPct * gdp)} a year, ${pct1(r.lossPct)} of our output): ${r.why.join("; ")}.`);
+  // the engine's first reason repeats the share in the text: the rest say what could go wrong and what else there is
+  for (const r of R.slice(0, 6)) out.push(`${r.level >= 2 ? "DANGER: " : r.level >= 1 ? "RISK: " : ""}${r.text} (${bMoney(r.lossPct * gdp)} a year, ${pct1(r.lossPct)} of our output)${KEY_USE[r.k] ? `; ${KEY_USE[r.k]}` : ""}; ${r.why.slice(1).join("; ")}.`);
   if (!R.length) out.push("We depend on no single nation for much: nothing we buy from one seller is worth half a percent of our output, or a fifth of what we need of a key good.");
   const TO = tradeOf(g, nid);
   for (const p of TO.partners) {
@@ -297,7 +300,7 @@ function tradeWithLine(g, nid, zid) {
   const items = (o, whose) => Object.entries(o).filter(([, x]) => x.q > 1e-4).sort((a, b) => b[1].v - a[1].v).slice(0, 4)
     .map(([k, x]) => `${tradeQtyText(g, k, x.q)}${x.shareOfNeed > 0.005 ? ` (${pct(Math.min(1, x.shareOfNeed))} of ${whose} need)` : ""}${x.blocked ? " (CUT)" : ""}`);
   const buy = items(tw.bSells, "our"), sell = items(tw.aSells, "their");
-  if (!buy.length && !sell.length && !tw.embargoes.length && !tw.promise) return tw.link ? `Trade with us: none this season (route: ${tradeRouteWord(tw.link)}).` : "Trade with us: none, and no route between us (no shared border, caravan route or sea lane).";
+  if (!buy.length && !sell.length && !tw.embargoes.length && !tw.promise) return tw.link ? `Trade with us: none this season (route: ${tradeRouteWord(tw.link)}).` : "Trade with us: none (no route between us).";
   const parts = [buy.length ? `we buy ${buy.join(", ")} from them` : "we buy nothing from them", sell.length ? `they buy ${sell.join(", ")} from us` : "they buy nothing from us", `route: ${tradeRouteWord(tw.link)}`];
   if (hasTreaty(g, nid, zid, "trade")) parts.push("a trade agreement: no import tax");
   for (const e of tw.embargoes) parts.push(e.by === nid ? `EMBARGO: we ${embargoVerb(e)} them (since ${seasonLabel(e.since)})` : `EMBARGO: they ${embargoVerb(e)} us (since ${seasonLabel(e.since)}${EMBARGO_WHY[e.why] ? `, ${EMBARGO_WHY[e.why]}` : ""})`);
