@@ -325,7 +325,7 @@ const DECISIONS = {
       const months = 1.5, q = c.econ.pop * months / 12;
       return {
         title: "Drought", cell: c.econ.cities[0].cell,
-        body: `No rain has fallen for weeks. The wheat is withering in the fields and the rivers are low. Farmers are asking the government for help.${offer ? ` Grain can be bought from ${whoName(c.g, offer.nid)} at ${bMoney(offer.p)} for a year's food for a million people, at our border.` : ""}`,
+        body: `No rain has fallen for weeks. The wheat is withering in the fields and the rivers are low. Farmers are asking the government for help.${offer ? ` Grain can be bought from ${whoName(c.g, offer.nid)} at ${bMoney(offer.p)} for a year's food for a million people, at our border.` : tradeOpen(c.econ) ? " No nation we can reach has grain to spare, and the world market is closed to us." : ""}`,
         options: [
           { id: "a", tag: "kind", label: "Relief for the farmers", effects: [{ t: "money", v: cost(c, 0.0025) }, popAllEffect(c, -0.002)] },
           ...(offer ? [{ id: "b", tag: "kind", label: offer.nid < 0 ? "Buy grain on the world market" : `Buy grain from the ${nameOf(c.g, offer.nid)}`, effects: [{ t: "money", v: -Math.max(0.1, round1(q * offer.p)) }, { t: "granary", months }, { t: "stab", v: 1 }] }] : []),
@@ -555,7 +555,7 @@ const DECISIONS = {
       const cutOut = (f.cut || []).filter(x => x.dir === "out" && x.q > 1e-4).sort((a, b) => b.v - a.v);
       const T = c.econ.trade || {};
       const now = cutIn.slice(0, 3).map(x => { const from = tradeShareText(g, T.importsFrom && T.importsFrom[x.k], "from", 0); return `${pct(c.econ.sat[x.k] ?? (x.k === "food" ? 1 - c.econ.famineShare : 1))} of our ${goodWord(x.k)} need is met now${from ? ` (bought from ${from})` : ""}`; });
-      const why = { retaliation: " They say it is their answer to our own embargo.", pressure: " They say it will last until their claim on our town is settled." }[E[0].why] || "";
+      const why = EMBARGO_WHY[E[0].why] ? ` It says it did so ${EMBARGO_WHY[E[0].why]}.` : "";
       let town = c.econ.cities[0], bd = 99;
       for (const t of c.econ.cities) { const d = distanceToNation(g, by, t.cell); if (d < bd) { bd = d; town = t; } }
       const options = [];
@@ -731,7 +731,7 @@ function effectScore(c, e) {
     case "group": return groupEffectScore(c.n, e);
     case "general": return c.n.groups && c.n.groups.army && c.n.groups.army.approval < 35 ? 1 : -1;
     // trade (10s): an embargo costs our own output and their goodwill; aid costs grain and earns goodwill
-    case "embargo": return -(Math.abs((e.pv && e.pv.self) || 0) / onePct) * 3 * per.moneyWeight - 1;
+    case "embargo": return (((e.pv && e.pv.self) || 0) / onePct) * 3 * per.moneyWeight - 1;
     case "lift": return 1;
     case "foodAid": return (e.opinion || 0) * 0.12 * (per.tradeWeight || 1) - (e.ours || 1) * 0.8;
     case "prefer": return 0;
