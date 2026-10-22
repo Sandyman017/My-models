@@ -1043,7 +1043,12 @@ button.trade-row:hover { border-color: var(--c); }
 /* ===== end D =====
 
 /* ===== v37 trade: E (Statistics) ===== */
-/* ===== end E ===== */
+.st-matrix.trade td { width: 46px; min-width: 46px; font-size: 11px; cursor: default; }
+.st-matrix.trade td.tot { background: transparent; color: var(--muted); width: 56px; }
+.st-matrix.trade td.emb { background-image: repeating-linear-gradient(45deg, transparent 0 4px, color-mix(in srgb, var(--div-neg) 70%, transparent) 4px 6px); }
+.st-matrix.trade td.emb.part { background-image: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--div-neg) 45%, transparent) 6px 7px); }
+.st-key .sw.hatch { background: repeating-linear-gradient(45deg, var(--div-mid) 0 3px, var(--div-neg) 3px 4px); }
+/* ===== end E =====
 
 /* ===== v37 trade: F (map) ===== */
 /* ===== end F ===== */
@@ -3793,7 +3798,7 @@ function historyEntry(n, econ, turn, g) {
   Object.assign(e, {
     area: econ.area || 0, towns: econ.cities.length, divs, tanks: Math.round(tanks + ((n.stock && n.stock.tanks) || 0)), planes: Math.round(planes),
     power: Math.round(armyPower(g, n.id)), techs: Object.keys(n.techs || {}).length, food: sr(econ.pop > 0.01 ? econ.food / econ.pop : 0),
-    skill: sr(n.skill ?? 0.35), exp: sr(econ.exportValue || 0), imp: sr(econ.importBill || 0), research: sr(econ.research || 0),
+    skill: sr(n.skill ?? 0.35), exp: sr(econ.exportValue || 0), imp: sr(econ.importBill || 0), fin: sr(econ.foodIn || 0), research: sr(econ.research || 0),
     sec: ["primary", "secondary", "tertiary", "quaternary"].map(k => sr(sec[k] ? sec[k].va : 0, 1)),
     opP: n.isPlayer ? null : Math.round(opinionDetail(g, n.id, PLAYER).value),
   });
@@ -24897,6 +24902,7 @@ const STAT_VIEWS = [
   ["nation", "Nations", "Every number for one country"],
   ["compare", "Compare", "Any measure, every nation, over time"],
   ["economy", "Economy", "Sectors, trade, goods, technology"],
+  ["trade", "Trade", "Who sells what to whom, embargoes"],
   ["military", "Military", "Armies, wars, battles"],
   ["diplomacy", "Diplomacy", "Who likes whom, and every treaty"],
   ["chronicle", "History", "Records and the world's events"],
@@ -24914,7 +24920,10 @@ const STAT_METRICS = {
   stability: { label: "Stability", get: h => h.stability, fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, minSpan: 20 },
   treasury:  { label: "Treasury", get: h => h.treasury, fmt: v => fmtMoney(v), axis: v => fmtMoneyShort(v), zero: true },
   techs:     { label: "Technologies", get: h => h.techs, fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}` },
-  exp:       { label: "Exports", get: h => h.exp, fmt: v => fmtMoney(v), axis: v => fmtMoneyShort(v), sum: true },
+  exp:       { label: "Exports (a year)", get: h => h.exp, fmt: v => fmtMoney(v), axis: v => fmtMoneyShort(v), sum: true },
+  imp:       { label: "Imports (a year)", get: h => (h.imp === undefined ? null : h.imp), fmt: v => fmtMoney(v), axis: v => fmtMoneyShort(v), sum: true },
+  bal:       { label: "Trade balance", get: h => (h.imp === undefined || h.exp === undefined ? null : h.exp - h.imp), fmt: v => fmtSignedMoney(v), axis: v => fmtMoneyShort(v), zero: true },
+  fin:       { label: "Food bought abroad (people fed)", get: h => (h.fin === undefined ? null : h.fin), fmt: v => fmtPeople(v), axis: v => `${fmtNum(v)}M`, sum: true, zero: true },
   skill:     { label: "Workforce skill", get: h => h.skill, fmt: v => pct(v), axis: v => pct(v) },
   ls:        { label: "Living standard", get: h => (h.ls === undefined ? null : h.ls), fmt: v => fmtK(v), axis: v => fmtK(v) },
   tfr:       { label: "Children per woman", get: h => (h.tfr === undefined ? null : h.tfr), fmt: v => v.toFixed(1), axis: v => v.toFixed(1) },
@@ -24928,7 +24937,7 @@ const STAT_METRICS = {
   seaMt:     { label: "Sea trade (Mt a year)", get: h => (h.seaMt === undefined ? null : h.seaMt), fmt: v => `${fmtNum(v)} Mt`, axis: v => `${fmtNum(v)}`, sum: true },
   prestige:  { label: "Prestige", get: h => (h.prestige === undefined ? null : h.prestige), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, zero: true },
 };
-const COMPARE_METRICS = ["gdp", "gdppc", "pop", "area", "towns", "soldiers", "power", "tanks", "planes", "ships", "fr", "stability", "treasury", "techs", "exp", "skill", "food", "unemp", "resM", "prestige", "opP"];
+const COMPARE_METRICS = ["gdp", "gdppc", "pop", "area", "towns", "soldiers", "power", "tanks", "planes", "ships", "fr", "stability", "treasury", "techs", "exp", "imp", "bal", "fin", "skill", "food", "unemp", "resM", "prestige", "opP"];
 const STAT_CHARTS = new Map();
 let statChartSeq = 0;
 
@@ -24995,7 +25004,7 @@ function nationRow(g, n) {
     n, econ, gdp: econ.gdp, growth: yearAgo.gdp ? econ.gdp / yearAgo.gdp - 1 : 0, gdppc: econ.pop > 0.01 ? econ.gdp / econ.pop : 0, pop: econ.pop,
     area: econ.area || 0, towns: econ.cities.length, soldiers: n.soldiers || 0, divs, divCount: divs.inf + divs.art + divs.arm, tanks: tanks + ((n.stock && n.stock.tanks) || 0), planes,
     power: armyPower(g, n.id), stability: n.stability, treasury: n.treasury, techs: Object.keys(n.techs || {}).length,
-    opP: n.isPlayer ? null : opinionDetail(g, n.id, PLAYER).value, exp: (econ.exportValue || 0) * 4, imp: (econ.importBill || 0) * 4,
+    opP: n.isPlayer ? null : opinionDetail(g, n.id, PLAYER).value, exp: econ.exportValue || 0, imp: econ.importBill || 0,   // already a year
   };
 }
 function rankOf(rows, key, nid) { const s = rows.slice().sort((a, b) => b[key] - a[key]); return s.findIndex(r => r.n.id === nid) + 1; }
@@ -25163,7 +25172,7 @@ function statsWidth() {
 function statsHtml() {
   STAT_CHARTS.clear();
   const g = game, S = ui.stats;
-  const body = { world: statsWorldHtml, legacy: statsLegacyHtml, nation: statsNationHtml, compare: statsCompareHtml, economy: statsEconomyHtml, military: statsMilitaryHtml, diplomacy: statsDiplomacyHtml, chronicle: statsChronicleHtml }[S.view]();
+  const body = { world: statsWorldHtml, legacy: statsLegacyHtml, nation: statsNationHtml, compare: statsCompareHtml, economy: statsEconomyHtml, trade: statsTradeHtml, military: statsMilitaryHtml, diplomacy: statsDiplomacyHtml, chronicle: statsChronicleHtml }[S.view]();
   return `<div class="st-win" role="dialog" aria-modal="true" aria-labelledby="st-title">
     <header class="st-head">
       <div class="block" style="gap:2px"><span class="eyebrow">Statistics · ${seasonLabel(g.turn)}</span><h2 id="st-title">${STAT_VIEWS.find(v => v[0] === S.view)[1]}</h2></div>
@@ -25294,7 +25303,7 @@ function statsNationHtml() {
     <div class="st-grid">
       ${card("Economy by sector", shareChart(secSeries, { width: W.half, height: 220, fmt: v => `${fmtMoney(v)}/yr` }) + legendHtml(secSeries, false), { note: "share of output over time" })}
       ${card("What the economy makes", subsHtml, { note: "output a year · workers" })}
-      ${card("Goods market", goodsTableHtml(econ), { note: "per season" })}
+      ${card("Goods market", goodsTableHtml(econ), { note: "a year" })}
       ${card("Budget this season", budgetHtml(n, econ))}
       ${card("Towns", townsTableHtml(econ), { wide: true })}
       ${card("Industry", industryListHtml(econ))}
@@ -25440,7 +25449,7 @@ function statsEconomyHtml() {
     ${card("World output by sector", shareChart(secTotals, { width: W.half, height: 230, fmt: v => `${fmtMoney(v)}/yr` }) + legendHtml(secTotals, false))}
     ${card("Shape of each economy", structure, { note: "share of output: primary / secondary / tertiary / quaternary" })}
     ${card("Trade", trade, { note: "value of goods crossing borders" })}
-    ${card("World goods market", goodsTable, { note: "per season, all nations" })}
+    ${card("World goods market", goodsTable, { note: "a year, all nations" })}
     ${card("World prices of raw materials", priceChartHtml(W.half), { note: "1.00 is the normal price" })}
     ${card("Natural resources by nation", resourceTableHtml(rows), { note: "mines, fields, camps and harbors" })}
     ${card("Technology", techGrid, { wide: true })}
@@ -25543,6 +25552,79 @@ function statsDiplomacyHtml() {
     </div>`;
 }
 
+/* ---------- Trade between nations: the merchants' book (10s) ---------- */
+// why a nation declared an embargo, in a neutral voice for the table
+const STAT_EMBARGO_WHY = { retaliation: "answering an embargo", pressure: "to press a claim", threat: "fear of their army", hostility: "old grudges", grudge: "old grudges", ally_war: "war on an ally", war_goods: "selling war goods to an enemy", choice: "its own choice" };
+function statsTradeHtml() {
+  const g = game, W = statsWidth(), S = ui.stats;
+  if (!g.trade || !g.trade.v) return `<p class="muted">The merchants sign their first contracts when the first season ends.</p>`;
+  const K = S.tradeK && S.tradeK !== "all" && GOODS[S.tradeK] ? S.tradeK : null;
+  const ns = liveNations(g);
+  const short = n => n.name.replace(/^(Free City of|Principality of|Republic of|Kingdom of) /, "");
+  const WORLD = { id: -1, name: "The world beyond the map", color: "#8f9a93" };
+  const who = id => (id < 0 ? WORLD : g.nations[id]);
+  const M = tradeMatrix(g, K);
+  let max = 0;
+  for (const s in M) for (const b in M[s]) max = Math.max(max, M[s][b].v);
+  // a pair that cannot trade in this good (or in anything, with no filter): hatched
+  const partial = (s, b) => (g.trade.embargoes || []).some(e => (e.by === s && e.on === b && e.dir !== "buy") || (e.by === b && e.on === s && e.dir !== "sell"));
+  const cell = (s, b) => {
+    if (s === b) return `<td class="self"></td>`;
+    const c = M[s] && M[s][b], v = c ? c.v : 0;
+    const code = s >= 0 && b >= 0 ? tradeBlocked(g, s, b, K || "goods") : null;
+    const part = !code && s >= 0 && b >= 0 && !K && partial(s, b);
+    const t = max > 0 ? v / max : 0;
+    const bg = v > 0.0005 ? ` style="background:color-mix(in srgb, var(--div-pos) ${Math.round(15 + 70 * Math.sqrt(t))}%, var(--div-mid))"` : "";
+    const goods = c ? Object.entries(c.goods).sort((x, y) => y[1] - x[1]).map(([k, x]) => `${GOODS[k].label}: ${fmtMoneyFine(x)}`) : [];
+    const tip = `<strong>${escapeHtml(who(s).name)} → ${escapeHtml(who(b).name)}</strong>${goods.length ? goods.join("<br>") : "nothing this season"}${code ? `<br><em>cut: ${escapeHtml(tradeBlockedText(g, code, s, b, K || "goods"))}</em>` : part ? "<br><em>an embargo stops some goods</em>" : ""}`;
+    return `<td class="${code ? "emb" : part ? "emb part" : ""}"${bg} data-tip="${escapeHtml(tip)}">${v >= 0.05 ? fmtMoneyShort(v) : v > 0.0005 ? "·" : ""}</td>`;
+  };
+  const sold = id => Object.values(M[id] || {}).reduce((x, c) => x + c.v, 0);
+  const cols = ns.concat([WORLD]);
+  const head = `<tr><th class="l">Seller ↓ · buyer →</th>${cols.map(z => `<th title="${escapeHtml(z.name)}">${swatch(z)}<span class="vert">${escapeHtml(z.id < 0 ? "World" : short(z))}</span></th>`).join("")}<th>Sold</th></tr>`;
+  const matrix = `<div class="st-tablewrap"><table class="st-matrix trade"><thead>${head}</thead><tbody>${cols.map(a => `<tr><th class="l">${swatch(a)}${escapeHtml(a.id < 0 ? "World" : a.name)}</th>${cols.map(b => cell(a.id, b.id)).join("")}<td class="tot">${fmtMoneyShort(sold(a.id))}</td></tr>`).join("")}</tbody></table></div>
+    <p class="muted small st-key"><i class="sw" style="background:var(--div-pos)"></i>value a year at world prices <i class="sw hatch"></i>cut by war, sanctions or an embargo</p>`;
+  const goodsChips = chipsHtml("st-tradek", K || "all", [["all", "All goods"], ...TRADE_GOODS.map(k => [k, GOODS[k].label])]);
+  // who hangs on whom
+  const depRows = ns.map(n => {
+    const rs = tradeRisks(world, g, n.id, economies()[n.id], { cheap: true }).slice(0, 2);
+    return `<tr class="${n.isPlayer ? "me" : ""}"><td class="l">${swatch(n)}${escapeHtml(n.name)}</td><td class="l">${rs.length ? rs.map(r => `<span class="${r.level >= 2 ? "tone-bad" : r.level ? "tone-warn" : ""}">${escapeHtml(GOODS[r.k].label)}: ${pct(r.share)} from the ${escapeHtml(nameOf(g, r.from))}</span>`).join("<br>") : `<span class="muted">no single seller matters much</span>`}</td></tr>`;
+  }).join("");
+  const deps = `<div class="st-tablewrap"><table class="st-table compact"><thead><tr><th class="l">Nation</th><th class="l">Where it depends on one seller</th></tr></thead><tbody>${depRows}</tbody></table></div>`;
+  // embargoes in force, and the latest lifted
+  const E = g.trade.embargoes || [];
+  const what = e => `${e.k === "all" ? "All trade" : GOODS[e.k].label}${e.k === "all" && e.food ? " (food too)" : ""} · ${e.dir === "sell" ? "no sales to them" : e.dir === "buy" ? "no purchases from them" : "both ways"}`;
+  const embTable = E.length ? `<div class="st-tablewrap"><table class="st-table compact"><thead><tr><th class="l">By</th><th class="l">On</th><th class="l">What</th><th class="l">Since</th><th class="l">Why</th></tr></thead><tbody>${E.slice().sort((a, b) => b.since - a.since).map(e => `<tr><td class="l">${swatch(g.nations[e.by])}${escapeHtml(nameOf(g, e.by))}</td><td class="l">${swatch(g.nations[e.on])}${escapeHtml(nameOf(g, e.on))}</td><td class="l">${what(e)}</td><td class="l">${seasonLabel(e.since)}</td><td class="l muted">${escapeHtml(STAT_EMBARGO_WHY[e.why] || "")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted small">No embargoes in force.</p>`;
+  const ended = (g.trade.ended || []).slice(-5).reverse().filter(x => g.nations[x.by] && g.nations[x.on]);
+  const endedHtml = ended.length ? `<p class="muted small" style="margin-top:8px">Lately lifted: ${ended.map(x => `${escapeHtml(nameOf(g, x.by))} on ${escapeHtml(nameOf(g, x.on))} (${x.k === "all" ? "all trade" : GOODS[x.k].label.toLowerCase()}, ${seasonLabel(x.turn)})`).join("; ")}.</p>` : "";
+  // the biggest trading pairs over the last ten years
+  const t0 = rangeStart(g);
+  const hist = (g.trade.hist || []).filter(h => h.turn >= t0);
+  const total = {};
+  for (const h of hist) for (const [s, b, v] of h.v) if (s >= 0 && b >= 0 && g.nations[s] && g.nations[b]) total[`${s}>${b}`] = (total[`${s}>${b}`] || 0) + v;
+  const top = Object.entries(total).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => k);
+  const pairSeries = top.map(k => { const [s, b] = k.split(">").map(Number); return { key: `pair-${k}`, name: `${short(g.nations[s])} → ${short(g.nations[b])}`, color: g.nations[s].color, pts: hist.map(h => { const x = h.v.find(r => r[0] === s && r[1] === b); return [h.turn, x ? x[2] : 0]; }) }; });
+  const worldSeries = [
+    { key: "w-exp", name: "Sold by every nation", color: "#4b9bd1", pts: worldTotals(g, h => h.exp) },
+    { key: "w-imp", name: "Bought by every nation", color: "#d9694e", pts: worldTotals(g, h => (h.imp === undefined ? null : h.imp)) },
+  ];
+  // grain between nations, and aid
+  const grain = g.trade.flows.filter(f => f.k === "food" && f.s >= 0 && f.b >= 0).sort((a, b) => b.q - a.q).slice(0, 8);
+  const aid = (g.trade.aid || []).slice(-6).reverse().filter(a => g.nations[a.from] && g.nations[a.to]);
+  const grainHtml = (grain.length ? `<ul class="st-lines">${grain.map(f => `<li><span>${swatch(g.nations[f.s])}${escapeHtml(nameOf(g, f.s))} → ${swatch(g.nations[f.b])}${escapeHtml(nameOf(g, f.b))}${f.r === "relief" ? ` <span class="muted small">famine relief</span>` : ""}${tradeBlocked(g, f.s, f.b, "food") ? ` <span class="tone-bad small">cut</span>` : ""}</span><b class="num">${fmtPeople(f.q)} fed</b></li>`).join("")}</ul>` : `<p class="muted small">No grain crosses borders between nations this season.</p>`)
+    + (aid.length ? `<p class="muted small" style="margin-top:8px">Food aid: ${aid.map(a => `${escapeHtml(nameOf(g, a.from))} to ${escapeHtml(nameOf(g, a.to))} (${seasonLabel(a.turn)})`).join("; ")}.</p>` : "");
+  return `<div class="st-filters"><div class="st-filterrow">${goodsChips}</div><div class="st-filterrow">${rangeChips()}</div></div>
+    <div class="st-grid">
+      ${card(K ? `Who sells ${GOODS[K].label.toLowerCase()} to whom` : "Who sells to whom", matrix, { wide: true, note: "read across: what the row nation sells to each column nation, a year · hover a cell for the goods" })}
+      ${card("Trade between nations over time", pairSeries.length ? lineChart(pairSeries, { width: W.half, height: 230, axis: v => fmtMoneyShort(v), fmt: v => `${fmtMoney(v)} a year` }) + legendHtml(pairSeries, false) : emptyChart(W.half, 230, "No trade between nations yet"), { note: "the six biggest seller → buyer pairs" })}
+      ${card("World trade", lineChart(worldSeries, { width: W.half, height: 230, axis: v => fmtMoneyShort(v), fmt: v => `${fmtMoney(v)} a year` }) + legendHtml(worldSeries, false), { note: "every nation's exports and imports, a year" })}
+      ${card("Who depends on whom", deps, { note: "a key good or a real share of output bought mostly from one nation" })}
+      ${card("Embargoes", embTable + endedHtml)}
+      ${card("Grain between nations", grainHtml, { note: "people fed a year" })}
+      ${card("Imports by nation", lineChart(seriesFor(g, "imp", { hide: S.hidden }), { width: W.half, height: 220, axis: STAT_METRICS.imp.axis, fmt: STAT_METRICS.imp.fmt }) + legendHtml(seriesFor(g, "imp")), { note: "a year, at world prices" })}
+    </div>`;
+}
+
 /* ---------- History ---------- */
 function statsChronicleHtml() {
   const g = game, S = ui.stats;
@@ -25597,6 +25679,7 @@ const STAT_ACTIONS = {
   "st-mode": el => { ui.stats.mode = el.dataset.v; },
   "st-range": el => { ui.stats.range = el.dataset.v; },
   "st-matrix": el => { ui.stats.matrix = el.dataset.v; },
+  "st-tradek": el => { ui.stats.tradeK = el.dataset.v; },
   "st-major": el => { ui.stats.majorOnly = el.dataset.v === "major"; },
   "st-chron": el => { ui.stats.chronNid = el.dataset.v === "all" ? null : Number(el.dataset.v); },
   "st-sort": el => { const s = ui.stats.sort; if (s.key === el.dataset.key) s.dir = -s.dir; else { s.key = el.dataset.key; s.dir = -1; } },

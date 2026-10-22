@@ -55,7 +55,7 @@ function historyEntry(n, econ, turn, g) {
   Object.assign(e, {
     area: econ.area || 0, towns: econ.cities.length, divs, tanks: Math.round(tanks + ((n.stock && n.stock.tanks) || 0)), planes: Math.round(planes),
     power: Math.round(armyPower(g, n.id)), techs: Object.keys(n.techs || {}).length, food: sr(econ.pop > 0.01 ? econ.food / econ.pop : 0),
-    skill: sr(n.skill ?? 0.35), exp: sr(econ.exportValue || 0), imp: sr(econ.importBill || 0), research: sr(econ.research || 0),
+    skill: sr(n.skill ?? 0.35), exp: sr(econ.exportValue || 0), imp: sr(econ.importBill || 0), fin: sr(econ.foodIn || 0), research: sr(econ.research || 0),
     sec: ["primary", "secondary", "tertiary", "quaternary"].map(k => sr(sec[k] ? sec[k].va : 0, 1)),
     opP: n.isPlayer ? null : Math.round(opinionDetail(g, n.id, PLAYER).value),
   });

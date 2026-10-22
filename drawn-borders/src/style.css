@@ -1036,7 +1036,12 @@ button.trade-row:hover { border-color: var(--c); }
 /* ===== end D =====
 
 /* ===== v37 trade: E (Statistics) ===== */
-/* ===== end E ===== */
+.st-matrix.trade td { width: 46px; min-width: 46px; font-size: 11px; cursor: default; }
+.st-matrix.trade td.tot { background: transparent; color: var(--muted); width: 56px; }
+.st-matrix.trade td.emb { background-image: repeating-linear-gradient(45deg, transparent 0 4px, color-mix(in srgb, var(--div-neg) 70%, transparent) 4px 6px); }
+.st-matrix.trade td.emb.part { background-image: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--div-neg) 45%, transparent) 6px 7px); }
+.st-key .sw.hatch { background: repeating-linear-gradient(45deg, var(--div-mid) 0 3px, var(--div-neg) 3px 4px); }
+/* ===== end E =====
 
 /* ===== v37 trade: F (map) ===== */
 /* ===== end F ===== */
