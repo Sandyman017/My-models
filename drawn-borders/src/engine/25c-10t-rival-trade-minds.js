@@ -137,7 +137,8 @@ function embargoPair(w, g, x, y) {
     op: opinionDetail(g, x, y, { noEmbargo: true }).value,
     ally: alliesOf(g, x).find(a => atWar(g, a, y)),
     enemies: enemiesOf(g, x).filter(z => z !== y),
-    claim: !!(O && O.by === x && y === PLAYER && ["refused", "war"].includes(O.stage)),
+    // the opening claimant, once its demand for the town is refused (a refusal counts from the moment it is made)
+    claim: !!(O && O.by === x && y === PLAYER && (["refused", "war"].includes(O.stage) || (O.stage === "demand" && g.commitments.some(c => c.by === x && c.against === y)))),
     demand: g.commitments.some(c => c.by === x && c.against === y),
     early: y === PLAYER && g.turn < OPENING.grace,
   };
