@@ -339,6 +339,7 @@ function runSeason(w, g, plan) {
   checkGrowthDeeds(w, g);
   checkFirsts(w, g, dispatch);
   if (g.nations[PLAYER].alive) checkAmbitions(w, g, dispatch);
+  cabinetConcernNews(w, g, dispatch);   // your ministers' worries, with this season's new trade contracts (10m)
   dispatch.decisions = storyteller(w, g, rng, dispatch);
   checkIntel(w, g, dispatch);
   pruneMods(g);

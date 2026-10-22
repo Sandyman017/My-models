@@ -69,9 +69,52 @@ function effectText(g, e, nid) {
     case "cityLoyalty": return { text: `${city(e.cityId)}: loyalty ${signed(e.v)}`, tone: toneOf(e.v) };
     case "group": return groupEffectText(e);
     case "general": return { text: "a general becomes Minister of Defence", tone: "neutral" };
+    // trade between nations (10s): the same engine actions the Trade panel and rival governments use
+    case "embargo": return { text: embargoEffectText(g, e), tone: "bad" };
+    case "lift": {
+      const x = ((g.trade && g.trade.embargoes) || []).find(y => y.id === e.id);
+      const on = x ? x.on : e.on, what = x ? (x.k === "all" ? "all trade" : goodWord(x.k)) : e.what || "trade";
+      const young = x && g.turn - x.since < TRADE.minEmbargo;
+      return { text: `Lift our embargo on the ${nameOf(g, on)} (${what})${young ? ": no goodwill, it began less than a year ago" : ": their opinion of you rises a little, and their grudge halves"}`, tone: "good" };
+    }
+    case "foodAid": {
+      const mo = e.got ?? e.months ?? 1;   // months of their food it covers (less than asked when our reserve is small)
+      return { text: `Send grain from our reserve to the ${nameOf(g, e.to)}: food for ${fmtPeople((e.q || 0) * 12 / Math.max(0.01, mo))} people for ${monthsText(mo)}${e.ours ? ` (${monthsText(e.ours)} of our own reserve)` : ""}${e.opinion > 0 ? `; their opinion of you +${Math.round(e.opinion)}` : ""}`, tone: "neutral" };
+    }
+    case "prefer": return e.from !== null && e.from !== undefined && e.from >= 0
+      ? { text: `Our merchants buy ${goodWord(e.k)} from the ${nameOf(g, e.from)} first: they count its price ${pct(TRADE.prefer)} lower when they sign contracts`, tone: "neutral" }
+      : { text: `Our merchants buy ${goodWord(e.k)} wherever it is cheapest (no preferred seller)`, tone: "neutral" };
+    case "envoy": return e.terms
+      ? { text: `Our envoy proposes ${termsText(g, e.terms)} to the ${nameOf(g, e.to)}: they answer at once, and may refuse`, tone: "neutral" }
+      : { text: `Our envoy proposes a ${TREATY_INFO[e.type] ? TREATY_INFO[e.type].label.toLowerCase() : e.type} to the ${nameOf(g, e.to)}: they answer at once`, tone: "neutral" };
     default: return { text: "", tone: "neutral" };
   }
 }
+/* "Stop selling metals to the X: their output −$0.4B a year, ours −$0.2B; their opinion of you −1 → −16 (wary)". */
+function embargoEffectText(g, e) {
+  const X = nameOf(g, e.on), good = e.k === "all" ? null : goodWord(e.k);
+  const base = e.k === "all"
+    ? `${e.dir === "sell" ? `Stop selling anything to the ${X}` : e.dir === "buy" ? `Stop buying anything from the ${X}` : `Stop all trade with the ${X}`} (${e.food ? "food too" : "food still allowed"})`
+    : e.dir === "sell" ? `Stop selling ${good} to the ${X}` : e.dir === "buy" ? `Stop buying ${good} from the ${X}` : `Stop all trade in ${good} with the ${X}`;
+  const pv = e.pv;
+  if (!pv) return base;
+  return `${base}: their output ${bSigned(pv.them)} a year, ours ${bSigned(pv.self)}; their opinion of you ${signed(pv.op0)} → ${signed(pv.op1)} (${pv.word.toLowerCase()})${pv.ends ? "; it ends our treaty with them" : ""}${pv.broken ? "; it BREAKS our promise to them" : ""}`;
+}
+/* The few numbers of an embargo preview an effect keeps, to show them before you choose. */
+function embargoPv(pv) {
+  return { them: sr(pv.dGdpThem, 3), self: sr(pv.dGdpSelf, 3), op0: Math.round(pv.opinion.before), op1: Math.round(pv.opinion.after), word: pv.opinion.word, ends: !!pv.endsTreaty, broken: !!pv.breaksPromise,
+    arms: pv.arms.map(x => sr(x, 3)), fuel: pv.fuel.map(x => sr(x, 3)), food: pv.food.map(x => sr(x, 3)), war: pv.warWish || 0, lost: sr(pv.lostSales || 0, 3) };
+}
+/* What an embargo would do to their army and people, in short lines (for orders and objections). */
+function embargoPvLines(pv) {
+  const out = [];
+  if (pv.arms[0] - pv.arms[1] > 0.01) out.push(`Their arms factories: ${pct(pv.arms[0])} → ${pct(pv.arms[1])} of the metal and parts they need`);
+  if (pv.fuel[0] - pv.fuel[1] > 0.01) out.push(`Fuel for their army: ${pct(pv.fuel[0])} → ${pct(pv.fuel[1])}`);
+  if (pv.food[0] - pv.food[1] > 0.01) out.push(`Their people fed: ${pct(pv.food[0])} → ${pct(pv.food[1])}`);
+  if (pv.war > 0) out.push(`Their wish for war with us +${pv.war}`);
+  return out;
+}
+function monthsText(m) { return `${fmt1(m)} month${Math.abs(m - 1) < 0.05 ? "" : "s"}`; }
 function fmtPeople(m) { return m >= 1 ? `${m.toFixed(1)}M` : `${Math.max(1, Math.round(m * 1000))}k`; }
 
 function applyEffects(w, g, nid, effects) {
@@ -127,6 +170,12 @@ function applyEffects(w, g, nid, effects) {
         if (nid === PLAYER) addChronicle(g, `${m.name} became Minister of Defence.`, "warn", PLAYER);
         break;
       }
+      // trade between nations (10s): each goes through the engine's own action, which checks it again
+      case "embargo": if (g.nations[e.on] && g.nations[e.on].alive) declareEmbargo(w, g, nid, e.on, e.k, e.dir, e.why || "choice", { food: !!e.food, answers: e.answers ?? null }); break;
+      case "lift": liftEmbargo(w, g, e.id, nid); break;
+      case "foodAid": sendFoodAid(w, g, nid, e.to, e.months || 1); break;
+      case "prefer": setPreferredSeller(g, nid, e.k, e.from ?? null); break;
+      case "envoy": if (nid === PLAYER) sendEnvoy(w, g, nid, e.to, e.terms || [{ type: e.type }], null); break;
     }
   }
   bumpWorld(g);
@@ -270,16 +319,21 @@ const DECISIONS = {
   drought: {
     cat: "Disaster", icon: "sun", tone: "bad",
     find: c => (c.g.turn % 4 === 1 ? { w: 0.5 + (c.econ.food / Math.max(0.1, c.econ.pop) < 1.15 ? 0.6 : 0) } : null),
-    make: c => ({
-      title: "Drought", cell: c.econ.cities[0].cell,
-      body: "No rain has fallen for weeks. The wheat is withering in the fields and the rivers are low. Farmers are asking the government for help.",
-      options: [
-        { id: "a", tag: "kind", label: "Relief for the farmers", effects: [{ t: "money", v: cost(c, 0.0025) }, popAllEffect(c, -0.002)] },
-        ...(c.econ.access > 0 ? [{ id: "b", tag: "kind", label: "Buy grain abroad", effects: [{ t: "money", v: cost(c, 0.0045) }, { t: "stab", v: 1 }] }] : []),
-        ...(monthsOfFood((c.n.granary && c.n.granary.stock) || 0, c.econ.pop) >= 1.5 ? [{ id: "d", tag: "thrift", label: "Open the national granaries", effects: [{ t: "granary", months: -1.5 }, { t: "stab", v: 1 }] }] : []),
-        { id: "c", tag: "thrift", label: "No relief: they must manage", effects: [popAllEffect(c, -0.01), { t: "stab", v: -5 }] },
-      ], def: monthsOfFood((c.n.granary && c.n.granary.stock) || 0, c.econ.pop) >= 1.5 ? "d" : "a",
-    }),
+    make: c => {
+      // grain bought abroad goes into the reserve before the poor harvest: from the cheapest seller we can reach (10s)
+      const offer = tradeOpen(c.econ) ? (c.g.trade && c.g.trade.v ? grainOffers(c.w, c.g, c.nid)[0] || null : { nid: -1, p: GRAN.priceB * (1 + ECON7.importPremium) }) : null;
+      const months = 1.5, q = c.econ.pop * months / 12;
+      return {
+        title: "Drought", cell: c.econ.cities[0].cell,
+        body: `No rain has fallen for weeks. The wheat is withering in the fields and the rivers are low. Farmers are asking the government for help.${offer ? ` Grain can be bought from ${whoName(c.g, offer.nid)} at ${bMoney(offer.p)} for a year's food for a million people, at our border.` : tradeOpen(c.econ) ? " No nation we can reach has grain to spare, and the world market is closed to us." : ""}`,
+        options: [
+          { id: "a", tag: "kind", label: "Relief for the farmers", effects: [{ t: "money", v: cost(c, 0.0025) }, popAllEffect(c, -0.002)] },
+          ...(offer ? [{ id: "b", tag: "kind", label: offer.nid < 0 ? "Buy grain on the world market" : `Buy grain from the ${nameOf(c.g, offer.nid)}`, effects: [{ t: "money", v: -Math.max(0.1, round1(q * offer.p)) }, { t: "granary", months }, { t: "stab", v: 1 }] }] : []),
+          ...(monthsOfFood((c.n.granary && c.n.granary.stock) || 0, c.econ.pop) >= 1.5 ? [{ id: "d", tag: "thrift", label: "Open the national granaries", effects: [{ t: "granary", months: -1.5 }, { t: "stab", v: 1 }] }] : []),
+          { id: "c", tag: "thrift", label: "No relief: they must manage", effects: [popAllEffect(c, -0.01), { t: "stab", v: -5 }] },
+        ], def: monthsOfFood((c.n.granary && c.n.granary.stock) || 0, c.econ.pop) >= 1.5 ? "d" : "a",
+      };
+    },
   },
   genstrike: {
     cat: "Labor", icon: "fist", tone: "bad",
@@ -474,15 +528,80 @@ const DECISIONS = {
   harvest: {
     cat: "Opportunity", icon: "food", tone: "good",
     find: c => (c.g.turn % 4 === 2 && harvestFactor(c.n) >= 1.05 && c.econ.food / Math.max(0.1, c.econ.pop) > 1.08 ? { w: 1.5 } : null),
-    make: c => ({
-      title: "A record harvest", cell: c.econ.cities[0].cell,
-      body: "The weather was perfect this year. The granaries are overflowing and the markets are full of bread, fruit and meat.",
-      options: [
-        ...(c.econ.access > 0 ? [{ id: "a", tag: "thrift", label: "Sell the surplus abroad", effects: [{ t: "money", v: Math.max(0.3, Math.round(c.Y * 0.003 * 10) / 10) }] }] : []),
-        { id: "b", tag: "kind", label: "Hold harvest festivals", effects: [{ t: "stab", v: 3 }] },
-        { id: "c", tag: "thrift", label: "Fill the national granaries", effects: [{ t: "granary", months: 2 }] },
-      ], def: "c",
-    }),
+    make: c => {
+      const buyer = grainBuyer(c.g, c.nid, c.econ);
+      return {
+        title: "A record harvest", cell: c.econ.cities[0].cell,
+        body: "The weather was perfect this year. The granaries are overflowing and the markets are full of bread, fruit and meat.",
+        options: [
+          ...(buyer !== null ? [{ id: "a", tag: "thrift", label: buyer >= 0 ? `Sell the surplus to the ${nameOf(c.g, buyer)}` : "Sell the surplus abroad", effects: [{ t: "money", v: Math.max(0.3, Math.round(c.Y * 0.003 * 10) / 10) }] }] : []),
+          { id: "b", tag: "kind", label: "Hold harvest festivals", effects: [{ t: "stab", v: 3 }] },
+          { id: "c", tag: "thrift", label: "Fill the national granaries", effects: [{ t: "granary", months: 2 }] },
+        ], def: "c",
+      };
+    },
+  },
+  embargoed: {
+    // never drawn by chance: made at the end of the season in which a nation embargoes us (see embargoDecisions)
+    cat: "Trade", icon: "coin", tone: "bad", followOnly: true,
+    find: () => null,
+    make: (c, f) => {
+      const g = c.g, nid = c.nid;
+      const E = ((g.trade && g.trade.embargoes) || []).filter(e => (f.ids || []).includes(e.id) && e.on === nid);
+      if (!E.length) return null;
+      const by = E[0].by, X = nameOf(g, by);
+      // what the old contracts carried (noted before the new ones were signed), and where we stand now
+      const cutIn = (f.cut || []).filter(x => x.dir === "in" && x.q > 1e-4).sort((a, b) => b.v - a.v);
+      const cutOut = (f.cut || []).filter(x => x.dir === "out" && x.q > 1e-4).sort((a, b) => b.v - a.v);
+      const T = c.econ.trade || {};
+      const now = cutIn.slice(0, 3).map(x => { const from = tradeShareText(g, T.importsFrom && T.importsFrom[x.k], "from", 0); return `${pct(c.econ.sat[x.k] ?? (x.k === "food" ? 1 - c.econ.famineShare : 1))} of our ${goodWord(x.k)} need is met now${from ? ` (bought from ${from})` : ""}`; });
+      const why = EMBARGO_WHY[E[0].why] ? ` It says it did so ${EMBARGO_WHY[E[0].why]}.` : "";
+      let town = c.econ.cities[0], bd = 99;
+      for (const t of c.econ.cities) { const d = distanceToNation(g, by, t.cell); if (d < bd) { bd = d; town = t; } }
+      const options = [];
+      // a: other sellers for the most valuable good they stopped selling us
+      const main = cutIn[0];
+      let noAlt = "";
+      if (main) {
+        const alt = tradeOffers(c.w, g, nid, main.k).sellers.filter(s => s.nid >= 0 && s.nid !== by && !s.whyNot && s.offered > 1e-3 && s.price).sort((a, b) => a.price.p - b.price.p || a.nid - b.nid)[0];
+        if (!alt) noAlt = ` No other nation we can reach has ${goodWord(main.k)} to sell${T.worldImportCapRaw > 0 ? "; the world market sells some, at the middlemen's price" : ", and the world market is closed to us (we need a harbor on the ocean, or a trade partner who has one)"}.`;
+        if (alt) {
+          const envoy = !hasTreaty(g, nid, alt.nid, "trade") && !validateDeal(g, c.w, nid, alt.nid, [{ type: "trade" }]) && nid === PLAYER;
+          options.push({ id: "a", tag: "thrift", label: `Buy ${goodWord(main.k)} from the ${nameOf(g, alt.nid)} instead${envoy ? ", and offer them a trade agreement" : ""}`,
+            effects: [{ t: "prefer", k: main.k, from: alt.nid }, ...(envoy ? [{ t: "envoy", to: alt.nid, type: "trade" }] : [])] });
+        }
+      }
+      // b: talk them round (a better opinion of us is what makes a government lift an embargo)
+      options.push({ id: "b", tag: "kind", label: "Send an envoy to talk them round", effects: [{ t: "money", v: cost(c, 0.0015) }, { t: "opinion", from: by, key: "trade_talks", label: "Sent an envoy to settle our trade dispute", v: 6, cap: 12 }] });
+      // c: answer in kind: stop selling them what they buy most from us (a ban on buying from them would hurt our
+      //    own buyers first); food only when their embargo covers food. With nothing to sell them, stop buying.
+      const tw = tradeWith(g, nid, by);
+      const food = E.some(e => e.k === "food" || (e.k === "all" && e.food));
+      const pick = o => Object.keys(o).filter(k => !o[k].blocked && o[k].q > 1e-4 && (k !== "food" || food)).sort((a, b) => o[b].v - o[a].v || TRADE_GOODS.indexOf(a) - TRADE_GOODS.indexOf(b))[0];
+      let k2 = pick(tw.aSells), dir2 = "sell";
+      if (!k2) { k2 = pick(tw.bSells); dir2 = "buy"; }
+      if (!k2) { k2 = "all"; dir2 = "both"; }   // nothing flows any more: all trade, as they did
+      if (!embargoBlock(g, nid, by, k2, dir2)) {
+        const pv = embargoPreview(c.w, g, nid, by, k2, dir2, false);
+        options.push({ id: "c", tag: "proud", label: `Answer in kind: ${k2 === "all" ? "cut off all trade with them" : dir2 === "sell" ? `stop selling them ${goodWord(k2)}` : `stop buying their ${goodWord(k2)}`}`, effects: [{ t: "embargo", on: by, k: k2, dir: dir2, why: "retaliation", answers: E[0].id, pv: embargoPv(pv) }] });
+      }
+      // e: pay them to lift it, as much as their government would want (weighed exactly as a letter would be), but
+      //    never more than the trade it cut is worth over the years nations plan for (DIPLO.horizonYears)
+      const offer = nid === PLAYER ? liftOffer(c.w, g, nid, by) : null;
+      const cutV = (f.cut || []).reduce((s, x) => s + (x.v || 0), 0) * DIPLO.horizonYears;
+      let price = "";
+      if (offer && offer.amount <= Math.max(cutV, 0.1)) options.push({ id: "e", tag: "kind", label: offer.amount > 0 ? `Offer them ${fmtMoney(offer.amount)} to lift it` : "Ask them to lift it", effects: [{ t: "envoy", to: by, terms: offer.terms }] });
+      else if (offer) price = ` Their government would want about ${fmtMoney(offer.amount)} to lift it: more than ${DIPLO.horizonYears} years of the trade it cut (${bMoney(cutV)}).`;
+      options.push({ id: "d", tag: "thrift", label: "Wait: our merchants will look for other sellers and buyers", effects: [] });
+      // what our sales to them became under the new contracts
+      const unsold = cutOut.slice(0, 3).map(x => ({ k: x.k, q: Math.min(x.q, ((g.trade.unsold[x.k] || [])[nid]) || 0) })).filter(x => x.q > 1e-4);
+      const sales = cutOut.length ? (unsold.length ? ` No other buyer was found for ${bJoin(unsold.map(x => tradeQtyText(g, x.k, x.q)))} a year of it.` : " Our merchants found other buyers for it.") : "";
+      return {
+        title: `The ${X} ${embargoVerb(E[0])} us`, cell: town.cell, by,
+        body: `The ${X} ${E.map(e => `${embargoVerb(e)} us`).join(", and ")}.${why}${cutIn.length ? ` Under the old contracts they sold us ${bJoin(cutIn.slice(0, 3).map(x => `${tradeQtyText(g, x.k, x.q)} a year (${pct(Math.min(1, x.share))} of our need)`))}.` : ""}${cutOut.length ? ` They bought ${bJoin(cutOut.slice(0, 3).map(x => `${tradeQtyText(g, x.k, x.q)} a year`))} from us.${sales}` : ""}${now.length ? ` With the new contracts, ${bJoin(now)}.` : ""}${noAlt}${price}`,
+        options, def: "d",
+      };
+    },
   },
   veterans: {
     cat: "Society", icon: "army", tone: "neutral",
@@ -612,6 +731,12 @@ function effectScore(c, e) {
     case "cityLoyalty": return e.v * 0.15;
     case "group": return groupEffectScore(c.n, e);
     case "general": return c.n.groups && c.n.groups.army && c.n.groups.army.approval < 35 ? 1 : -1;
+    // trade (10s): an embargo costs our own output and their goodwill; aid costs grain and earns goodwill
+    case "embargo": return (((e.pv && e.pv.self) || 0) / onePct) * 3 * per.moneyWeight - 1;
+    case "lift": return 1;
+    case "foodAid": return (e.opinion || 0) * 0.12 * (per.tradeWeight || 1) - (e.ours || 1) * 0.8;
+    case "prefer": return 0;
+    case "envoy": return 0.5 - ((e.terms || []).filter(t => t.type === "payment" && t.from === c.nid).reduce((x, t) => x + t.amount, 0) / onePct) * 2 * per.moneyWeight;
     default: return 0;
   }
 }
@@ -668,12 +793,68 @@ function expireDecisions(w, g, dispatch) {
   }
 }
 
+/* Who would buy our spare grain: the hungriest nation we can reach, else the world market (-1), else nobody (null). */
+function grainBuyer(g, nid, econ) {
+  if (!tradeOpen(econ)) return null;
+  if (!g.trade || !g.trade.v) return -1;   // no merchants' book: the old rule, the world market
+  const T = econ.trade || {};
+  let best = null, bq = 1e-3;
+  for (const o of Object.keys(T.links || {}).map(Number).sort((a, b) => a - b)) {
+    const q = (g.trade.unmet.food || [])[o] || 0;
+    if (q > bq && !tradeBlocked(g, nid, o, "food")) { best = o; bq = q; }
+  }
+  if (best !== null) return best;
+  return T.worldExportCapRaw > 0 ? -1 : null;
+}
+/* What it would take for `by` to lift its embargoes on us: the lift term alone if they would accept it, else the
+   payment that makes their government say yes (evaluateDeal: a point is 1% of their output a year, a payment counts
+   once times how much they care for money), plus one point to spare. Null when the deal cannot be offered. */
+function liftOffer(w, g, nid, by) {
+  if (typeof REQUEST_TYPES === "undefined" || !REQUEST_TYPES.includes("lift_embargo")) return null;   // letters cannot ask for it (10f)
+  const lift = { type: "lift_embargo", by };
+  if (validateDeal(g, w, nid, by, [lift])) return null;
+  const ev = evaluateDeal(g, w, by, nid, [lift], { noCounter: true });
+  if (ev.points >= 1) return { terms: [lift], amount: 0 };
+  const gdpE = Math.max(1, computeEconomy(w, g, by).gdp), mw = Math.max(0.3, personality(g.nations[by]).moneyWeight);
+  const amount = Math.max(0.1, Math.ceil((1 - ev.points) / 100 * gdpE / mw * 10) / 10);
+  const terms = [lift, { type: "payment", from: nid, amount }];
+  return validateDeal(g, w, nid, by, terms) ? null : { terms, amount };
+}
+/* An embargo on us always asks the government for an answer (no chance involved). The engine notes each one in
+   g.trade.pendingDecisions when it is declared; the decision is made at the end of that season, once the new
+   contracts show what it costs us. One decision per nation that embargoes us, and only if it cut real trade. */
+function embargoDecisions(w, g, rng) {
+  const T = g.trade;
+  if (!T || !T.pendingDecisions || !T.pendingDecisions.length) return [];
+  const pend = T.pendingDecisions;
+  T.pendingDecisions = [];
+  if (!g.nations[PLAYER].alive) return [];
+  const byNation = new Map();
+  for (const p of pend) {
+    const e = (T.embargoes || []).find(x => x.id === p.id && x.on === PLAYER);
+    if (!e) continue;   // lifted already
+    const f = byNation.get(e.by) || { ids: [], cut: [], hurt: 0 };
+    f.ids.push(e.id); f.cut.push(...(p.cut || [])); f.hurt = Math.max(f.hurt, e.hurt || 0);
+    byNation.set(e.by, f);
+  }
+  const out = [];
+  for (const by of [...byNation.keys()].sort((a, b) => a - b)) {
+    const f = byNation.get(by);
+    if (g.decisions.some(d => d.key === "embargoed" && d.by === by)) continue;   // one open question per nation
+    if (!f.cut.some(x => x.v >= 0.005) && f.hurt < 0.1) continue;               // it cut nothing that matters
+    const d = makeDecision(decisionCtx(w, g, PLAYER, rng), "embargoed", { w: 1, ...f });
+    if (d) out.push(d);
+  }
+  return out;
+}
+
 /* The storyteller: how often something happens depends on how long it has been quiet, and on how the nation
    is doing. A nation on its knees is spared new disasters; a run of bad news is followed by some good. */
 function storyteller(w, g, rng, dispatch) {
   const S = g.story;
   const out = [];
   const n = g.nations[PLAYER];
+  for (const d of embargoDecisions(w, g, rng)) { g.decisions.push(d); out.push(d); S.last = g.turn; S.lastTone = d.tone; }
   // stories that continue: a cover-up that may come out, and so on
   for (const q of S.queue.slice()) {
     if (q.at > g.turn) continue;
