@@ -2,7 +2,8 @@
    screenshots, so a change can be seen in the real game. Fails on any page error or broken characters.
    Needs Playwright (npm i --no-save playwright). Screenshots go to tests/out/look-<name>.png.
 
-   node tests/look.js [--seasons N] [--no-found] [--size 1600x900] [steps...]
+   node tests/look.js [--seasons N] [--no-found] [--provinces-step] [--size 1600x900] [steps...]
+   --provinces-step stops at the founding's second step (dividing the country into provinces).
 
    Steps, done in order after the seasons:
      key:x              press a key (x = Trade panel, i = Statistics, o = People ...)
@@ -21,12 +22,13 @@ const fs = require("fs");
 const { chromium } = require("playwright");
 
 const args = process.argv.slice(2);
-let seasons = 3, found = true, size = [1600, 900];
+let seasons = 3, found = true, size = [1600, 900], stopAtProvinces = false;
 const steps = [];
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--seasons") seasons = Number(args[++i]);
   else if (a === "--no-found") found = false;
+  else if (a === "--provinces-step") stopAtProvinces = true;
   else if (a === "--size") size = args[++i].split("x").map(Number);
   else steps.push(a);
 }
@@ -53,11 +55,11 @@ if (!steps.length) steps.push("idle", "shot:map");
     await page.click('button:has-text("Found this nation")');
     await page.waitForTimeout(3000);
     // the optional provinces step after the founding (since v38): let the game divide the country
-    const divide = await page.$('button:has-text("Divide it for me")');
+    const divide = stopAtProvinces ? null : await page.$('button:has-text("Divide it for me")');
     if (divide) { await divide.click(); await page.waitForTimeout(1500); }
-    const start = await page.$('button:has-text("Start with these provinces")');
+    const start = stopAtProvinces ? null : await page.$('button:has-text("Start with these provinces")');
     if (start) { await start.click(); await page.waitForTimeout(3000); }
-    for (let i = 0; i < seasons; i++) {
+    for (let i = 0; i < (stopAtProvinces ? 0 : seasons); i++) {
       for (let k = 0; k < 30 && (await page.evaluate(() => !!ui.play)); k++) await page.waitForTimeout(1000);
       await page.evaluate(() => { ui.dispatch = null; renderAll(); });
       await page.click('button:has-text("Next")');

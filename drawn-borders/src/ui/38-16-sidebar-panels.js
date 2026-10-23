@@ -234,7 +234,7 @@ function realmTabHtml() {
         ${(b.ministries || 0) > 0.0005 ? `<div class="row"><span>Ministries<span class="sub">${MIN_ORDER.filter(k => ministry(n, k) && !ministry(n, k).pending).length} ministries and their staff</span></span><span class="num">${fmtMoneyFine(-b.ministries)}</span></div>` : ""}
         ${(b.navy || 0) > 0.0005 ? `<div class="row"><span>Navy<span class="sub">Crews, fuel and repairs: ${escapeHtml(shipsText(navyCounts(game, PLAYER)))}</span></span><span class="num">${fmtMoneyFine(-b.navy)}</span></div>` : ""}
         ${(b.granary || 0) > 0.0005 ? `<div class="row"><span>Grain for the food reserve<span class="sub">${fmtNum(monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop))} months in store; the law asks for ${GRANARY_LAWS[n.laws.granary || "none"].months}</span></span><span class="num">${fmtMoneyFine(-b.granary)}</span></div>` : ""}
-        ${(b.programs || 0) > 0.0005 ? `<div class="row"><span>City programs<span class="sub">${game.cities.filter(c => c.owner === PLAYER && activeFocus(game, c)).map(c => `${c.name}: ${FOCI[c.focus].label.toLowerCase()}`).join(", ")}</span></span><span class="num">${fmtMoneyFine(-b.programs)}</span></div>` : ""}
+        ${(b.programs || 0) > 0.0005 ? `<div class="row"><span>City programs and province governments<span class="sub">${game.cities.filter(c => c.owner === PLAYER && (activeFocus(game, c) || provSeat(game, c))).map(c => `${c.name}: ${activeFocus(game, c) ? FOCI[c.focus].label.toLowerCase() : "province capital"}`).join(", ")}</span></span><span class="num">${fmtMoneyFine(-b.programs)}</span></div>` : ""}
         ${worksBudgetRowHtml()}
         ${b.interest > 0.005 ? `<div class="row"><span>Interest<span class="sub">${pct(b.interestRate)} a year on ${fmtMoney(b.debt)} of debt</span></span><span class="num">${fmtMoney(-b.interest)}</span></div>` : ""}
         <div class="row total"><span>${b.balance - myWorkPay() >= 0 ? "Surplus" : "Deficit"}</span><span class="num tone-${b.balance - myWorkPay() >= 0 ? "good" : "bad"}">${fmtSignedMoney(b.balance - myWorkPay())}</span></div>
@@ -527,8 +527,9 @@ function cityDetailHtml(city) {
     </div>` : "";
   return `
     <div class="block">
-      <span class="eyebrow" style="color:${n.color}">${escapeHtml(n.name)}${city.capital ? " · Capital" : ""}</span>
+      <span class="eyebrow" style="color:${n.color}">${escapeHtml(n.name)}${city.capital ? " · Capital" : ""}${provinceOfCity(game, city) ? ` · ${escapeHtml(provinceOfCity(game, city).name)}${provSeat(game, city) ? " (its capital)" : ""}` : ""}</span>
       <h2 class="side-title">${escapeHtml(city.name)}</h2>
+      <p class="muted small">${escapeHtml(cityTier(r.pop).label)} of ${fmtPop(r.pop)}, counting the farms and villages around it</p>
     </div>
     ${cp ? cityFileHtml(city, cp) : ""}
     ${cp ? cityMoodHtml(city, cp) : ""}
@@ -667,6 +668,7 @@ function confirmHtml(q) {
     if (q.replaces && FOCI[q.replaces]) lines.push(`Replaces the ${escapeHtml(FOCI[q.replaces].label.toLowerCase())} once it is ready`);
     if (c) lines.push(`Ready in ${q.seasons} season${q.seasons > 1 ? "s" : ""}; one program per city`);
   }
+  if (q.kind === "province") lines.push(...provConfirmLines(q));
   if (q.kind === "capital") {
     const c = cityById(q.cityId), old = q.from !== null ? cityById(q.from) : null;
     lines.push(`The ministries, parliament and the national food reserve move to ${escapeHtml(c ? c.name : "the city")}. It becomes the seat of government: more public jobs, pride (+15 importance), and the prize every enemy wants.`);
@@ -676,7 +678,7 @@ function confirmHtml(q) {
   if (!lines.length) lines.push("Little immediate effect.");
   const payback = q.dGdp > 0.05 && q.kind !== "capital" ? q.cost / (q.dGdp * n.laws.tax / 100) : null;
   return `<div class="confirm">
-    <span class="eyebrow">${q.kind === "focus" ? "City program" : q.kind === "capital" ? "A new capital" : "Planned project"}</span>
+    <span class="eyebrow">${q.kind === "focus" ? "City program" : q.kind === "capital" ? "A new capital" : q.kind === "province" ? "Provinces" : "Planned project"}</span>
     <h3>${escapeHtml(q.label)}</h3>
     <div class="rows">
       <div class="row"><span>Cost</span><span class="num">${fmtMoneyFine(q.cost)}</span></div>
@@ -686,7 +688,7 @@ function confirmHtml(q) {
     <ul class="factors">${lines.map(l => `<li><span>${l}</span></li>`).join("")}</ul>
     ${afford.ok ? "" : `<p class="bad">${escapeHtml(afford.reason)}</p>`}
     <div class="actions">
-      <button class="btn primary" type="button" data-action="confirm-build" ${afford.ok ? "" : "disabled"}>${q.kind === "ships" ? (q.seller !== undefined ? "Buy" : "Order") : q.kind === "focus" || q.kind === "capital" ? "Start" : "Build"} for ${fmtMoneyFine(q.cost)}</button>
+      <button class="btn primary" type="button" data-action="confirm-build" ${afford.ok ? "" : "disabled"}>${q.kind === "ships" ? (q.seller !== undefined ? "Buy" : "Order") : q.kind === "focus" || q.kind === "capital" || q.kind === "province" ? "Start" : "Build"} for ${fmtMoneyFine(q.cost)}</button>
       <button class="btn" type="button" data-action="cancel-build">Cancel</button>
     </div>
   </div>`;
@@ -709,10 +711,11 @@ function collapsedHtml() {
 
 function sidebarHtml() {
   if (ui.phase === "draw") return ui.drawCells ? previewSidebarHtml() : introSidebarHtml();
+  if (ui.phase === "provinces") return foundingProvincesHtml();
   if (ui.phase === "collapsed") return collapsedHtml();
   if (!PANELS.some(([k]) => k === ui.tab)) { ui.tab = null; return ""; }
   const panel = PANELS.find(([k]) => k === ui.tab);
-  const body = { realm: realmTabHtml, cities: citiesTabHtml, groups: groupsTabHtml, people: peopleTabHtml, cabinet: cabinetTabHtml, agenda: agendaTabHtml, economy: econTabHtml, trade: tradeTabHtml, army: armyTabHtml, selected: selectedTabHtml, nations: nationsTabHtml, letters: lettersTabHtml, chronicle: chronicleTabHtml, navy: navyTabHtml }[ui.tab]();
+  const body = { realm: realmTabHtml, cities: citiesTabHtml, provinces: provincesTabHtml, groups: groupsTabHtml, people: peopleTabHtml, cabinet: cabinetTabHtml, agenda: agendaTabHtml, economy: econTabHtml, trade: tradeTabHtml, army: armyTabHtml, selected: selectedTabHtml, nations: nationsTabHtml, letters: lettersTabHtml, chronicle: chronicleTabHtml, navy: navyTabHtml }[ui.tab]();
   const restart = ui.confirmRestart
     ? `<div class="confirm"><p>Start a new world? ${escapeHtml(game.nations[PLAYER].name)} stays in Saved games as an earlier game, so you can come back to it.</p><div class="actions"><button class="btn danger" type="button" data-action="restart-now">New world</button><button class="btn" type="button" data-action="restart-cancel">Keep playing</button></div></div>`
     : `<button class="btn" type="button" data-action="restart-ask" style="justify-self:start">New game</button>`;

@@ -1165,7 +1165,7 @@ function computeEconomyRaw(w, g, nid) {
     granary: { ...gran, turn: g.turn }, lostToIdle: regions.reduce((s, r) => s + (r.unemployed || 0) * (r.serviceK || 0), 0),
     sites: siteList, reach,
     researchMult: 1 + WB.research + modSum(nation, "research"), skillBonus: WB.skill, capitalMult: 1 + WB.capital, interestCut: WB.interest, works: WB,
-    programs: regions.reduce((s, r) => s + (r.cm.focus ? focusUpkeepCost(r.cm.focus, r) : 0), 0), seats: regions.filter(r => r.cm.seat).length,
+    programs: regions.reduce((s, r) => s + (r.cm.focus ? focusUpkeepCost(r.cm.focus, r) : 0) + (r.cm.seat && r.cm.focus !== "seat" ? focusUpkeepCost("seat", r) : 0), 0), seats: regions.filter(r => r.cm.seat).length,
     citySkill: Math.min(0.02, 0.01 * regions.filter(r => r.cm.learning).length), cityResearch,
   };
 }

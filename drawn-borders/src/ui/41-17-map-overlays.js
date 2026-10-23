@@ -9,6 +9,8 @@ function toolbarHtml() {
 
 function hintText() {
   if (ui.phase === "draw") return drawingPath || ui.drawCells ? "" : "Press and drag to draw your borders";
+  if (ui.phase === "provinces") return drawingPath || ui.provDraw ? "" : "Draw around some of your land to make it a province";
+  if (ui.phase === "play" && ui.tool === "province" && !ui.pending) return drawingPath || ui.provDraw ? "" : "Draw around land to make it a new province or move it into another · Esc to stop";
   if (ui.phase !== "play" || ui.pending) return "";
   if (ui.tool === "road") return ui.roadFrom ? "Click a town to join it, or a deposit or any spot in your land to reach it · Esc to cancel" : "Click one of your towns to start a road";
   if (ui.tool === "town") return "Click a spot on wild land near your border, or empty land inside it";
@@ -60,9 +62,9 @@ function tooltipBase(i) {
   if (city) {
     const r = economies()[city.owner].regions.find(x => x.city.id === city.id);
     if (!r) return `<strong>${escapeHtml(city.name)}${city.capital ? " ★" : ""}</strong><span class="tt-line">${escapeHtml(who)}</span><span class="tt-bad">Occupied by the ${escapeHtml(nameOf(game, game.occ[city.cell]))}</span>`;
-    return `<strong>${escapeHtml(city.name)}${city.capital ? " ★" : ""}</strong><span class="tt-line">${escapeHtml(who)}</span><span class="tt-line">${escapeHtml(cityClass(city.imp).label)} · importance ${city.imp || "?"}${(city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).length ? ` · ${escapeHtml((city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).slice(0, 2).map(k => CITY_ROLES[k].label).join(", "))}` : ""}</span>${(city.mood ?? 55) < 40 ? `<span class="tt-bad">Mood ${Math.round(city.mood)}: ${moodWord(city.mood)}</span>` : ""}${city.origin !== city.owner && (city.loyalty ?? 92) < 70 ? `<span class="tt-bad">Loyalty ${Math.round(city.loyalty)}: many feel part of the ${escapeHtml(nameOf(game, city.origin))}</span>` : ""}<span class="tt-line">${r.pop.toFixed(2)}M people · $${r.outputK.toFixed(1)}k each</span><span class="${r.foodRatio < ECON.famineLine ? "tt-bad" : "tt-line"}">Food ${pct(r.foodRatio)} of need</span>${townURate(r) > 0.05 ? `<span class="tt-bad">${pct(townURate(r))} of workers have no job</span>` : ""}`;
+    return `<strong>${escapeHtml(city.name)}${city.capital ? " ★" : ""}</strong><span class="tt-line">${escapeHtml(who)}</span>${provTooltipLines(i)}<span class="tt-line">${escapeHtml(cityTier(r.pop).label)} · ${escapeHtml(cityClass(city.imp).label)} · importance ${city.imp || "?"}${(city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).length ? ` · ${escapeHtml((city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).slice(0, 2).map(k => CITY_ROLES[k].label).join(", "))}` : ""}</span>${(city.mood ?? 55) < 40 ? `<span class="tt-bad">Mood ${Math.round(city.mood)}: ${moodWord(city.mood)}</span>` : ""}${city.origin !== city.owner && (city.loyalty ?? 92) < 70 ? `<span class="tt-bad">Loyalty ${Math.round(city.loyalty)}: many feel part of the ${escapeHtml(nameOf(game, city.origin))}</span>` : ""}<span class="tt-line">${r.pop.toFixed(2)}M people · $${r.outputK.toFixed(1)}k each</span><span class="${r.foodRatio < ECON.famineLine ? "tt-bad" : "tt-line"}">Food ${pct(r.foodRatio)} of need</span>${townURate(r) > 0.05 ? `<span class="tt-bad">${pct(townURate(r))} of workers have no job</span>` : ""}`;
   }
-  return `<strong>${TERRAIN[t].name}</strong><span class="tt-line">${escapeHtml(who)}</span>${dep}${game.occ[i] >= 0 ? `<span class="tt-bad">Occupied by the ${escapeHtml(nameOf(game, game.occ[i]))}</span>` : ""}<span class="tt-line">${(game.pop[i] * 1000).toFixed(0)}k people · feeds ${(cellFood(world, game, i) * 1000).toFixed(0)}k</span>`;
+  return `<strong>${TERRAIN[t].name}</strong><span class="tt-line">${escapeHtml(who)}</span>${provTooltipLines(i)}${dep}${game.occ[i] >= 0 ? `<span class="tt-bad">Occupied by the ${escapeHtml(nameOf(game, game.occ[i]))}</span>` : ""}<span class="tt-line">${(game.pop[i] * 1000).toFixed(0)}k people · feeds ${(cellFood(world, game, i) * 1000).toFixed(0)}k</span>`;
 }
 
 function dispatchHtml(d) {

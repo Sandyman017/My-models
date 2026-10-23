@@ -225,6 +225,7 @@ function orderProject(g, quote, reason, isPrivate = false) {
   if (quote.kind === "capital") { p.cityId = quote.cityId; addNationMod(g, n, { key: "capital_move", label: "The government is moving to a new capital", stab: -3, seasons: quote.seasons }); }
   if (quote.kind === "port" || quote.kind === "irrigation") p.cityId = quote.cityId;
   if (quote.kind === "irrigation") p.cells = quote.cells;
+  if (quote.kind === "province") p.op = quote.op;
   g.projects.push(p);
   return p;
 }
@@ -286,6 +287,7 @@ function advanceProjects(w, g) {
     }
     if (p.kind === "focus") finishFocus(g, p);
     if (p.kind === "capital") finishCapitalMove(g, p);
+    if (p.kind === "province") finishProvince(w, g, p);
   }
   g.projects = g.projects.filter(p => !finished.includes(p));
   return finished;

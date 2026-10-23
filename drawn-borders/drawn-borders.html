@@ -78,6 +78,7 @@ button { font: inherit; color: inherit; }
 #map { display: block; touch-action: none; cursor: default; }
 #map.tool-draw { cursor: crosshair; }
 #map.tool-road, #map.tool-town { cursor: cell; }
+#map.tool-province { cursor: crosshair; }
 #map.tool-select { cursor: pointer; }
 #map.tool-select.has-sel { cursor: crosshair; }
 
@@ -1055,6 +1056,24 @@ button.trade-row:hover { border-color: var(--c); }
 
 /* ===== v37 trade: G (nations, letters, news) ===== */
 /* ===== end G ===== */
+
+/* Provinces (v38) */
+.prov-list, .prov-cards { display: grid; gap: 6px; }
+.prov-row { display: grid; grid-template-columns: 12px 1fr; gap: 3px 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--line, rgba(255,255,255,0.08)); border-radius: 6px; }
+.prov-row .prov-cap { grid-column: 2; font-size: 12px; }
+.prov-sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
+.prov-name { width: 100%; min-width: 0; font: inherit; font-weight: 600; background: rgba(255,255,255,0.04); color: inherit; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 3px 6px; }
+.prov-cap select, .prov-body select { font: inherit; font-size: 12px; background: rgba(255,255,255,0.05); color: inherit; border: 1px solid rgba(255,255,255,0.14); border-radius: 4px; padding: 2px 4px; }
+.prov-card { padding: 7px 9px; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; display: grid; gap: 4px; }
+.prov-card.open { background: rgba(255,255,255,0.03); }
+.prov-head { display: flex; align-items: center; gap: 8px; }
+.prov-title { font-size: 14px; font-weight: 600; color: var(--fg); text-decoration: none; }
+.prov-head .muted { margin-left: auto; }
+.prov-figs { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); }
+.prov-body { display: grid; gap: 6px; margin-top: 4px; }
+.prov-body .factors li { display: flex; justify-content: space-between; gap: 8px; }
+
+.btn svg { width: 14px; height: 14px; vertical-align: -2px; }
 </style>
 
 <div class="app">
@@ -1727,6 +1746,7 @@ function setupGame(w, playerCells, playerName, seed) {
   for (const n of g.nations) ensurePeople(w, g, n);
   for (const n of g.nations) if (n.alive) ensureGroups(w, g, n);
   tradeMigrate(w, g);   // the first contracts between nations (10s)
+  ensureProvinces(w, g);   // every nation divided into provinces, villages on the land (10u)
   return g;
 }
 
@@ -3071,7 +3091,7 @@ function computeEconomyRaw(w, g, nid) {
     granary: { ...gran, turn: g.turn }, lostToIdle: regions.reduce((s, r) => s + (r.unemployed || 0) * (r.serviceK || 0), 0),
     sites: siteList, reach,
     researchMult: 1 + WB.research + modSum(nation, "research"), skillBonus: WB.skill, capitalMult: 1 + WB.capital, interestCut: WB.interest, works: WB,
-    programs: regions.reduce((s, r) => s + (r.cm.focus ? focusUpkeepCost(r.cm.focus, r) : 0), 0), seats: regions.filter(r => r.cm.seat).length,
+    programs: regions.reduce((s, r) => s + (r.cm.focus ? focusUpkeepCost(r.cm.focus, r) : 0) + (r.cm.seat && r.cm.focus !== "seat" ? focusUpkeepCost("seat", r) : 0), 0), seats: regions.filter(r => r.cm.seat).length,
     citySkill: Math.min(0.02, 0.01 * regions.filter(r => r.cm.learning).length), cityResearch,
   };
 }
@@ -3114,9 +3134,10 @@ function computeBudget(n, econ, laws) {
 
 function stabilityTerms(n, econ, budget, laws, mood, extra = []) {
   const terms = [{ label: "Founding conditions (shape of the realm)", value: n.baseStability, base: true }];
-  const seatCut = 1 - 0.2 * Math.min(CITY.seatMax, econ.seats || 0);
+  // each province capital eases governing a large country (10u), at most as much as two provincial seats did before v38
+  const seatN = Math.min(PROV.seatEaseMax, econ.seats || 0), seatCut = 1 - PROV.seatEase * seatN;
   const sizeTerm = -Math.max(0, econ.area - FOUNDING.sizeThreshold) / FOUNDING.sizePerPoint * seatCut;
-  if (sizeTerm < -0.05) terms.push({ label: `Governing ${fmtArea(econ.area)}${seatCut < 1 ? " (eased by provincial seats)" : ""}`, value: sizeTerm });
+  if (sizeTerm < -0.05) terms.push({ label: `Governing ${fmtArea(econ.area)}${seatCut < 1 ? ` (eased by ${seatN} province capital${seatN > 1 ? "s" : ""})` : ""}`, value: sizeTerm });
   const tax = taxLaw(laws.tax);
   if (tax.stab) terms.push({ label: `${tax.label} taxes`, value: tax.stab });
   const sv = SERVICE_LAWS[laws.services];
@@ -3402,6 +3423,7 @@ function orderProject(g, quote, reason, isPrivate = false) {
   if (quote.kind === "capital") { p.cityId = quote.cityId; addNationMod(g, n, { key: "capital_move", label: "The government is moving to a new capital", stab: -3, seasons: quote.seasons }); }
   if (quote.kind === "port" || quote.kind === "irrigation") p.cityId = quote.cityId;
   if (quote.kind === "irrigation") p.cells = quote.cells;
+  if (quote.kind === "province") p.op = quote.op;
   g.projects.push(p);
   return p;
 }
@@ -3463,6 +3485,7 @@ function advanceProjects(w, g) {
     }
     if (p.kind === "focus") finishFocus(g, p);
     if (p.kind === "capital") finishCapitalMove(g, p);
+    if (p.kind === "province") finishProvince(w, g, p);
   }
   g.projects = g.projects.filter(p => !finished.includes(p));
   return finished;
@@ -4022,7 +4045,7 @@ function runSeason(w, g, plan) {
 
   for (const p of advanceProjects(w, g)) {
     const n = g.nations[p.nid];
-    const text = p.failed ? `${p.label} failed: the land was lost before it was finished. Half the cost was refunded.` : p.kind === "survey" ? surveyText(w, g, p) : p.kind === "ships" ? shipsDoneText(p) : p.kind === "focus" ? focusDoneText(g, p) : p.kind === "capital" ? `The government has moved: ${(g.cities.find(c => c.id === p.cityId) || { name: "the new city" }).name} is the new capital.` : `${p.label} is complete.`;
+    const text = p.kind === "province" ? provinceDoneText(g, p) : p.failed ? `${p.label} failed: the land was lost before it was finished. Half the cost was refunded.` : p.kind === "survey" ? surveyText(w, g, p) : p.kind === "ships" ? shipsDoneText(p) : p.kind === "focus" ? focusDoneText(g, p) : p.kind === "capital" ? `The government has moved: ${(g.cities.find(c => c.id === p.cityId) || { name: "the new city" }).name} is the new capital.` : `${p.label} is complete.`;
     if (p.nid === PLAYER) dispatch.built.push({ text: p.private ? `${text} (built by private investors)` : text, tone: p.failed ? "bad" : "good" });
     else if (!p.private && !(p.kind === "ships" && p.ship === "freighter")) { dispatch.abroad.push({ nid: p.nid, text, why: null }); noteFor(n, g, text, null); }
     if ((!p.private && !(p.kind === "ships" && p.ship === "freighter")) || p.nid === PLAYER) addChronicle(g, p.nid === PLAYER ? text : `${n.name}: ${text}`, p.failed ? "bad" : "neutral", p.nid);
@@ -4054,10 +4077,13 @@ function runSeason(w, g, plan) {
   recordSeasonStats(g, wars.reports, ownersBefore);
   const pr = reports[PLAYER];
   for (const n of g.nations) n.navyUpkeep = g.sea ? navyUpkeep(g, n.id) : 0;
+  syncProvinces(w, g, dispatch.built);   // land that changed hands joins a province of its new nation (10u)
   g.turn += 1;
   for (const n of g.nations) {
     if (!n.alive) continue;
-    const h = historyEntry(n, computeEconomy(w, g, n.id), g.turn, g);
+    const econN = computeEconomy(w, g, n.id);
+    recordProvinces(g, n.id, econN);
+    const h = historyEntry(n, econN, g.turn, g);
     n.history.push(h);
     if (n.history.length > STATS_KEEP) n.history.shift();
     updatePeaks(g, n, h);
@@ -4065,6 +4091,7 @@ function runSeason(w, g, plan) {
   openingSeason(w, g, dispatch);
   cabinetSeasonEnd(w, g, dispatch, rng);
   seasonCities(w, g, dispatch);
+  seasonProvinces(w, g, dispatch);
   seasonGroups(w, g, dispatch);
   if (g.turn % 4 === 2) {
     rollHarvests(w, g);
@@ -6985,11 +7012,11 @@ function transferCity(g, city, to) {
 function ensureCapital(g, nid) {
   const own = g.cities.filter(c => c.owner === nid);
   if (!own.length || own.some(c => c.capital)) return;
-  // the government moves to a provincial seat it still holds, or else to its most important city
+  // the government moves to a province capital it still holds, or else to its most important city
   let best = own[0], bestScore = -Infinity;
   for (const c of own) {
     const pop = regionCellsForCity(g, c).reduce((s, i) => s + g.pop[i], 0);
-    const score = (g.occ[c.cell] >= 0 ? -1e6 : 0) + (c.focus === "seat" ? 1e4 : 0) + (c.imp || 0) * 10 + pop;
+    const score = (g.occ[c.cell] >= 0 ? -1e6 : 0) + (c.focus === "seat" || provSeat(g, c) ? 1e4 : 0) + (c.imp || 0) * 10 + pop;
     if (score > bestScore) { bestScore = score; best = c; }
   }
   best.capital = true;
@@ -13969,7 +13996,7 @@ function cityOrd(k) { const s = ["th", "st", "nd", "rd"], v = k % 100; return k 
    programs it can take. */
 const CITY_ROLES = {
   capital:    { label: "Capital", icon: "lorc/queen-crown", tip: "Seat of the government: ministries, parliament and the national food reserve. The nation's pride, and the prize every enemy wants." },
-  seat:       { label: "Provincial seat", icon: "delapouite/vote", tip: "A governor, courts and offices of the ministries govern the region from here. If the capital falls, the government moves here." },
+  seat:       { label: "Province capital", icon: "delapouite/vote", tip: "A governor, courts and offices of the ministries govern the province from here. If the national capital falls, the government moves here." },
   front:      { label: "Front line", icon: "sbed/fire", tip: "Enemy soldiers hold ground within a few days' march." },
   port:       { label: "Port city", icon: "lorc/anchor", tip: "Ships from the whole world load and unload here: the nation's door to the world's markets." },
   metro:      { label: "Metropolis", icon: "delapouite/modern-city", tip: "Over 18 million people. Big cities are more productive (more firms, more customers), but crime and traffic weigh on their people." },
@@ -14014,7 +14041,8 @@ const FOCI = {
   seat:     { label: "Provincial seat", icon: "delapouite/vote", area: "interior", setup: 0.03, seasons: 2, upkeep: 0.004, mood: 4,
               does: "A governor, courts and ministries' offices: public jobs for 1.5% more of its workers, loyalty grows 1.5 points a season faster, people +4 happier, governing a large country costs 20% less stability, and if the capital falls the government moves here." },
 };
-const FOCUS_ORDER = ["port", "industry", "market", "mining", "farms", "learning", "resort", "garden", "fortress", "seat"];
+// "seat" (provincial seat) is no longer offered: since v38 province capitals do its work (10u)
+const FOCUS_ORDER = ["port", "industry", "market", "mining", "farms", "learning", "resort", "garden", "fortress"];
 const FOCUS_TASTE = {
   militarist:   { fortress: 1.6, industry: 1.4, mining: 1.3, seat: 1.1, garden: 0.7, resort: 0.6, port: 0.9 },
   mercantile:   { port: 1.6, market: 1.5, resort: 1.3, learning: 1.2, garden: 1.1, fortress: 0.6, mining: 0.9 },
@@ -14102,6 +14130,7 @@ function cityEconMods(g, n, c, pop) {
   else if (f === "mining") { m.haul = 0.6; m.siteW = 0.85; m.siteOut = 1.1; }
   else if (f === "resort") m.resort = 1.25;
   else if (f === "seat") { m.pubJobs = 0.015; m.seat = true; }
+  if (!m.seat && provSeat(g, c)) { m.pubJobs = 0.015; m.seat = true; }   // province capitals (10u) are what the provincial seats were
   else if (f === "learning") m.learning = true;
   return m;
 }
@@ -14161,9 +14190,9 @@ function cityProfilesRaw(w, g, econs) {
       L(`${fmtPeople(pop)} people`, 6 * Math.log2(1 + pop / 0.5));
       L(`Output ${fmtMoney(gdp)} a year`, 5 * Math.log2(1 + gdp / 40));
       // government
-      const seat = cityFocusOn(g, c, "seat");
+      const seat = cityFocusOn(g, c, "seat") || provSeat(g, c);
       if (c.capital) L("Capital: seat of the government", 15);
-      else if (seat) L("Provincial seat: governs its region", 5);
+      else if (seat) L(`Capital of ${(provinceOfCity(g, c) || { name: "its province" }).name}`, 5);
       if (!c.capital && c.wasCapital !== undefined && c.wasCapital !== null) L("Former capital", 4);
       // the sea
       p.ocean = oceanPort(w, c);
@@ -14344,6 +14373,7 @@ function cityProfilesRaw(w, g, econs) {
       if (c.liberated !== undefined && c.liberated !== null && g.turn - c.liberated <= 8) M("Freed: back with its own nation", 6);
       const f = activeFocus(g, c);
       if (f && FOCI[f].mood) M(`City program: ${FOCI[f].label.toLowerCase()}`, FOCI[f].mood);
+      if (f !== "seat" && provSeat(g, c)) M("Proud to be a province capital", FOCI.seat.mood);
       for (const m of cityModsActive(g, c)) if (m.mood) M(m.label, m.mood);
       const inflow = flows.filter(x => x.to === c.id).reduce((s, x) => s + x.people, 0);
       p.inflow = inflow;
@@ -14381,7 +14411,7 @@ function cityProfilesRaw(w, g, econs) {
 function cityLoyaltyRate(g, c) {
   const origin = g.nations[c.origin];
   let v = CITY.loyalRate + CITY.loyalMoodK * ((c.mood ?? CITY.moodBase) - 50);
-  if (cityFocusOn(g, c, "seat")) v += 1.5;
+  if (cityFocusOn(g, c, "seat") || provSeat(g, c)) v += 1.5;
   if (!origin || !origin.alive) v += 0.6;
   else if (atWar(g, c.owner, c.origin)) v -= 0.6;
   for (const m of cityModsActive(g, c)) if (m.loyal) v += m.loyal;
@@ -14402,6 +14432,7 @@ function focusBlockFor(w, g, c, k, p, r, econ, cap, capNet, seats) {
   if (k === "garden") return p.pop >= 6 ? null : "Needs at least 6 million people.";
   if (k === "resort") return p.resorts >= 1 || industryCap("resort", r.res, r.pop, c.port) >= 1 ? null : "Needs a coast or mountains that draw visitors.";
   if (k === "seat") {
+    return "Provincial seats are now province capitals: choose them in the Provinces panel.";
     if (c.capital) return "The capital already governs.";
     if (p.pop < 2) return "Needs at least 2 million people.";
     if (cap && r.net === capNet && dist(cap.cell, c.cell) < 7) return "Too close to the capital: it must be 7 cells away, or not joined to it by road.";
@@ -14524,13 +14555,13 @@ function cityStabilityTerms(g, n) {
     else if (k === 3) terms.push({ label: `Unrest in ${unrest.length - 3} more town${unrest.length - 3 > 1 ? "s" : ""}`, value: v });
     else terms[terms.length - 1].value += v;
   });
-  const seatHeld = own.some(c => held(c) && cityFocusOn(g, c, "seat"));
+  const seatHeld = own.some(c => held(c) && (cityFocusOn(g, c, "seat") || provSeat(g, c)));
   let occSum = 0;
   for (const c of own.filter(c => !held(c)).sort((a, b) => imp(b) - imp(a))) {
     let v = -(imp(c) / tot) * CITY.occK * (c.capital && seatHeld ? 0.5 : 1);
     v = Math.max(-CITY.occCap - occSum, v);
     occSum += v;
-    if (v <= -0.15) terms.push({ label: `The enemy holds ${c.name}${c.capital ? `, our capital${seatHeld ? " (the government carries on from a provincial seat)" : ""}` : c.rankN && c.rankN <= 3 ? `, our ${["", "first", "second", "third"][c.rankN]} city` : ""}`, value: v });
+    if (v <= -0.15) terms.push({ label: `The enemy holds ${c.name}${c.capital ? `, our capital${seatHeld ? " (the government carries on from a province capital)" : ""}` : c.rankN && c.rankN <= 3 ? `, our ${["", "first", "second", "third"][c.rankN]} city` : ""}`, value: v });
   }
   return terms;
 }
@@ -14569,7 +14600,10 @@ function focusSetupCost(key, r) { const F = FOCI[key]; return Math.round(clamp(f
 function focusUpkeepCost(key, r) { const F = FOCI[key]; return Math.round(clamp(focusBaseCost(F, r, F.upkeep, F.upkeepFood, F.upkeepSite), 0.03, 2.5) * 100) / 100; }
 function cityProgramsUpkeep(g, n, econ) {
   let s = 0;
-  for (const r of econ.regions || []) if (r.city.focus && FOCI[r.city.focus] && g.turn >= (r.city.focusAt || 0)) s += focusUpkeepCost(r.city.focus, r);
+  for (const r of econ.regions || []) {
+    if (r.city.focus && FOCI[r.city.focus] && g.turn >= (r.city.focusAt || 0)) s += focusUpkeepCost(r.city.focus, r);
+    if (r.cm && r.cm.seat && r.cm.focus !== "seat") s += focusUpkeepCost("seat", r);   // a province capital's government offices (10u)
+  }
   return s;
 }
 function quoteFocus(w, g, nid, city, key, base) {
@@ -15027,6 +15061,559 @@ const CITY_DECISIONS = {
 };
 Object.assign(DECISIONS, CITY_DECISIONS);
 
+/* =====================================================================
+   10u. Provinces and villages (v38, part 1)
+   Like the United States: a nation is divided into provinces, each with a capital, and inside them cities,
+   towns and villages. Every cell of a nation belongs to one province (g.prov). A province with no town yet is a
+   territory, run from the national capital, until a town there is made its capital. Provinces are drawn by the
+   player at the founding (or "Divide it for me"); later they are split, joined and redrawn like real life: a new
+   province costs money and about two seasons (its capital's government offices). New and conquered land joins
+   the nearest province. Province capitals are what the old "provincial seat" program was: public jobs, loyalty,
+   a government that carries on if the national capital falls, and a large country that is easier to govern.
+   Villages appear by themselves where people live in the countryside (farmland, mines, fishing coasts) and grow
+   or shrink with them. They change nothing in the economy: those people are already counted in their town.
+   ===================================================================== */
+const PROV = {
+  minCells: 8, target: 32, maxPerNation: 12, histMax: 41,
+  newShare: 0.03, newMin: 0.5, newMax: 12, territoryCost: 0.3, moveCost: 0.2, joinCost: 0.2,
+  newSeasons: 2, moveSeasons: 1, joinSeasons: 1, capSeasons: 2,
+  seatEase: 0.1, seatEaseMax: 4,            // each province capital eases governing a large country by 10%, at most 40% (as two provincial seats did)
+  villageShare: 0.02, villageOn: 0.12, villageOff: 0.08, villageMine: 0.05, villageFish: 0.09,
+};
+const VILLAGE_HEADS = ["Ash", "Birch", "Brook", "Clay", "Elm", "Fern", "Glen", "Hay", "Holt", "Ivy", "Kin", "Lark", "Mill", "Moss", "Oak", "Pen", "Reed", "Rye", "Stone", "Thorn", "Wil", "Wold", "Yew", "Bar", "Cross", "Dun", "Fair", "Gold", "Har", "Lang", "Mar", "Nor", "Ock", "Sand", "Tarn", "Wick"];
+const VILLAGE_TAILS = ["by", "ham", "ley", "well", "thorpe", "field", "brook", "stead", "wick", "cote", "dale", "ford", "hurst", "moor", "worth", "bridge", "holme", "combe"];
+const VILLAGE_KINDS = { farm: "Farming village", mine: "Mining village", fish: "Fishing village" };
+
+function provList(g, nid) { return (g.provinces || []).filter(p => p.owner === nid); }
+function provById(g, id) { return id >= 0 && g.provinces ? g.provinces.find(p => p.id === id) || null : null; }
+/* The province a cell belongs to (only if it really belongs to the cell's nation). */
+function provAt(g, cell) {
+  if (!g.prov || cell < 0) return null;
+  const p = provById(g, g.prov[cell]);
+  return p && p.owner === g.owner[cell] ? p : null;
+}
+function provCells(g, p) { const out = []; if (!g.prov) return out; for (let i = 0; i < N_CELLS; i++) if (g.prov[i] === p.id && g.owner[i] === p.owner) out.push(i); return out; }
+function provTowns(g, p) { return g.cities.filter(c => c.owner === p.owner && g.prov && g.prov[c.cell] === p.id); }
+function provCapital(g, p) { const c = p && p.capital !== null && p.capital !== undefined ? g.cities.find(x => x.id === p.capital) : null; return c && c.owner === p.owner ? c : null; }
+function isTerritory(g, p) { return !provCapital(g, p); }
+/* A province capital that is not the national capital governs its province, as the old provincial seats did. */
+function provSeat(g, c) {
+  if (!c || c.capital || !g.provinces) return false;
+  for (const p of g.provinces) if (p.capital === c.id && p.owner === c.owner) return true;
+  return false;
+}
+function provSeatsOf(g, nid) { return g.cities.filter(c => c.owner === nid && provSeat(g, c)); }
+function provinceOfCity(g, c) { return c && g.prov ? provById(g, g.prov[c.cell]) : null; }
+
+/* ---------- Dividing land: the farthest towns become seeds, the land goes to the nearest seed ---------- */
+function bfsWithin(set, sources) {
+  const d = new Map();
+  const q = [];
+  for (const s of sources) if (set.has(s) && !d.has(s)) { d.set(s, 0); q.push(s); }
+  for (let k = 0; k < q.length; k++) {
+    const c = q[k], x = cellX(c), y = cellY(c);
+    for (const [dx, dy] of DIRS4) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const j = idx(nx, ny);
+      if (set.has(j) && !d.has(j)) { d.set(j, d.get(c) + 1); q.push(j); }
+    }
+  }
+  return d;
+}
+/* Split cells into k contiguous groups. Seeds are the given towns first, then towns far from every seed, then
+   the farthest land (a territory). Each cell goes to the seed it can reach in the fewest steps. */
+function partitionCells(g, cells, k, seedCells) {
+  const set = new Set(cells);
+  const towns = g.cities.filter(c => set.has(c.cell)).sort((a, b) => (b.capital ? 1 : 0) - (a.capital ? 1 : 0) || (b.pop || 0) - (a.pop || 0) || a.id - b.id);
+  const seeds = [];
+  for (const s of seedCells || []) if (set.has(s) && !seeds.includes(s) && seeds.length < k) seeds.push(s);
+  if (!seeds.length) seeds.push(towns.length ? towns[0].cell : cells[0]);
+  while (seeds.length < k) {
+    const d = bfsWithin(set, seeds);
+    let best = -1, bestD = -1;
+    for (const t of towns) { const v = d.get(t.cell); if (v !== undefined && v >= 5 && v > bestD) { bestD = v; best = t.cell; } }
+    if (best < 0) for (const c of cells) { const v = d.get(c); if (v !== undefined && v > bestD) { bestD = v; best = c; } }
+    if (best < 0 || bestD < 3) break;
+    seeds.push(best);
+  }
+  // grow all seeds at once, the smallest province first, so the provinces come out of similar size
+  const owner = new Map(), size = seeds.map(() => 1), queues = seeds.map(s => [s]), heads = seeds.map(() => 0);
+  seeds.forEach((s, k2) => owner.set(s, k2));
+  for (;;) {
+    let k2 = -1;
+    for (let j = 0; j < seeds.length; j++) if (heads[j] < queues[j].length && (k2 < 0 || size[j] < size[k2])) k2 = j;
+    if (k2 < 0) break;
+    const c = queues[k2][heads[k2]++], x = cellX(c), y = cellY(c);
+    for (const [dx, dy] of DIRS4) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const j = idx(nx, ny);
+      if (set.has(j) && !owner.has(j)) { owner.set(j, k2); queues[k2].push(j); size[k2]++; }
+    }
+  }
+  const groups = seeds.map(() => []);
+  for (const c of cells) {
+    let o = owner.get(c);
+    if (o === undefined) {   // an island or exclave: the nearest seed as the crow flies
+      let bd = Infinity;
+      seeds.forEach((s, k2) => { const v = dist(s, c); if (v < bd) { bd = v; o = k2; } });
+    }
+    groups[o].push(c);
+  }
+  return groups.map((cellsK, k2) => ({ cells: cellsK, seed: seeds[k2] })).filter(x => x.cells.length);
+}
+function autoProvinceCount(area) { return area < 40 ? 1 : area < 75 ? 2 : area < 120 ? 3 : area < 200 ? 4 : Math.min(PROV.maxPerNation, Math.round(area / 45)); }
+
+/* ---------- Names: from where a province lies and what its land is like ---------- */
+const DIR_NAMES = ["East", "Southeast", "South", "Southwest", "West", "Northwest", "North", "Northeast"];
+function provGeoName(w, g, cells, nationCells) {
+  const cx = a => a.reduce((s, c) => s + cellX(c) + 0.5, 0) / a.length, cy = a => a.reduce((s, c) => s + cellY(c) + 0.5, 0) / a.length;
+  const dx = cx(cells) - cx(nationCells), dy = cy(cells) - cy(nationCells);
+  const span = Math.sqrt(nationCells.length) / 2;
+  const dir = Math.hypot(dx, dy) < 0.3 * span ? "Central" : DIR_NAMES[((Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) % 8) + 8) % 8];
+  const n = cells.length, count = t => cells.filter(c => w.terrain[c] === t).length;
+  const coast = cells.filter(c => w.coastal[c]).length;
+  const rough = count(T.HILLS) + count(T.MOUNTAIN);
+  const feature = count(T.MOUNTAIN) >= 0.25 * n ? "Mountains" : rough >= 0.4 * n ? "Highlands" : coast >= 0.3 * n ? "Coast" : count(T.FOREST) >= 0.4 * n ? "Woods" : rough >= 0.2 * n ? "Uplands" : "Plains";
+  return `${dir} ${feature}`;
+}
+function provNameFor(w, g, nid, cells, capitalCity, taken) {
+  const own = [];
+  for (let i = 0; i < N_CELLS; i++) if (g.owner[i] === nid) own.push(i);
+  const options = [provGeoName(w, g, cells, own.length ? own : cells)];
+  if (capitalCity) options.push(`${capitalCity.name} Province`, `Province of ${capitalCity.name}`);
+  for (const o of options) if (!taken.has(o)) return o;
+  for (let k = 2; k < 50; k++) if (!taken.has(`${options[0]} ${k}`)) return `${options[0]} ${k}`;
+  return options[0];
+}
+function provNameSuggestions(w, g, p) {
+  const cells = provCells(g, p), own = [];
+  for (let i = 0; i < N_CELLS; i++) if (g.owner[i] === p.owner) own.push(i);
+  const cap = provCapital(g, p) || provTowns(g, p).sort((a, b) => (b.pop || 0) - (a.pop || 0))[0];
+  const out = [provGeoName(w, g, cells, own)];
+  if (cap) out.push(`${cap.name} Province`);
+  const h = hash2(p.id, cells.length, w.seed);
+  out.push(NAME_HEADS[Math.floor(h * NAME_HEADS.length)] + ["ia", "a", "land", "mark", "shire", "ova"][Math.floor(hash2(p.id, 3, w.seed) * 6)]);
+  return [...new Set(out)];
+}
+
+/* ---------- Keeping the map whole: every cell of a nation in one of its provinces ---------- */
+/* Works on a province map and list (the real ones, or copies to weigh a change). Cells of a nation with no
+   province of that nation join the nearest one; with splitOff, a piece cut off from its province becomes a
+   province of its own if it is big enough, or joins the neighbor it touches most. */
+function tidyProvinces(w, g, nid, prov, list, opts = {}) {
+  const mine = list.filter(p => p.owner === nid);
+  const ids = new Set(mine.map(p => p.id));
+  const cells = [];
+  for (let i = 0; i < N_CELLS; i++) {
+    if (g.owner[i] !== nid) continue;
+    cells.push(i);
+    if (!ids.has(prov[i])) prov[i] = -1;
+  }
+  if (!cells.length) return;
+  if (!mine.length) {
+    const p = newProvince(w, g, nid, cells, null, list, prov, { capital: true });
+    mine.push(p); ids.add(p.id);
+  }
+  // unassigned land joins the province it reaches first
+  const set = new Set(cells);
+  let front = cells.filter(c => prov[c] >= 0);
+  while (front.length) {
+    const next = [];
+    for (const c of front) {
+      const x = cellX(c), y = cellY(c);
+      for (const [dx, dy] of DIRS4) {
+        const nx = x + dx, ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (set.has(j) && prov[j] < 0) { prov[j] = prov[c]; next.push(j); }
+      }
+    }
+    front = next;
+  }
+  const assigned = cells.filter(c => prov[c] >= 0);
+  for (const c of cells) if (prov[c] < 0) {
+    let best = -1, bd = Infinity;
+    for (const a of assigned) { const v = dist(a, c); if (v < bd) { bd = v; best = a; } }
+    prov[c] = best >= 0 ? prov[best] : mine[0].id;
+  }
+  if (opts.splitOff) {
+    for (const p of mine.slice()) {
+      const pc = cells.filter(c => prov[c] === p.id);
+      const comps = componentsOf(pc);
+      if (comps.length < 2) continue;
+      // the piece with the capital (or the biggest) stays; the others go
+      const cap = g.cities.find(c => c.id === p.capital);
+      comps.sort((a, b) => (cap && b.includes(cap.cell) ? 1 : 0) - (cap && a.includes(cap.cell) ? 1 : 0) || b.length - a.length);
+      for (const comp of comps.slice(1)) {
+        if (comp.length >= PROV.minCells) { const q = newProvince(w, g, nid, comp, null, list, prov, { capital: true }); mine.push(q); continue; }
+        const touch = new Map();
+        for (const c of comp) for (const [dx, dy] of DIRS4) {
+          const nx = cellX(c) + dx, ny = cellY(c) + dy;
+          if (!inBounds(nx, ny)) continue;
+          const j = idx(nx, ny);
+          if (g.owner[j] === nid && prov[j] !== p.id) touch.set(prov[j], (touch.get(prov[j]) || 0) + 1);
+        }
+        const into = [...touch.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+        if (into) comp.forEach(c => { prov[c] = into[0]; });
+      }
+    }
+  }
+  // provinces left without land are gone
+  const have = new Set(cells.map(c => prov[c]));
+  for (let k = list.length - 1; k >= 0; k--) if (list[k].owner === nid && !have.has(list[k].id)) list.splice(k, 1);
+}
+function componentsOf(cells) {
+  const set = new Set(cells), seen = new Set(), out = [];
+  for (const s of cells) {
+    if (seen.has(s)) continue;
+    const comp = [], q = [s];
+    seen.add(s);
+    while (q.length) {
+      const c = q.pop();
+      comp.push(c);
+      for (const [dx, dy] of DIRS4) {
+        const nx = cellX(c) + dx, ny = cellY(c) + dy;
+        if (!inBounds(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (set.has(j) && !seen.has(j)) { seen.add(j); q.push(j); }
+      }
+    }
+    out.push(comp);
+  }
+  return out;
+}
+/* A new province on these cells. Its capital is the national capital if it lies there, or else the biggest town;
+   with no town it is a territory. */
+function newProvince(w, g, nid, cells, name, list, prov, opts = {}) {
+  const set = new Set(cells);
+  const towns = g.cities.filter(c => c.owner === nid && set.has(c.cell)).sort((a, b) => (b.capital ? 1 : 0) - (a.capital ? 1 : 0) || (b.pop || 0) - (a.pop || 0) || a.id - b.id);
+  const cap = opts.capital && towns.length ? towns[0] : null;
+  const taken = new Set(list.filter(p => p.owner === nid).map(p => p.name));
+  const p = { id: g.provNext = (g.provNext || 0) + 1, owner: nid, name: name || provNameFor(w, g, nid, cells, cap, taken), capital: cap ? cap.id : null, made: g.turn || 0, hist: [] };
+  list.push(p);
+  cells.forEach(c => { prov[c] = p.id; });
+  return p;
+}
+/* Divide a nation's land into provinces by the same rule for everyone (the founding's "Divide it for me",
+   rivals, and old saves). seedCells: towns that should head a province (old provincial seats). */
+function autoDivide(w, g, nid, k, seedCells) {
+  const cells = [];
+  for (let i = 0; i < N_CELLS; i++) if (g.owner[i] === nid) cells.push(i);
+  if (!cells.length) return [];
+  for (let i = g.provinces.length - 1; i >= 0; i--) if (g.provinces[i].owner === nid) g.provinces.splice(i, 1);
+  cells.forEach(c => { g.prov[c] = -1; });
+  const cap = g.cities.find(c => c.owner === nid && c.capital);
+  const groups = partitionCells(g, cells, Math.max(1, k || autoProvinceCount(cells.length)), [cap ? cap.cell : -1, ...(seedCells || [])].filter(c => c >= 0));
+  const made = groups.map(gr => newProvince(w, g, nid, gr.cells, null, g.provinces, g.prov, { capital: true }));
+  tidyProvinces(w, g, nid, g.prov, g.provinces);
+  return made;
+}
+
+/* ---------- Every season, and when a game starts or an old save loads ---------- */
+function ensureProvinces(w, g) {
+  const fresh = !g.prov || g.prov.length !== N_CELLS || !Array.isArray(g.provinces);
+  if (fresh) {
+    g.prov = new Int16Array(N_CELLS).fill(-1);
+    g.provinces = [];
+    // saves from before provinces: provincial seats become province capitals, seat programs being set up are refunded
+    for (const pr of g.projects.filter(p => p.kind === "focus" && p.focus === "seat")) { if (g.nations[pr.nid]) g.nations[pr.nid].treasury += pr.cost; }
+    g.projects = g.projects.filter(p => !(p.kind === "focus" && p.focus === "seat"));
+    for (const n of g.nations) {
+      if (!n.alive) continue;
+      const seats = g.cities.filter(c => c.owner === n.id && c.focus === "seat");
+      const area = g.owner.reduce((s, o) => s + (o === n.id ? 1 : 0), 0);
+      autoDivide(w, g, n.id, Math.max(autoProvinceCount(area), seats.length + 1), seats.map(c => c.cell));
+      for (const c of seats) {
+        const p = provById(g, g.prov[c.cell]);
+        if (p) p.capital = c.id;
+        c.focus = null; c.focusAt = null;
+      }
+    }
+  }
+  if (!Array.isArray(g.villages)) { g.villages = []; updateVillages(w, g); }
+  syncProvinces(w, g);
+}
+/* Land that changed hands joins the nearest province of its new nation; a province capital that was lost
+   passes to the province's biggest town (or the province becomes a territory). Returns news for the player. */
+function syncProvinces(w, g, news) {
+  if (!g.prov) return;
+  for (let i = 0; i < N_CELLS; i++) if (g.owner[i] < 0) g.prov[i] = -1;
+  for (const n of g.nations) if (n.alive) tidyProvinces(w, g, n.id, g.prov, g.provinces);
+  g.provinces = g.provinces.filter(p => g.nations[p.owner] && g.nations[p.owner].alive);
+  for (const p of g.provinces) {
+    if (p.capital === null || p.capital === undefined) continue;
+    const c = g.cities.find(x => x.id === p.capital);
+    if (c && c.owner === p.owner && g.prov[c.cell] === p.id) continue;
+    const next = provTowns(g, p).sort((a, b) => (b.capital ? 1 : 0) - (a.capital ? 1 : 0) || (b.pop || 0) - (a.pop || 0) || a.id - b.id)[0];
+    p.capital = next ? next.id : null;
+    if (news && p.owner === PLAYER) news.push({ tone: "warn", text: next ? `${c ? c.name : "The old capital"} is no longer in ${p.name}: its government moved to ${next.name}.` : `${p.name} has lost its capital${c ? `, ${c.name}` : ""}. It is a territory now, run from the national capital.` });
+  }
+}
+/* Once a season: provinces' numbers for their history, villages, and rivals' redrawing. */
+function recordProvinces(g, nid, econ) {
+  if (!g.provinces) return;
+  const st = provinceStats(null, g, nid, econ);
+  for (const s of st) {
+    const p = s.p;
+    p.hist = (p.hist || []).concat([{ t: g.turn, pop: Math.round(s.pop * 1000) / 1000, gdp: Math.round(s.gdp * 10) / 10 }]).slice(-PROV.histMax);
+  }
+}
+function seasonProvinces(w, g, dispatch) {
+  if (!g.prov) return;
+  updateVillages(w, g);
+  rivalProvinces(w, g, dispatch);
+}
+
+/* ---------- A province's numbers: sums of its land and towns, no new rules ---------- */
+/* People are counted cell by cell; each town's output is shared among the provinces its land lies in, by people. */
+function provinceStats(w, g, nid, econ) {
+  const list = provList(g, nid);
+  const by = new Map(list.map(p => [p.id, { p, cells: 0, pop: 0, gdp: 0, towns: [], villages: 0, held: 0 }]));
+  for (let i = 0; i < N_CELLS; i++) {
+    if (g.owner[i] !== nid) continue;
+    const s = by.get(g.prov[i]);
+    if (!s) continue;
+    s.cells++;
+    s.pop += g.pop[i];
+  }
+  for (const r of (econ && econ.regions) || []) {
+    if (!(r.pop > 0)) continue;
+    const per = (r.gdp || 0) / r.pop;
+    for (const c of r.cells) { const s = by.get(g.prov[c]); if (s) s.gdp += per * g.pop[c]; }
+  }
+  for (const c of g.cities) if (c.owner === nid) { const s = by.get(g.prov[c.cell]); if (s) s.towns.push(c); }
+  for (const v of g.villages || []) if (g.owner[v.cell] === nid) { const s = by.get(g.prov[v.cell]); if (s) s.villages++; }
+  const out = [...by.values()];
+  for (const s of out) {
+    const h = s.p.hist || [];
+    const yearAgo = h.length >= 5 ? h[h.length - 5] : h[0];
+    s.growth = yearAgo && yearAgo.pop > 0 ? s.pop / yearAgo.pop - 1 : null;
+    s.perK = s.pop > 0 ? s.gdp / s.pop : 0;
+    s.capital = provCapital(g, s.p);
+    s.territory = !s.capital;
+    s.towns.sort((a, b) => (b.capital ? 1 : 0) - (a.capital ? 1 : 0) || (s.capital && b.id === s.capital.id ? 1 : 0) - (s.capital && a.id === s.capital.id ? 1 : 0) || (b.pop || 0) - (a.pop || 0));
+  }
+  const nat = g.cities.find(c => c.owner === nid && c.capital);
+  return out.sort((a, b) => (nat && g.prov[nat.cell] === b.p.id ? 1 : 0) - (nat && g.prov[nat.cell] === a.p.id ? 1 : 0) || b.pop - a.pop);
+}
+
+/* ---------- Villages: where the countryside lives ---------- */
+function villageName(w, g, cell, taken) {
+  for (let k = 0; k < 40; k++) {
+    const n = VILLAGE_HEADS[Math.floor(hash2(cell, k, w.seed + 501) * VILLAGE_HEADS.length)] + VILLAGE_TAILS[Math.floor(hash2(cell, k, w.seed + 502) * VILLAGE_TAILS.length)];
+    if (!taken.has(n)) return n;
+  }
+  return `${VILLAGE_HEADS[cell % VILLAGE_HEADS.length]}${VILLAGE_TAILS[cell % VILLAGE_TAILS.length]} ${cell}`;
+}
+/* What its people live from, if anything that gathers a village: farmland, a mine or oil field next door, or a
+   fishing coast. null: too few people. `stay` uses the lower threshold (a village is slow to die). */
+function villageKind(w, g, i, stay) {
+  const p = g.pop[i];
+  const mine = (g.sites || []).some(s => !s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res && Math.abs(cellX(s.cell) - cellX(i)) <= 1 && Math.abs(cellY(s.cell) - cellY(i)) <= 1);
+  if (mine && p >= PROV.villageMine * (stay ? 0.7 : 1)) return "mine";
+  if (cellFood(w, g, i) >= 0.3 && p >= (stay ? PROV.villageOff : PROV.villageOn)) return "farm";
+  if (w.coastal[i] && p >= PROV.villageFish * (stay ? 0.8 : 1)) return "fish";
+  return null;
+}
+function villagePop(g, v) { return g.pop[v.cell] * PROV.villageShare * (0.5 + hash2(v.cell, 11, 977)); }   // the biggest village of its land; the rest live on farms and in hamlets
+function updateVillages(w, g) {
+  const townAt = new Set(g.cities.map(c => c.cell));
+  const nearTown = i => g.cities.some(c => Math.abs(cellX(c.cell) - cellX(i)) <= 1 && Math.abs(cellY(c.cell) - cellY(i)) <= 1);
+  const keep = [];
+  const blocked = new Uint8Array(N_CELLS);
+  const block = i => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = cellX(i) + dx, y = cellY(i) + dy; if (inBounds(x, y)) blocked[idx(x, y)] = 1; } };
+  // villages that still have their people stay first, so the map does not reshuffle
+  for (const v of g.villages || []) {
+    if (g.owner[v.cell] < 0 || townAt.has(v.cell) || nearTown(v.cell) || blocked[v.cell]) continue;
+    const kind = villageKind(w, g, v.cell, true);
+    if (!kind) continue;
+    v.kind = kind;
+    v.pop = Math.round(villagePop(g, v) * 1e5) / 1e5;
+    keep.push(v); block(v.cell);
+  }
+  const taken = new Set(keep.map(v => v.name));
+  const cand = [];
+  for (let i = 0; i < N_CELLS; i++) {
+    if (g.owner[i] < 0 || blocked[i] || townAt.has(i)) continue;
+    if (g.pop[i] < PROV.villageMine * 0.7) continue;
+    const kind = villageKind(w, g, i, false);
+    if (kind) cand.push({ i, kind, s: g.pop[i] + hash2(i, 7, w.seed) * 0.01 });
+  }
+  cand.sort((a, b) => b.s - a.s || a.i - b.i);
+  for (const c of cand) {
+    if (blocked[c.i] || nearTown(c.i)) continue;
+    const v = { cell: c.i, name: villageName(w, g, c.i, taken), kind: c.kind, born: g.turn || 0, pop: 0 };
+    v.pop = Math.round(villagePop(g, v) * 1e5) / 1e5;
+    taken.add(v.name);
+    keep.push(v); block(c.i);
+  }
+  g.villages = keep.sort((a, b) => a.cell - b.cell);
+}
+function villageAt(g, cell) { return (g.villages || []).find(v => v.cell === cell) || null; }
+
+/* ---------- Redrawing provinces: weigh a change on copies, then pay, wait, and apply ---------- */
+/* op: { t: "draw", cells, to (province id, or null for a new province), name }
+       { t: "join", from, into }      { t: "capital", pid, cityId } */
+function provincePlan(w, g, nid, op) {
+  const prov = g.prov.slice();
+  const list = g.provinces.map(p => ({ ...p }));
+  const fail = reason => ({ ok: false, reason });
+  const mineIds = new Set(list.filter(p => p.owner === nid).map(p => p.id));
+  const before = list.filter(p => p.owner === nid).map(p => p.id);
+  let target = null;
+  if (op.t === "draw") {
+    const cells = (op.cells || []).filter(c => g.owner[c] === nid);
+    if (!cells.length) return fail("Draw over your own land.");
+    if (op.to !== null && op.to !== undefined) {
+      if (!mineIds.has(op.to)) return fail("That province is not yours.");
+      const moved = cells.filter(c => prov[c] !== op.to);
+      if (!moved.length) return fail("That land is already in this province.");
+      moved.forEach(c => { prov[c] = op.to; });
+      target = list.find(p => p.id === op.to);
+    } else {
+      if (cells.length < PROV.minCells) return fail(`Too small: a province needs at least ${fmtArea(PROV.minCells)} (you drew ${fmtArea(cells.length)}).`);
+      if (before.length >= PROV.maxPerNation) return fail(`A nation can have at most ${PROV.maxPerNation} provinces.`);
+      const capCity = g.cities.find(c => c.owner === nid && c.capital);
+      target = newProvince(w, g, nid, cells, op.name || null, list, prov, { capital: true });
+      // the national capital stays the capital of the province it was before, unless the new one holds it
+      if (capCity && cells.includes(capCity.cell)) target.capital = capCity.id;
+    }
+  } else if (op.t === "join") {
+    const a = list.find(p => p.id === op.from), b = list.find(p => p.id === op.into);
+    if (!a || !b || a.owner !== nid || b.owner !== nid || a.id === b.id) return fail("Choose two of your provinces.");
+    let touch = false;
+    for (let i = 0; i < N_CELLS && !touch; i++) {
+      if (prov[i] !== a.id || g.owner[i] !== nid) continue;
+      for (const [dx, dy] of DIRS4) { const x = cellX(i) + dx, y = cellY(i) + dy; if (inBounds(x, y) && prov[idx(x, y)] === b.id && g.owner[idx(x, y)] === nid) { touch = true; break; } }
+    }
+    if (!touch) return fail(`${a.name} and ${b.name} do not touch.`);
+    for (let i = 0; i < N_CELLS; i++) if (prov[i] === a.id) prov[i] = b.id;
+    target = b;
+  } else if (op.t === "capital") {
+    const p = list.find(x => x.id === op.pid);
+    const c = g.cities.find(x => x.id === op.cityId);
+    if (!p || p.owner !== nid) return fail("Not your province.");
+    if (!c || c.owner !== nid || prov[c.cell] !== p.id) return fail(`That town is not in ${p.name}.`);
+    if (p.capital === c.id) return fail(`${c.name} is already its capital.`);
+    if (g.occ && g.occ[c.cell] >= 0) return fail(`${c.name} is occupied.`);
+    p.capital = c.id;
+    target = p;
+  } else return fail("Unknown change.");
+  tidyProvinces(w, g, nid, prov, list, { splitOff: op.t === "draw" });
+  const after = list.filter(p => p.owner === nid);
+  const created = after.filter(p => !before.includes(p.id));
+  const removed = before.filter(id => !after.some(p => p.id === id)).map(id => g.provinces.find(p => p.id === id)).filter(Boolean);
+  if (op.t === "draw" && !created.length && !g.prov.some((v, i) => v !== prov[i] && g.owner[i] === nid)) return fail("This would change nothing.");
+  const moved = [];
+  for (let i = 0; i < N_CELLS; i++) if (g.owner[i] === nid && g.prov[i] !== prov[i]) moved.push(i);
+  return { ok: true, prov, list, created, removed, target, moved };
+}
+function provCost(w, g, nid, plan, op, econ) {
+  if (op.t === "join") return { cost: PROV.joinCost, seasons: PROV.joinSeasons };
+  const E = econ || computeEconomy(w, g, nid);
+  const officeCost = city => {
+    const r = city ? E.regions.find(x => x.city.id === city.id) : null;
+    return r ? Math.round(clamp(PROV.newShare * Math.max(0, r.gdp || 0), PROV.newMin, PROV.newMax) * 10) / 10 : PROV.territoryCost;
+  };
+  if (op.t === "capital") return { cost: officeCost(g.cities.find(c => c.id === op.cityId)), seasons: PROV.capSeasons };
+  let cost = PROV.moveCost, seasons = PROV.moveSeasons;
+  for (const p of plan.created) {
+    const cap = p.capital !== null ? g.cities.find(c => c.id === p.capital) : null;
+    cost += cap && cap.capital ? PROV.territoryCost : officeCost(cap);
+    seasons = PROV.newSeasons;
+  }
+  return { cost: Math.round(cost * 10) / 10, seasons };
+}
+function quoteProvince(w, g, nid, op, econ) {
+  const fail = reason => ({ ok: false, kind: "province", reason });
+  if (!g.prov) return fail("This nation has no provinces yet.");
+  if (g.projects.some(p => p.kind === "province" && p.nid === nid)) return fail("Another change to the provinces is still under way. Wait until it is done.");
+  const plan = provincePlan(w, g, nid, op);
+  if (!plan.ok) return fail(plan.reason);
+  const { cost, seasons } = provCost(w, g, nid, plan, op, econ);
+  return { ok: true, kind: "province", nid, op, cost, seasons, dGdp: 0, dFood: 0, value: 0, label: provChangeLabel(g, plan, op), plan };
+}
+function provChangeLabel(g, plan, op) {
+  if (op.t === "join") { const a = provById(g, op.from), b = provById(g, op.into); return `Join ${a ? a.name : "a province"} to ${b ? b.name : "another"}`; }
+  if (op.t === "capital") { const c = g.cities.find(x => x.id === op.cityId), p = provById(g, op.pid); return `${c ? c.name : "A town"} becomes the capital of ${p ? p.name : "its province"}`; }
+  if (plan.created.length) return `New province: ${plan.created.map(p => p.name).join(", ")}`;
+  return `Move ${fmtArea(plan.moved.length)} of land into ${plan.target ? plan.target.name : "another province"}`;
+}
+/* What a change would do, in words, for the confirm card and for rivals' news. */
+function provPlanLines(g, plan) {
+  const out = [];
+  for (const p of plan.created) {
+    const cap = p.capital !== null ? g.cities.find(c => c.id === p.capital) : null;
+    const n = plan.prov.reduce((s, v, i) => s + (v === p.id && g.owner[i] === p.owner ? 1 : 0), 0);
+    out.push(`${p.name}: ${fmtArea(n)}, ${cap ? `capital ${cap.name}` : "no town yet, so a territory run from the national capital"}`);
+  }
+  for (const p of plan.removed) out.push(`${p.name} ends: its land joins ${plan.target ? plan.target.name : "its neighbors"}`);
+  if (plan.moved.length && !plan.created.length && plan.target) out.push(`${fmtArea(plan.moved.length)} of land moves into ${plan.target.name}`);
+  return out;
+}
+function applyProvincePlan(g, nid, plan) {
+  g.prov = plan.prov;
+  const others = g.provinces.filter(p => p.owner !== nid);
+  g.provinces = others.concat(plan.list.filter(p => p.owner === nid));
+  for (const p of plan.created) p.made = g.turn;
+  bumpWorld(g);
+}
+function finishProvince(w, g, p) {
+  const plan = provincePlan(w, g, p.nid, p.op);
+  if (!plan.ok) { p.failed = true; p.why = plan.reason; if (g.nations[p.nid]) g.nations[p.nid].treasury += p.cost * 0.5; return; }
+  applyProvincePlan(g, p.nid, plan);
+  p.done = provPlanLines(g, plan);
+  const cap = p.op.t === "capital" ? g.cities.find(c => c.id === p.op.cityId) : null;
+  if (cap) cityHist(g, cap, `Became the capital of ${(provById(g, p.op.pid) || { name: "its province" }).name}.`, "good");
+  for (const q of plan.created) { const c = provCapital(g, q); if (c && !c.capital) cityHist(g, c, `Became the capital of the new province of ${q.name}.`, "good"); }
+}
+function provinceDoneText(g, p) {
+  if (p.failed) return `${p.label}: the change could not be made (${(p.why || "the land changed").replace(/\.$/, "")}). Half the cost was refunded.`;
+  return `${p.label}: done.${p.done && p.done.length ? ` ${p.done.join("; ")}.` : ""}`;
+}
+function renameProvince(g, nid, pid, name) {
+  const p = provById(g, pid);
+  const clean = String(name || "").replace(/\s+/g, " ").trim().slice(0, 32);
+  if (!p || p.owner !== nid || !clean) return false;
+  if (provList(g, nid).some(q => q.id !== pid && q.name.toLowerCase() === clean.toLowerCase())) return false;
+  p.name = clean;
+  return true;
+}
+
+/* ---------- Rivals redraw by the same rules, once a year each ---------- */
+function rivalProvinces(w, g, dispatch) {
+  if (g.turn < 4) return;
+  for (const n of liveNations(g)) {
+    if (n.isPlayer || (g.turn + n.id) % 4 !== 0) continue;
+    if (g.projects.some(p => p.kind === "province" && p.nid === n.id)) continue;
+    const econ = computeEconomy(w, g, n.id);
+    if (n.treasury < 0.05 * econ.gdp) continue;
+    const list = provList(g, n.id);
+    let op = null;
+    // a territory where a town has grown becomes a full province
+    for (const p of list) {
+      if (provCapital(g, p)) continue;
+      const t = provTowns(g, p).filter(c => !(g.occ && g.occ[c.cell] >= 0)).sort((a, b) => (b.pop || 0) - (a.pop || 0))[0];
+      if (t && (t.pop || 0) >= 1) { op = { t: "capital", pid: p.id, cityId: t.id }; break; }
+    }
+    // a province grown too big for one governor (by conquest or new towns) is split in two
+    if (!op && list.length < PROV.maxPerNation) {
+      const big = list.map(p => ({ p, cells: provCells(g, p) })).filter(x => x.cells.length >= 2.2 * PROV.target).sort((a, b) => b.cells.length - a.cells.length)[0];
+      if (big) {
+        const cap = provCapital(g, big.p);
+        const parts = partitionCells(g, big.cells, 2, cap ? [cap.cell] : []);
+        if (parts.length === 2 && parts[1].cells.length >= PROV.minCells) op = { t: "draw", cells: parts[1].cells, to: null };
+      }
+    }
+    if (!op) continue;
+    const q = quoteProvince(w, g, n.id, op, econ);
+    if (!q.ok || !canAfford(n, econ.gdp, q.cost).ok || q.cost > 0.04 * econ.gdp) continue;
+    orderProject(g, q, "Governing the country");
+  }
+  void dispatch;
+}
 /* =====================================================================
    10q. Interest groups: who holds power in the nation, what they want, and what they do when they are angry
    Borrowed ideas: Victoria 3 (groups whose power comes from the real economy), Tropico (factions with demands),
@@ -20939,6 +21526,7 @@ function buildShapes() {
     shapeCache.fronts = linesToPath(lines, 2);
   }
   shapeCache.roads = roadPath();
+  buildProvinceShapes(shapeCache);   // province lines and names (16m)
   return shapeCache;
 }
 
@@ -21003,6 +21591,7 @@ function drawTerritories(o, cs) {
       o.setLineDash([]);
     }
   }
+  if (game) drawProvinceLines(o, cs);
   for (const { nid, path } of sh.nations) {
     o.strokeStyle = "rgba(10,10,10,0.5)"; o.lineWidth = px(clamp(cs * 0.2, 2.6, 5)); o.stroke(path);
     o.strokeStyle = NATION_COLORS[nid]; o.lineWidth = px(clamp(cs * 0.085, 1.3, 2.4)); o.stroke(path);
@@ -21174,6 +21763,7 @@ function drawCities(c, cs) {
     }
     const markerA = GLMAP.ok ? 1 - smooth01(110, 200, cs) : 1;
     if (markerA > 0.02) drawTownMarker(c, x, y, rad, it.color, city.capital, markerA);
+    if (markerA > 0.02 && it.occBy < 0) drawProvinceCapitalMark(c, city, x, y, rad);
     if (it.occBy >= 0) {
       c.strokeStyle = NATION_COLORS[it.occBy]; c.lineWidth = 2.2; c.setLineDash([3, 3]);
       c.beginPath(); c.arc(x, y, rad + 5, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
@@ -21807,7 +22397,7 @@ function renderMapNow() {
   const cs = view.cs, dpr = view.dpr;
   if (GLMAP.ok) updateLanduse();
   // Terrain and territories only change when the camera or the map does; hovering redraws just the top layers.
-  const skey = `${view.ox.toFixed(2)}|${view.oy.toFixed(2)}|${cs.toFixed(3)}|${canvas.width}x${canvas.height}|${shapesKey()}|${terrainCache.seed}|${GLMAP.ok ? LANDUSE.key : ""}`;
+  const skey = `${view.ox.toFixed(2)}|${view.oy.toFixed(2)}|${cs.toFixed(3)}|${canvas.width}x${canvas.height}|${shapesKey()}|${terrainCache.seed}|${GLMAP.ok ? LANDUSE.key : ""}|${game && provShowTints() ? `t${ui.openProv}` : ""}`;
   if (skey !== view.staticKey || view.staticMissing) {
     view.staticMissing = renderStatic(cs, dpr);
     view.staticKey = skey;
@@ -21826,8 +22416,11 @@ function renderMapNow() {
     if (motion.on) drawTownTraffic(ctx, cs, motion.now);
     drawFronts(ctx, cs);
     drawNationLabels(ctx, cs);
+    drawProvinceLabels(ctx, cs);
     drawKnownDeposits(ctx, cs);
     drawToolPreview(ctx, cs);
+    drawProvincePreview(ctx, cs);
+    drawVillages(ctx, cs);
     drawCities(ctx, cs);
     drawSites(ctx, cs);
     drawWorks(ctx, cs);
@@ -22162,7 +22755,7 @@ function realmTabHtml() {
         ${(b.ministries || 0) > 0.0005 ? `<div class="row"><span>Ministries<span class="sub">${MIN_ORDER.filter(k => ministry(n, k) && !ministry(n, k).pending).length} ministries and their staff</span></span><span class="num">${fmtMoneyFine(-b.ministries)}</span></div>` : ""}
         ${(b.navy || 0) > 0.0005 ? `<div class="row"><span>Navy<span class="sub">Crews, fuel and repairs: ${escapeHtml(shipsText(navyCounts(game, PLAYER)))}</span></span><span class="num">${fmtMoneyFine(-b.navy)}</span></div>` : ""}
         ${(b.granary || 0) > 0.0005 ? `<div class="row"><span>Grain for the food reserve<span class="sub">${fmtNum(monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop))} months in store; the law asks for ${GRANARY_LAWS[n.laws.granary || "none"].months}</span></span><span class="num">${fmtMoneyFine(-b.granary)}</span></div>` : ""}
-        ${(b.programs || 0) > 0.0005 ? `<div class="row"><span>City programs<span class="sub">${game.cities.filter(c => c.owner === PLAYER && activeFocus(game, c)).map(c => `${c.name}: ${FOCI[c.focus].label.toLowerCase()}`).join(", ")}</span></span><span class="num">${fmtMoneyFine(-b.programs)}</span></div>` : ""}
+        ${(b.programs || 0) > 0.0005 ? `<div class="row"><span>City programs and province governments<span class="sub">${game.cities.filter(c => c.owner === PLAYER && (activeFocus(game, c) || provSeat(game, c))).map(c => `${c.name}: ${activeFocus(game, c) ? FOCI[c.focus].label.toLowerCase() : "province capital"}`).join(", ")}</span></span><span class="num">${fmtMoneyFine(-b.programs)}</span></div>` : ""}
         ${worksBudgetRowHtml()}
         ${b.interest > 0.005 ? `<div class="row"><span>Interest<span class="sub">${pct(b.interestRate)} a year on ${fmtMoney(b.debt)} of debt</span></span><span class="num">${fmtMoney(-b.interest)}</span></div>` : ""}
         <div class="row total"><span>${b.balance - myWorkPay() >= 0 ? "Surplus" : "Deficit"}</span><span class="num tone-${b.balance - myWorkPay() >= 0 ? "good" : "bad"}">${fmtSignedMoney(b.balance - myWorkPay())}</span></div>
@@ -22455,8 +23048,9 @@ function cityDetailHtml(city) {
     </div>` : "";
   return `
     <div class="block">
-      <span class="eyebrow" style="color:${n.color}">${escapeHtml(n.name)}${city.capital ? " · Capital" : ""}</span>
+      <span class="eyebrow" style="color:${n.color}">${escapeHtml(n.name)}${city.capital ? " · Capital" : ""}${provinceOfCity(game, city) ? ` · ${escapeHtml(provinceOfCity(game, city).name)}${provSeat(game, city) ? " (its capital)" : ""}` : ""}</span>
       <h2 class="side-title">${escapeHtml(city.name)}</h2>
+      <p class="muted small">${escapeHtml(cityTier(r.pop).label)} of ${fmtPop(r.pop)}, counting the farms and villages around it</p>
     </div>
     ${cp ? cityFileHtml(city, cp) : ""}
     ${cp ? cityMoodHtml(city, cp) : ""}
@@ -22595,6 +23189,7 @@ function confirmHtml(q) {
     if (q.replaces && FOCI[q.replaces]) lines.push(`Replaces the ${escapeHtml(FOCI[q.replaces].label.toLowerCase())} once it is ready`);
     if (c) lines.push(`Ready in ${q.seasons} season${q.seasons > 1 ? "s" : ""}; one program per city`);
   }
+  if (q.kind === "province") lines.push(...provConfirmLines(q));
   if (q.kind === "capital") {
     const c = cityById(q.cityId), old = q.from !== null ? cityById(q.from) : null;
     lines.push(`The ministries, parliament and the national food reserve move to ${escapeHtml(c ? c.name : "the city")}. It becomes the seat of government: more public jobs, pride (+15 importance), and the prize every enemy wants.`);
@@ -22604,7 +23199,7 @@ function confirmHtml(q) {
   if (!lines.length) lines.push("Little immediate effect.");
   const payback = q.dGdp > 0.05 && q.kind !== "capital" ? q.cost / (q.dGdp * n.laws.tax / 100) : null;
   return `<div class="confirm">
-    <span class="eyebrow">${q.kind === "focus" ? "City program" : q.kind === "capital" ? "A new capital" : "Planned project"}</span>
+    <span class="eyebrow">${q.kind === "focus" ? "City program" : q.kind === "capital" ? "A new capital" : q.kind === "province" ? "Provinces" : "Planned project"}</span>
     <h3>${escapeHtml(q.label)}</h3>
     <div class="rows">
       <div class="row"><span>Cost</span><span class="num">${fmtMoneyFine(q.cost)}</span></div>
@@ -22614,7 +23209,7 @@ function confirmHtml(q) {
     <ul class="factors">${lines.map(l => `<li><span>${l}</span></li>`).join("")}</ul>
     ${afford.ok ? "" : `<p class="bad">${escapeHtml(afford.reason)}</p>`}
     <div class="actions">
-      <button class="btn primary" type="button" data-action="confirm-build" ${afford.ok ? "" : "disabled"}>${q.kind === "ships" ? (q.seller !== undefined ? "Buy" : "Order") : q.kind === "focus" || q.kind === "capital" ? "Start" : "Build"} for ${fmtMoneyFine(q.cost)}</button>
+      <button class="btn primary" type="button" data-action="confirm-build" ${afford.ok ? "" : "disabled"}>${q.kind === "ships" ? (q.seller !== undefined ? "Buy" : "Order") : q.kind === "focus" || q.kind === "capital" || q.kind === "province" ? "Start" : "Build"} for ${fmtMoneyFine(q.cost)}</button>
       <button class="btn" type="button" data-action="cancel-build">Cancel</button>
     </div>
   </div>`;
@@ -22637,10 +23232,11 @@ function collapsedHtml() {
 
 function sidebarHtml() {
   if (ui.phase === "draw") return ui.drawCells ? previewSidebarHtml() : introSidebarHtml();
+  if (ui.phase === "provinces") return foundingProvincesHtml();
   if (ui.phase === "collapsed") return collapsedHtml();
   if (!PANELS.some(([k]) => k === ui.tab)) { ui.tab = null; return ""; }
   const panel = PANELS.find(([k]) => k === ui.tab);
-  const body = { realm: realmTabHtml, cities: citiesTabHtml, groups: groupsTabHtml, people: peopleTabHtml, cabinet: cabinetTabHtml, agenda: agendaTabHtml, economy: econTabHtml, trade: tradeTabHtml, army: armyTabHtml, selected: selectedTabHtml, nations: nationsTabHtml, letters: lettersTabHtml, chronicle: chronicleTabHtml, navy: navyTabHtml }[ui.tab]();
+  const body = { realm: realmTabHtml, cities: citiesTabHtml, provinces: provincesTabHtml, groups: groupsTabHtml, people: peopleTabHtml, cabinet: cabinetTabHtml, agenda: agendaTabHtml, economy: econTabHtml, trade: tradeTabHtml, army: armyTabHtml, selected: selectedTabHtml, nations: nationsTabHtml, letters: lettersTabHtml, chronicle: chronicleTabHtml, navy: navyTabHtml }[ui.tab]();
   const restart = ui.confirmRestart
     ? `<div class="confirm"><p>Start a new world? ${escapeHtml(game.nations[PLAYER].name)} stays in Saved games as an earlier game, so you can come back to it.</p><div class="actions"><button class="btn danger" type="button" data-action="restart-now">New world</button><button class="btn" type="button" data-action="restart-cancel">Keep playing</button></div></div>`
     : `<button class="btn" type="button" data-action="restart-ask" style="justify-self:start">New game</button>`;
@@ -23886,6 +24482,8 @@ function toolbarHtml() {
 
 function hintText() {
   if (ui.phase === "draw") return drawingPath || ui.drawCells ? "" : "Press and drag to draw your borders";
+  if (ui.phase === "provinces") return drawingPath || ui.provDraw ? "" : "Draw around some of your land to make it a province";
+  if (ui.phase === "play" && ui.tool === "province" && !ui.pending) return drawingPath || ui.provDraw ? "" : "Draw around land to make it a new province or move it into another · Esc to stop";
   if (ui.phase !== "play" || ui.pending) return "";
   if (ui.tool === "road") return ui.roadFrom ? "Click a town to join it, or a deposit or any spot in your land to reach it · Esc to cancel" : "Click one of your towns to start a road";
   if (ui.tool === "town") return "Click a spot on wild land near your border, or empty land inside it";
@@ -23937,9 +24535,9 @@ function tooltipBase(i) {
   if (city) {
     const r = economies()[city.owner].regions.find(x => x.city.id === city.id);
     if (!r) return `<strong>${escapeHtml(city.name)}${city.capital ? " ★" : ""}</strong><span class="tt-line">${escapeHtml(who)}</span><span class="tt-bad">Occupied by the ${escapeHtml(nameOf(game, game.occ[city.cell]))}</span>`;
-    return `<strong>${escapeHtml(city.name)}${city.capital ? " ★" : ""}</strong><span class="tt-line">${escapeHtml(who)}</span><span class="tt-line">${escapeHtml(cityClass(city.imp).label)} · importance ${city.imp || "?"}${(city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).length ? ` · ${escapeHtml((city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).slice(0, 2).map(k => CITY_ROLES[k].label).join(", "))}` : ""}</span>${(city.mood ?? 55) < 40 ? `<span class="tt-bad">Mood ${Math.round(city.mood)}: ${moodWord(city.mood)}</span>` : ""}${city.origin !== city.owner && (city.loyalty ?? 92) < 70 ? `<span class="tt-bad">Loyalty ${Math.round(city.loyalty)}: many feel part of the ${escapeHtml(nameOf(game, city.origin))}</span>` : ""}<span class="tt-line">${r.pop.toFixed(2)}M people · $${r.outputK.toFixed(1)}k each</span><span class="${r.foodRatio < ECON.famineLine ? "tt-bad" : "tt-line"}">Food ${pct(r.foodRatio)} of need</span>${townURate(r) > 0.05 ? `<span class="tt-bad">${pct(townURate(r))} of workers have no job</span>` : ""}`;
+    return `<strong>${escapeHtml(city.name)}${city.capital ? " ★" : ""}</strong><span class="tt-line">${escapeHtml(who)}</span>${provTooltipLines(i)}<span class="tt-line">${escapeHtml(cityTier(r.pop).label)} · ${escapeHtml(cityClass(city.imp).label)} · importance ${city.imp || "?"}${(city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).length ? ` · ${escapeHtml((city.roles || []).filter(k => k !== "capital" && CITY_ROLES[k]).slice(0, 2).map(k => CITY_ROLES[k].label).join(", "))}` : ""}</span>${(city.mood ?? 55) < 40 ? `<span class="tt-bad">Mood ${Math.round(city.mood)}: ${moodWord(city.mood)}</span>` : ""}${city.origin !== city.owner && (city.loyalty ?? 92) < 70 ? `<span class="tt-bad">Loyalty ${Math.round(city.loyalty)}: many feel part of the ${escapeHtml(nameOf(game, city.origin))}</span>` : ""}<span class="tt-line">${r.pop.toFixed(2)}M people · $${r.outputK.toFixed(1)}k each</span><span class="${r.foodRatio < ECON.famineLine ? "tt-bad" : "tt-line"}">Food ${pct(r.foodRatio)} of need</span>${townURate(r) > 0.05 ? `<span class="tt-bad">${pct(townURate(r))} of workers have no job</span>` : ""}`;
   }
-  return `<strong>${TERRAIN[t].name}</strong><span class="tt-line">${escapeHtml(who)}</span>${dep}${game.occ[i] >= 0 ? `<span class="tt-bad">Occupied by the ${escapeHtml(nameOf(game, game.occ[i]))}</span>` : ""}<span class="tt-line">${(game.pop[i] * 1000).toFixed(0)}k people · feeds ${(cellFood(world, game, i) * 1000).toFixed(0)}k</span>`;
+  return `<strong>${TERRAIN[t].name}</strong><span class="tt-line">${escapeHtml(who)}</span>${provTooltipLines(i)}${dep}${game.occ[i] >= 0 ? `<span class="tt-bad">Occupied by the ${escapeHtml(nameOf(game, game.occ[i]))}</span>` : ""}<span class="tt-line">${(game.pop[i] * 1000).toFixed(0)}k people · feeds ${(cellFood(world, game, i) * 1000).toFixed(0)}k</span>`;
 }
 
 function dispatchHtml(d) {
@@ -24008,6 +24606,7 @@ function snapshotForPlayback(g) {
     sites: (g.sites || []).map(s => ({ ...s })),
     fleets: g.sea ? g.sea.fleets.map(f => ({ ...f, ships: f.ships.map(x => ({ ...x })) })) : [],
     turn: g.turn,
+    prov: g.prov ? g.prov.slice() : null, provinces: (g.provinces || []).map(p => ({ ...p })), villages: g.villages || [],
   };
 }
 
@@ -24081,6 +24680,7 @@ function buildPlayback(before, events, after) {
   const display = {
     ...after, __display: true, ver: 1e6 + Math.floor(Math.random() * 1e6),
     owner: before.owner.slice(), occ: before.occ.slice(), roads: new Set(before.roads),
+    prov: before.prov || after.prov, provinces: before.prov ? before.provinces : after.provinces, villages: before.prov ? before.villages : after.villages,
     cities: before.cities.map(c => ({ ...c, ind: { ...c.ind } })), battles: [], projects: after.projects,
     sites: (before.sites || []).filter(s => (after.sites || []).some(x => x.id === s.id)).map(s => ({ ...s, ...((after.sites || []).find(x => x.id === s.id)), level: s.level })),
     divisions: before.divisions.map(d => ({ ...d, _start: d.cell })),
@@ -24588,7 +25188,7 @@ function seaLanesLineHtml() {
 /* =====================================================================
    18. Render
    ===================================================================== */
-const PANELS = [["realm", "crown", "Realm", "1"], ["cities", "city", "Cities", "c"], ["groups", "groups", "Groups", "p"], ["people", "toolbox", "People", "o"], ["cabinet", "cabinet", "Ministries", "m"], ["agenda", "flag", "Agenda", "2"], ["economy", "output", "Economy", "3"], ["trade", "freighter", "Trade", "x"], ["army", "army", "Army", "4"], ["navy", "anchor", "Navy", "9"], ["selected", "select", "Inspect", "5"], ["nations", "globe", "Nations", "6"], ["letters", "mail", "Letters", "7"], ["chronicle", "scroll", "Log", "8"]];
+const PANELS = [["realm", "crown", "Realm", "1"], ["cities", "city", "Cities", "c"], ["provinces", "capitol", "Provinces", "b"], ["groups", "groups", "Groups", "p"], ["people", "toolbox", "People", "o"], ["cabinet", "cabinet", "Ministries", "m"], ["agenda", "flag", "Agenda", "2"], ["economy", "output", "Economy", "3"], ["trade", "freighter", "Trade", "x"], ["army", "army", "Army", "4"], ["navy", "anchor", "Navy", "9"], ["selected", "select", "Inspect", "5"], ["nations", "globe", "Nations", "6"], ["letters", "mail", "Letters", "7"], ["chronicle", "scroll", "Log", "8"]];
 function dockHtml() {
   const letters = game.inbox.filter(it => it.status === "open").length;
   const unread = assemblyUnread(game);
@@ -24691,7 +25291,7 @@ function renderOverlays() {
     ui.composeDirty = false;
     if (wasHidden) { const ta = document.getElementById("letter-text"); if (ta) ta.focus(); }
   }
-  canvas.className = ui.phase === "draw" ? "tool-draw" : playing ? `tool-${ui.tool}${ui.sel.length || ui.fleetSel.length ? " has-sel" : ""}` : "";
+  canvas.className = ui.phase === "draw" || ui.phase === "provinces" ? "tool-draw" : playing ? `tool-${ui.tool}${ui.sel.length || ui.fleetSel.length ? " has-sel" : ""}` : "";
 }
 function renderAll() {
   renderHud();
@@ -24813,6 +25413,15 @@ function onPointerDown(e) {
     return;
   }
   if (ui.play) return;
+  if (ui.phase === "provinces" || (ui.phase === "play" && ui.tool === "province" && !ui.dispatch && e.button === 0)) {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    const { x, y } = eventCell(e);
+    drawingPath = [[x, y]];
+    ui.provDraw = null;
+    renderAll();
+    return;
+  }
   if (ui.phase === "draw") {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
@@ -24891,6 +25500,7 @@ function onPointerUp() {
   if (!drawingPath) return;
   const path = drawingPath;
   drawingPath = null;
+  if (ui.phase !== "draw") { provPenDone(path); renderAll(); return; }
   applyClaimResult(claimFromPath(world, path));
   saveGame();
   renderAll();
@@ -24948,15 +25558,10 @@ function foundNation() {
   const name = cleanName(ui.name);
   game = setupGame(world, ui.drawCells, name, ui.seed);
   ui.gameId = newGameId();
-  ui.phase = "play"; ui.tab = null; ui.tool = "select";
-  const cap = game.cities.find(c => c.owner === PLAYER && c.capital).cell;
-  const rivals = game.nations.filter(n => !n.isPlayer).map(n => {
-    const rc = game.cities.find(c => c.owner === n.id && c.capital);
-    return `the ${n.name} to the ${directionWord(cap, rc.cell)}`;
-  });
-  addChronicle(game, `${name} is founded. Its neighbors: ${bJoin(rivals)}.`, "neutral", PLAYER);
+  // the second step of the founding: divide the country into provinces (16m); time starts after it
+  ui.phase = "provinces"; ui.tab = null; ui.tool = "select"; ui.provDraw = null;
   bumpMap();
-  startDeliberation();
+  provFocusOwnLand();
 }
 
 function setLaw(law, value) {
@@ -25172,7 +25777,7 @@ function answerEnvoy(id, accept) {
   bumpMap();
 }
 
-function setTool(tool) { ui.tool = tool; ui.roadFrom = null; ui.hoverQuote = null; ui.pending = null; quoteMemo.key = ""; }
+function setTool(tool) { ui.tool = tool; ui.roadFrom = null; ui.hoverQuote = null; ui.pending = null; ui.provDraw = null; quoteMemo.key = ""; }
 
 /* =====================================================================
    17c. Statistics window: everything about you, your rivals and the world
@@ -28525,6 +29130,354 @@ function drawCityMarks(c, city, lx, ly, tw, size) {
 }
 
 /* =====================================================================
+   16m. Provinces in the panels and on the map (v38, part 1)
+   The founding's second step (divide the country), the Provinces panel (key B) and its pen, thin province lines
+   inside every country, province names when zoomed in, a mark on province capitals, and villages up close.
+   The rules and numbers all live in engine 10u.
+   ===================================================================== */
+Object.assign(ICONS, { capitol: giSvg("lorc/capitol"), quill: giSvg("lorc/quill-ink") });
+const PROV_TINTS = ["#e7c46a", "#7fc4d8", "#e08a7a", "#9ccf7c", "#c39be0", "#e3a95c", "#7fa6e6", "#d7d78a", "#8fd8b8", "#e6a0c4", "#b5b5b5", "#cfa77f"];
+function provTint(p) { return PROV_TINTS[(p.id * 7) % PROV_TINTS.length]; }
+
+/* ---------- The pen: draw around land, then choose what it becomes ---------- */
+function provPenDone(path) {
+  const inside = path.length >= 6 ? landCellsInsidePath(world, path).filter(c => game.owner[c] === PLAYER) : [];
+  if (!inside.length) { ui.provDraw = null; flashHint("Draw around some of your own land."); return; }
+  ui.provDraw = { cells: inside };
+  ui.pending = null;
+}
+function provDrawTargets() {
+  if (!ui.provDraw) return [];
+  const ids = new Map();
+  const set = new Set(ui.provDraw.cells);
+  for (const c of ui.provDraw.cells) for (const [dx, dy] of DIRS4) {
+    const x = cellX(c) + dx, y = cellY(c) + dy;
+    if (!inBounds(x, y)) continue;
+    const j = idx(x, y);
+    if (set.has(j) || game.owner[j] !== PLAYER) continue;
+    const p = provAt(game, j);
+    if (p) ids.set(p.id, (ids.get(p.id) || 0) + 1);
+  }
+  for (const c of ui.provDraw.cells) { const p = provAt(game, c); if (p && !ids.has(p.id)) ids.set(p.id, 0); }
+  return [...ids.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => provById(game, id)).filter(Boolean);
+}
+/* At the founding a change is made at once and costs nothing; later it is a project with a cost and a time. */
+function provChange(op) {
+  if (ui.phase === "provinces") {
+    const plan = provincePlan(world, game, PLAYER, op);
+    if (!plan.ok) { flashHint(plan.reason); return; }
+    applyProvincePlan(game, PLAYER, plan);
+    ui.provDraw = null;
+    bumpMap();
+    return;
+  }
+  const q = quoteProvince(world, game, PLAYER, op, economies()[PLAYER]);
+  if (!q.ok) { flashHint(q.reason); return; }
+  ui.pending = q;
+  ui.provDraw = null;
+}
+
+/* ---------- The founding's second step ---------- */
+function foundingProvincesHtml() {
+  const econ = computeEconomy(world, game, PLAYER);
+  const st = provinceStats(world, game, PLAYER, econ);
+  const rows = st.map(s => provFoundingRowHtml(s)).join("");
+  return `<div class="side-body">
+    <div class="block">
+      <span class="eyebrow">Founding · step 2 of 2</span>
+      <h2 class="side-title">Divide your country into provinces</h2>
+      <p class="small">Like the states of a country: each province has a capital and its own towns and villages. A province with no town yet is a territory, run from the national capital, until a town grows there.</p>
+      <p class="small"><b>Draw on the map</b> around some land to make it a province, or let the game divide it. You can change them later (that costs money and time, as in real life).</p>
+    </div>
+    ${ui.provDraw ? provDrawCardHtml() : ""}
+    <div class="actions">
+      <button class="btn" type="button" data-action="prov-auto">Divide it for me</button>
+      <span class="muted small">or into</span>
+      ${[1, 2, 3, 4, 5].map(k => `<button class="btn small" type="button" data-action="prov-auto" data-k="${k}" title="${k === 1 ? "The whole country as one province" : `${k} provinces of about the same size`}">${k}</button>`).join("")}
+    </div>
+    <div class="actions"><button class="btn primary" type="button" data-action="prov-start">Start with these provinces</button></div>
+    <div class="block"><span class="eyebrow">${st.length} province${st.length > 1 ? "s" : ""} · click a name to change it</span><div class="prov-list">${rows}</div></div>
+    <p class="muted small">Province capitals govern their province: more public jobs, more loyal and prouder people, and if the national capital ever falls, the government carries on from the biggest one. Their offices cost a little upkeep.</p>
+  </div>`;
+}
+function provFoundingRowHtml(s) {
+  const p = s.p;
+  const capOpts = s.towns.map(t => `<option value="${t.id}" ${s.capital && s.capital.id === t.id ? "selected" : ""}>${escapeHtml(t.name)}${t.capital ? " (national capital)" : ""}</option>`).join("");
+  return `<div class="prov-row">
+    <span class="prov-sw" style="background:${provTint(p)}"></span>
+    <input class="prov-name" type="text" maxlength="32" data-prov-name="${p.id}" value="${escapeHtml(p.name)}" aria-label="Province name">
+    <span class="prov-cap"><span class="muted small">${fmtArea(s.cells)} · ${fmtPop(s.pop)}</span> · ${s.towns.length ? `Capital <select data-prov-cap="${p.id}">${s.capital ? "" : `<option value="" selected>none yet</option>`}${capOpts}</select>` : `<span class="tone-warn small">Territory: no town yet</span>`}</span>
+  </div>`;
+}
+function provDrawCardHtml() {
+  const cells = ui.provDraw.cells;
+  const pop = cells.reduce((s, c) => s + game.pop[c], 0);
+  const towns = game.cities.filter(c => c.owner === PLAYER && cells.includes(c.cell));
+  const targets = provDrawTargets();
+  return `<div class="confirm">
+    <span class="eyebrow">The land you drew</span>
+    <p class="small">${fmtArea(cells.length)} · ${fmtPop(pop)}${towns.length ? ` · ${towns.map(t => escapeHtml(t.name)).join(", ")}` : " · no town"}</p>
+    <div class="actions">
+      <button class="btn primary" type="button" data-action="prov-draw-new" ${cells.length < PROV.minCells ? "disabled" : ""}>Make it a new province</button>
+      ${targets.map(p => `<button class="btn" type="button" data-action="prov-draw-to" data-pid="${p.id}">Add it to ${escapeHtml(p.name)}</button>`).join("")}
+      <button class="btn" type="button" data-action="prov-draw-cancel">Cancel</button>
+    </div>
+    ${cells.length < PROV.minCells ? `<p class="muted small">A new province needs at least ${fmtArea(PROV.minCells)}.</p>` : ""}
+  </div>`;
+}
+/* Bring the new country into view for its division, and back out when time starts. */
+function provFocusOwnLand() {
+  let x0 = GRID_W, x1 = 0, y0 = GRID_H, y1 = 0;
+  for (let i = 0; i < N_CELLS; i++) if (game.owner[i] === PLAYER) { x0 = Math.min(x0, cellX(i)); x1 = Math.max(x1, cellX(i)); y0 = Math.min(y0, cellY(i)); y1 = Math.max(y1, cellY(i)); }
+  if (x1 < x0) return;
+  const free = Math.max(200, view.vw - 440);   // the sidebar covers the right side
+  const z = clamp(Math.min(free / ((x1 - x0 + 4) * view.base), view.vh / ((y1 - y0 + 4) * view.base)), 1, 3.5);
+  view.zoom = z; view.cs = view.base * z;
+  view.ox = free / 2 - ((x0 + x1) / 2 + 0.5) * view.cs; view.oy = view.vh / 2 - ((y0 + y1) / 2 + 0.5) * view.cs;
+  clampCamera(); updateZoomBox(); scheduleMapRender();
+}
+function startWithProvinces() {
+  ui.phase = "play"; ui.tab = null; ui.tool = "select"; ui.provDraw = null;
+  zoomFit();
+  const name = game.nations[PLAYER].name;
+  const cap = game.cities.find(c => c.owner === PLAYER && c.capital).cell;
+  const rivals = game.nations.filter(n => !n.isPlayer).map(n => {
+    const rc = game.cities.find(c => c.owner === n.id && c.capital);
+    return `the ${n.name} to the ${directionWord(cap, rc.cell)}`;
+  });
+  addChronicle(game, `${name} is founded. Its neighbors: ${bJoin(rivals)}.`, "neutral", PLAYER);
+  const list = provList(game, PLAYER);
+  addChronicle(game, list.length > 1 ? `${name} is divided into ${list.length} provinces: ${bJoin(list.map(p => p.name))}.` : `${name} is governed as one province.`, "neutral", PLAYER);
+  bumpMap();
+  startDeliberation();
+}
+
+/* ---------- The Provinces panel ---------- */
+function provincesTabHtml() {
+  const econ = economies()[PLAYER];
+  const st = provinceStats(world, game, PLAYER, econ);
+  const busy = game.projects.filter(p => p.kind === "province" && p.nid === PLAYER);
+  const seats = provSeatsOf(game, PLAYER);
+  const upkeep = econ.regions.reduce((s, r) => s + (r.cm.seat && r.cm.focus !== "seat" ? focusUpkeepCost("seat", r) : 0), 0);
+  const tot = st.reduce((a, s) => ({ pop: a.pop + s.pop, gdp: a.gdp + s.gdp }), { pop: 0, gdp: 0 });
+  const growthTxt = g => (g === null || g === undefined ? "—" : `<span class="tone-${g > 0.002 ? "good" : g < -0.002 ? "bad" : "neutral"}">${signedPct(g, 1)}</span>`);
+  const cards = st.map(s => {
+    const p = s.p, open = ui.openProv === p.id;
+    const share = tot.pop > 0 ? s.pop / tot.pop : 0;
+    const vill = (game.villages || []).filter(v => game.owner[v.cell] === PLAYER && game.prov[v.cell] === p.id).sort((a, b) => b.pop - a.pop);
+    const neigh = provNeighbors(p);
+    const head = `<div class="prov-head">
+        <span class="prov-sw" style="background:${provTint(p)}"></span>
+        <button class="linkbtn prov-title" type="button" data-action="prov-open" data-pid="${p.id}">${escapeHtml(p.name)}</button>
+        <span class="muted small">${s.capital ? `${s.capital.capital ? "★ " : ""}${escapeHtml(s.capital.name)}` : `<span class="tone-warn">Territory</span>`}</span>
+      </div>
+      <div class="prov-figs small">
+        <span title="People living in the province, and its share of the nation">${fmtPop(s.pop)} <span class="muted">(${pct(share)})</span></span>
+        <span title="Output a year: each town's output shared among the provinces its land lies in, by where its people live">${fmtMoney(s.gdp)}/yr</span>
+        <span title="Output per person a year">$${s.perK.toFixed(1)}k each</span>
+        <span title="People now against a year ago">${growthTxt(s.growth)}</span>
+      </div>`;
+    if (!open) return `<div class="prov-card">${head}</div>`;
+    const towns = s.towns.map(t => {
+      const r = econ.regions.find(x => x.city.id === t.id);
+      const pop = r ? r.pop : t.pop || 0;
+      return `<li><span><button class="linkbtn" type="button" data-city-pick="${t.id}">${escapeHtml(t.name)}</button>${t.capital ? " · national capital" : s.capital && s.capital.id === t.id ? " · province capital" : ""}</span><span class="num">${escapeHtml(cityTier(pop).label)} · ${fmtPop(pop)}</span></li>`;
+    }).join("");
+    const capChoice = s.towns.length ? `<label class="small">Capital <select data-prov-cap="${p.id}">${s.capital ? "" : `<option value="" selected>none yet (a territory)</option>`}${s.towns.map(t => `<option value="${t.id}" ${s.capital && s.capital.id === t.id ? "selected" : ""}>${escapeHtml(t.name)}</option>`).join("")}</select></label>` : "";
+    return `<div class="prov-card open">${head}
+      <div class="prov-body">
+        <label class="small">Name <input class="prov-name" type="text" maxlength="32" data-prov-name="${p.id}" value="${escapeHtml(p.name)}"></label>
+        <p class="muted small">${fmtArea(s.cells)} · made ${p.made ? seasonLabel(p.made) : "at the founding"}${s.territory ? ` · a territory: run from ${escapeHtml((game.cities.find(c => c.owner === PLAYER && c.capital) || { name: "the capital" }).name)}${s.towns.length ? ". A town has grown here: choose it as the capital to make this a full province" : " until a town grows here"}` : ""}.</p>
+        ${towns ? `<span class="eyebrow">Towns and cities</span><ul class="factors">${towns}</ul>` : `<p class="small muted">No town yet.</p>`}
+        <span class="eyebrow">Villages · ${vill.length}</span>
+        <p class="small">${vill.length ? `${vill.slice(0, 6).map(v => `${escapeHtml(v.name)} <span class="muted">(${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)})</span>`).join(", ")}${vill.length > 6 ? ` and ${vill.length - 6} more` : ""}. Zoom in on the map to see them.` : "No villages: too few people live off the land here."}</p>
+        <div class="actions">${capChoice}${neigh.length ? `<label class="small">Join it to <select data-prov-join="${p.id}"><option value="" selected>…</option>${neigh.map(q => `<option value="${q.id}">${escapeHtml(q.name)}</option>`).join("")}</select></label>` : ""}
+          <button class="btn small" type="button" data-action="prov-center" data-pid="${p.id}">Show on the map</button></div>
+      </div></div>`;
+  }).join("");
+  return `
+    <div class="block">
+      <p class="small">${st.length} province${st.length > 1 ? "s" : ""}${seats.length ? ` · ${seats.length} province capital${seats.length > 1 ? "s" : ""} besides the national capital` : ""}${st.some(s => s.territory) ? ` · ${st.filter(s => s.territory).length} territor${st.filter(s => s.territory).length > 1 ? "ies" : "y"}` : ""}.${upkeep > 0.0005 ? ` Their governments cost ${fmtMoneyFine(upkeep)} a season.` : ""}</p>
+      <div class="actions"><button class="btn ${ui.tool === "province" ? "primary" : ""}" type="button" data-action="prov-pen">${ICONS.quill} ${ui.tool === "province" ? "Drawing: draw around land on the map" : "Redraw with the pen"}</button></div>
+      ${busy.length ? `<p class="notice info">Under way: ${busy.map(b => `${escapeHtml(b.label)} (${b.seasons - b.progress} season${b.seasons - b.progress > 1 ? "s" : ""} left)`).join("; ")}.</p>` : ""}
+    </div>
+    ${ui.provDraw ? provDrawCardHtml() : ""}
+    <div class="prov-cards">${cards}</div>
+    <p class="muted small">Province capitals (not the national capital) have a governor's offices: 1.5% more public jobs there, people who come to feel at home faster (+1.5 loyalty a season) and are prouder (+${FOCI.seat.mood} mood). Each eases governing a large country (up to ${PROV.seatEaseMax}). If the national capital falls, the government carries on from the biggest one. Upkeep: ${(FOCI.seat.upkeep * 100).toFixed(1)}% of its town's output a season. A new province costs its capital's offices (${pct(PROV.newShare)} of that town's output) and about ${PROV.newSeasons} seasons; joining or moving land takes a season.</p>`;
+}
+function provNeighbors(p) {
+  const ids = new Set();
+  for (let i = 0; i < N_CELLS; i++) {
+    if (game.prov[i] !== p.id || game.owner[i] !== p.owner) continue;
+    for (const [dx, dy] of DIRS4) {
+      const x = cellX(i) + dx, y = cellY(i) + dy;
+      if (!inBounds(x, y)) continue;
+      const j = idx(x, y);
+      if (game.owner[j] === p.owner && game.prov[j] !== p.id && game.prov[j] >= 0) ids.add(game.prov[j]);
+    }
+  }
+  return [...ids].map(id => provById(game, id)).filter(Boolean);
+}
+function provConfirmLines(q) {
+  const lines = provPlanLines(game, q.plan).map(escapeHtml);
+  if (q.op.t === "capital") {
+    const c = cityById(q.op.cityId);
+    lines.unshift(`${escapeHtml(c ? c.name : "The town")} gets the governor's offices: more public jobs, loyalty and pride there${provCapital(game, provById(game, q.op.pid)) ? "; the old capital loses them" : ". The territory becomes a full province"}`);
+  }
+  lines.push(`Ready in ${q.seasons} season${q.seasons > 1 ? "s" : ""}; until then nothing changes`);
+  return lines;
+}
+
+/* ---------- Actions and inputs ---------- */
+Object.assign(ACTIONS, {
+  "prov-auto": el => {
+    const k = el.dataset.k ? Number(el.dataset.k) : null;
+    let area = 0;
+    for (let i = 0; i < N_CELLS; i++) if (game.owner[i] === PLAYER) area++;
+    autoDivide(world, game, PLAYER, k || autoProvinceCount(area));
+    bumpWorld(game); ui.provDraw = null; bumpMap();
+  },
+  "prov-start": () => startWithProvinces(),
+  "prov-draw-new": () => { if (ui.provDraw) provChange({ t: "draw", cells: ui.provDraw.cells, to: null }); },
+  "prov-draw-to": el => { if (ui.provDraw) provChange({ t: "draw", cells: ui.provDraw.cells, to: Number(el.dataset.pid) }); },
+  "prov-draw-cancel": () => { ui.provDraw = null; },
+  "prov-pen": () => { if (ui.tool === "province") setTool("select"); else { setTool("province"); ui.tab = "provinces"; } },
+  "prov-open": el => { const id = Number(el.dataset.pid); ui.openProv = ui.openProv === id ? null : id; },
+  "prov-center": el => { const p = provById(game, Number(el.dataset.pid)); if (!p) return; const c = provCapital(game, p); const cells = provCells(game, p); centerOnCell(c ? c.cell : cells[Math.floor(cells.length / 2)], Math.max(view.zoom, 2)); },
+});
+function onProvinceInput(e) {
+  const t = e.target;
+  if (!game || !t || !t.dataset) return;
+  if (t.dataset.provName !== undefined && e.type === "change") {
+    if (!renameProvince(game, PLAYER, Number(t.dataset.provName), t.value)) flashHint("Give it a name no other province of yours has.");
+    bumpWorld(game); bumpMap(); saveGame(); renderAll();
+  } else if (t.dataset.provCap !== undefined && e.type === "change" && t.value) {
+    provChange({ t: "capital", pid: Number(t.dataset.provCap), cityId: Number(t.value) });
+    if (ui.phase === "play") ui.tab = "provinces";
+    saveGame(); renderAll();
+  } else if (t.dataset.provJoin !== undefined && e.type === "change" && t.value) {
+    provChange({ t: "join", from: Number(t.dataset.provJoin), into: Number(t.value) });
+    saveGame(); renderAll();
+  }
+}
+document.getElementById("sidebar").addEventListener("change", onProvinceInput);
+document.getElementById("sidebar").addEventListener("keydown", e => { if (e.target && e.target.dataset && e.target.dataset.provName !== undefined && e.key === "Enter") e.target.blur(); });
+
+/* ---------- On the map ---------- */
+/* Province lines run only between two provinces of the same nation (never along a coast or a national border). */
+function buildProvinceShapes(sh) {
+  sh.provs = [];
+  sh.provFill = [];
+  sh.provLabels = [];
+  if (!game || !game.prov || !game.provinces) return;
+  const P = game.prov, O = game.owner;
+  const live = new Map(game.provinces.map(p => [p.id, p]));
+  const pidAt = (x, y) => { if (!inBounds(x, y)) return -1; const i = idx(x, y); const p = live.get(P[i]); return p && p.owner === O[i] ? p.id : -1; };
+  const sameNation = (x, y) => {
+    const o = inBounds(x, y) ? O[idx(x, y)] : -1;
+    if (o < 0 || !isLand(world, idx(x, y))) return -2;
+    return o;
+  };
+  for (const p of game.provinces) {
+    if (!(game.nations[p.owner] && game.nations[p.owner].alive)) continue;
+    let sx = 0, sy = 0, n = 0;
+    for (let i = 0; i < N_CELLS; i++) if (P[i] === p.id && O[i] === p.owner) { sx += cellX(i) + 0.5; sy += cellY(i) + 0.5; n++; }
+    if (!n) continue;
+    const keep = (x, y) => { const a = sameNation(x, y); return a >= 0 && a === sameNation(x + 1, y) && a === sameNation(x, y + 1) && a === sameNation(x + 1, y + 1); };
+    sh.provs.push({ p, path: linesToPath(contourLines((x, y) => pidAt(x, y) === p.id, keep), 2) });
+    if (p.owner === PLAYER) sh.provFill.push({ p, path: linesToPath(contourLines((x, y) => pidAt(x, y) === p.id || (inBounds(x, y) && !isLand(world, idx(x, y)) && DIRS8.some(([dx, dy]) => pidAt(x + dx, y + dy) === p.id))), 2) });
+    // the label sits on the province cell nearest its middle, away from towns (their names come first)
+    const mx = sx / n, my = sy / n;
+    const nearTown = i => game.cities.some(c => Math.abs(cellX(c.cell) - cellX(i)) <= 2 && Math.abs(cellY(c.cell) - cellY(i)) <= 1);
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < N_CELLS; i++) if (P[i] === p.id && O[i] === p.owner) { const d = Math.hypot(cellX(i) + 0.5 - mx, cellY(i) + 0.5 - my) + (nearTown(i) ? 4 : 0); if (d < bd) { bd = d; best = i; } }
+    sh.provLabels.push({ p, x: cellX(best) + 0.5, y: cellY(best) + 0.5, n });
+  }
+}
+function provShowTints() { return ui.phase === "provinces" || (ui.phase === "play" && (ui.tab === "provinces" || ui.tool === "province")); }
+function drawProvinceLines(o, cs) {
+  const sh = buildShapes();
+  if (!sh.provs || !sh.provs.length) return;
+  const px = v => v / cs;
+  if (provShowTints()) for (const { p, path } of sh.provFill) { o.fillStyle = rgba(provTint(p), ui.openProv === p.id ? 0.42 : 0.26); o.fill(path, "evenodd"); }
+  o.setLineDash([px(clamp(cs * 0.3, 3, 9)), px(clamp(cs * 0.2, 2, 6))]);
+  for (const { p, path } of sh.provs) {
+    o.strokeStyle = "rgba(10,10,10,0.35)"; o.lineWidth = px(clamp(cs * 0.09, 1.6, 3)); o.stroke(path);
+    o.strokeStyle = rgba(provShowTints() && p.owner === PLAYER ? "#f6edd2" : NATION_COLORS[p.owner], provShowTints() && p.owner === PLAYER ? 0.9 : 0.75);
+    o.lineWidth = px(clamp(cs * 0.045, 0.9, 1.6)); o.stroke(path);
+  }
+  o.setLineDash([]);
+}
+function drawProvinceLabels(c, cs) {
+  const sh = buildShapes();
+  if (!sh.provLabels || !sh.provLabels.length) return;
+  const tint = provShowTints();
+  const az = smooth01(1.45, 1.9, view.zoom) * (1 - 0.6 * smooth01(3.5, 5, view.zoom));
+  for (const l of sh.provLabels) {
+    const mineTint = tint && l.p.owner === PLAYER;
+    const a = mineTint ? 0.95 : az;
+    if (a < 0.03 || (!mineTint && l.n < 5)) continue;
+    const size = clamp(Math.sqrt(l.n) * cs * 0.075, 10, 22);
+    const own = l.p.owner === PLAYER;
+    drawLabel(c, l.p.name.toUpperCase(), l.x * cs, l.y * cs, size, 700, a * (own ? 0.8 : 0.55), size * 0.18);
+    if (isTerritory(game, l.p) && (mineTint || cs >= 24)) drawLabel(c, "territory", l.x * cs, l.y * cs + size * 0.95, size * 0.62, 600, a * 0.6, 1);
+  }
+}
+function drawProvinceCapitalMark(c, city, x, y, rad) {
+  if (!provSeat(game, city)) return;
+  c.strokeStyle = "rgba(12,10,8,0.85)"; c.lineWidth = 2.6;
+  c.beginPath(); c.arc(x, y, rad + 2.2, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = "#f0d58a"; c.lineWidth = 1.3;
+  c.beginPath(); c.arc(x, y, rad + 2.2, 0, Math.PI * 2); c.stroke();
+}
+function drawVillages(c, cs) {
+  if (!game.villages || cs < 26) return;
+  const a = smooth01(26, 36, cs);
+  const named = cs >= 38;
+  const placed = [];
+  const x0 = -view.ox / cs - 1, y0 = -view.oy / cs - 1, x1 = x0 + view.vw / cs + 2, y1 = y0 + view.vh / cs + 2;
+  for (const v of game.villages) {
+    const vx = cellX(v.cell) + 0.3 + 0.4 * hash2(v.cell, 1, 31), vy = cellY(v.cell) + 0.3 + 0.4 * hash2(v.cell, 2, 31);
+    if (vx < x0 || vx > x1 || vy < y0 || vy > y1 || game.owner[v.cell] < 0) continue;
+    const x = vx * cs, y = vy * cs, r = clamp(1.2 + v.pop * 80, 1.6, 2.8);
+    c.globalAlpha = a;
+    c.fillStyle = "#efe6cf"; c.strokeStyle = "rgba(12,10,8,0.85)"; c.lineWidth = 1;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.globalAlpha = 1;
+    if (!named) continue;
+    const size = clamp(cs * 0.2, 9.5, 12);
+    c.font = `italic 500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
+    const tw = c.measureText(v.name).width;
+    const box = { x0: x + r + 2, x1: x + r + 4 + tw, y0: y - size * 0.6, y1: y + size * 0.6 };
+    if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) continue;
+    placed.push(box);
+    c.font = `italic 500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
+    c.textAlign = "left"; c.textBaseline = "middle"; c.lineJoin = "round";
+    c.globalAlpha = a * 0.92;
+    c.lineWidth = 2.6; c.strokeStyle = "rgba(10,9,8,0.75)"; c.strokeText(v.name, x + r + 3, y);
+    c.fillStyle = "#efe8d6"; c.fillText(v.name, x + r + 3, y);
+    c.globalAlpha = 1;
+  }
+}
+function drawProvincePreview(c, cs) {
+  let cells = null, color = "rgba(220,184,94,0.36)";
+  if (ui.provDraw) cells = ui.provDraw.cells;
+  else if (ui.pending && ui.pending.kind === "province" && ui.pending.plan) cells = ui.pending.plan.moved;
+  if (!cells || !cells.length) return;
+  c.fillStyle = color;
+  for (const i of cells) c.fillRect(cellX(i) * cs, cellY(i) * cs, cs + 0.5, cs + 0.5);
+}
+/* The province (and village) of a cell, for the map's hover card. */
+function provTooltipLines(i) {
+  if (!game || !game.prov) return "";
+  const p = provAt(game, i);
+  const v = villageAt(game, i);
+  let out = "";
+  if (v && game.owner[i] >= 0) out += `<span class="tt-line">${escapeHtml(v.name)}: ${VILLAGE_KINDS[v.kind].toLowerCase()} of about ${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)} people</span>`;
+  if (p) out += `<span class="tt-line">${isTerritory(game, p) ? "Territory" : "Province"}: ${escapeHtml(p.name)}</span>`;
+  return out;
+}
+/* =====================================================================
    16j. Interest groups in the panels: who holds power, what they feel and why, what they demand
    ===================================================================== */
 Object.assign(ICONS, { groups: giSvg("delapouite/meeple-group"), speaker: giSvg("delapouite/public-speaker") });
@@ -29862,6 +30815,7 @@ function serializeGame(g) {
     divisions: g.divisions, airwings: g.airwings, battles: g.battles, extraDeposits: g.extraDeposits || [],
     story: g.story, decisions: g.decisions, amb: g.amb, works: g.works, firsts: g.firsts, era: g.era || 0, intel: g.intel || {},
     sea: g.sea || null, trade: g.trade || null, opening: g.opening || null, cabSalt: g.cabSalt, topCity: g.topCity, depth: 1,
+    prov: g.prov ? Array.from(g.prov) : null, provinces: g.provinces || null, provNext: g.provNext || 0, villages: g.villages || null,
   };
 }
 function deserializeGame(s) {
@@ -29890,6 +30844,9 @@ function deserializeGame(s) {
   if (s.opening) g.opening = s.opening;
   if (s.cabSalt !== undefined) g.cabSalt = s.cabSalt;
   if (s.topCity !== undefined) g.topCity = s.topCity;
+  // provinces and villages (v38); saves from before get them in restore (ensureProvinces)
+  if (Array.isArray(s.prov) && s.prov.length === N_CELLS && Array.isArray(s.provinces)) { g.prov = Int16Array.from(s.prov); g.provinces = s.provinces; g.provNext = s.provNext || 0; }
+  if (Array.isArray(s.villages)) g.villages = s.villages;
   for (const c of g.cities) if (c.port && !c.portLvl) c.portLvl = 1;
   if (g.assembly) for (const t of g.assembly.topics) for (const m of t.msgs) if (m.pending) { m.pending = false; if (!m.text) m.text = m.fallback; }
   for (const L of g.letters) if (L.status !== "done") { L.status = "done"; L.reply = L.reply || "(The reply was lost when the page closed. Their decision still stands.)"; }
@@ -29920,7 +30877,7 @@ function restore(saved) {
   ui.gameId = ok ? saveGameId(saved) : null;
   if (!ok) return;
   ui.name = saved.name || "";
-  if (saved.game && (saved.phase === "play" || saved.phase === "collapsed")) {
+  if (saved.game && (saved.phase === "play" || saved.phase === "collapsed" || saved.phase === "provinces")) {
     game = deserializeGame(saved.game);
     for (const [cell, type] of game.extraDeposits) { world.dep[cell] = type; world.hid[cell] = 0; setDepositSize(world, cell, type, false); }
     for (const c of game.cleared || []) world.terrain[c] = T.PLAINS;
@@ -29936,6 +30893,7 @@ function restore(saved) {
     refreshCities(world, game, { init: !saved.game.cities.some(c => c.imp !== undefined) });
     for (const n of game.nations) if (n.alive) ensureGroups(world, game, n);
     if (!saved.game.trade) tradeMigrate(world, game);   // saves from before trade between nations: merchants sign their first contracts, quietly
+    ensureProvinces(world, game);   // saves from before provinces: each nation divided by the same rule, provincial seats become province capitals
     ui.phase = saved.phase;
   } else if (Array.isArray(saved.drawCells)) {
     applyClaimResult({ ok: true, cells: saved.drawCells, droppedCells: 0 });
@@ -29985,7 +30943,7 @@ function snapshot() {
 }
 function isSaveData(s) { return !!s && typeof s === "object" && (s.v === 5 || s.v === 6) && Number.isFinite(s.seed); }
 function saveGameId(s) { return s ? s.gameId || (s.game ? `legacy-${s.seed}` : null) : null; }
-function saveHasGame(s) { return !!(s && s.game && (s.phase === "play" || s.phase === "collapsed")); }
+function saveHasGame(s) { return !!(s && s.game && (s.phase === "play" || s.phase === "collapsed" || s.phase === "provinces")); }
 function metaOfSave(s) {
   if (s && s.meta) return s.meta;
   const n = s && s.game && s.game.nations && s.game.nations[PLAYER];

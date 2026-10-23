@@ -295,11 +295,11 @@ function transferCity(g, city, to) {
 function ensureCapital(g, nid) {
   const own = g.cities.filter(c => c.owner === nid);
   if (!own.length || own.some(c => c.capital)) return;
-  // the government moves to a provincial seat it still holds, or else to its most important city
+  // the government moves to a province capital it still holds, or else to its most important city
   let best = own[0], bestScore = -Infinity;
   for (const c of own) {
     const pop = regionCellsForCity(g, c).reduce((s, i) => s + g.pop[i], 0);
-    const score = (g.occ[c.cell] >= 0 ? -1e6 : 0) + (c.focus === "seat" ? 1e4 : 0) + (c.imp || 0) * 10 + pop;
+    const score = (g.occ[c.cell] >= 0 ? -1e6 : 0) + (c.focus === "seat" || provSeat(g, c) ? 1e4 : 0) + (c.imp || 0) * 10 + pop;
     if (score > bestScore) { bestScore = score; best = c; }
   }
   best.capital = true;

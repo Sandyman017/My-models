@@ -41,7 +41,7 @@ function snapshot() {
 }
 function isSaveData(s) { return !!s && typeof s === "object" && (s.v === 5 || s.v === 6) && Number.isFinite(s.seed); }
 function saveGameId(s) { return s ? s.gameId || (s.game ? `legacy-${s.seed}` : null) : null; }
-function saveHasGame(s) { return !!(s && s.game && (s.phase === "play" || s.phase === "collapsed")); }
+function saveHasGame(s) { return !!(s && s.game && (s.phase === "play" || s.phase === "collapsed" || s.phase === "provinces")); }
 function metaOfSave(s) {
   if (s && s.meta) return s.meta;
   const n = s && s.game && s.game.nations && s.game.nations[PLAYER];

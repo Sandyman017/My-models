@@ -16,6 +16,7 @@ function snapshotForPlayback(g) {
     sites: (g.sites || []).map(s => ({ ...s })),
     fleets: g.sea ? g.sea.fleets.map(f => ({ ...f, ships: f.ships.map(x => ({ ...x })) })) : [],
     turn: g.turn,
+    prov: g.prov ? g.prov.slice() : null, provinces: (g.provinces || []).map(p => ({ ...p })), villages: g.villages || [],
   };
 }
 
@@ -89,6 +90,7 @@ function buildPlayback(before, events, after) {
   const display = {
     ...after, __display: true, ver: 1e6 + Math.floor(Math.random() * 1e6),
     owner: before.owner.slice(), occ: before.occ.slice(), roads: new Set(before.roads),
+    prov: before.prov || after.prov, provinces: before.prov ? before.provinces : after.provinces, villages: before.prov ? before.villages : after.villages,
     cities: before.cities.map(c => ({ ...c, ind: { ...c.ind } })), battles: [], projects: after.projects,
     sites: (before.sites || []).filter(s => (after.sites || []).some(x => x.id === s.id)).map(s => ({ ...s, ...((after.sites || []).find(x => x.id === s.id)), level: s.level })),
     divisions: before.divisions.map(d => ({ ...d, _start: d.cell })),

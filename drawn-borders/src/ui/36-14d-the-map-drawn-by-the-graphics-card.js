@@ -3406,6 +3406,7 @@ function buildShapes() {
     shapeCache.fronts = linesToPath(lines, 2);
   }
   shapeCache.roads = roadPath();
+  buildProvinceShapes(shapeCache);   // province lines and names (16m)
   return shapeCache;
 }
 
@@ -3470,6 +3471,7 @@ function drawTerritories(o, cs) {
       o.setLineDash([]);
     }
   }
+  if (game) drawProvinceLines(o, cs);
   for (const { nid, path } of sh.nations) {
     o.strokeStyle = "rgba(10,10,10,0.5)"; o.lineWidth = px(clamp(cs * 0.2, 2.6, 5)); o.stroke(path);
     o.strokeStyle = NATION_COLORS[nid]; o.lineWidth = px(clamp(cs * 0.085, 1.3, 2.4)); o.stroke(path);
@@ -3641,6 +3643,7 @@ function drawCities(c, cs) {
     }
     const markerA = GLMAP.ok ? 1 - smooth01(110, 200, cs) : 1;
     if (markerA > 0.02) drawTownMarker(c, x, y, rad, it.color, city.capital, markerA);
+    if (markerA > 0.02 && it.occBy < 0) drawProvinceCapitalMark(c, city, x, y, rad);
     if (it.occBy >= 0) {
       c.strokeStyle = NATION_COLORS[it.occBy]; c.lineWidth = 2.2; c.setLineDash([3, 3]);
       c.beginPath(); c.arc(x, y, rad + 5, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
@@ -4274,7 +4277,7 @@ function renderMapNow() {
   const cs = view.cs, dpr = view.dpr;
   if (GLMAP.ok) updateLanduse();
   // Terrain and territories only change when the camera or the map does; hovering redraws just the top layers.
-  const skey = `${view.ox.toFixed(2)}|${view.oy.toFixed(2)}|${cs.toFixed(3)}|${canvas.width}x${canvas.height}|${shapesKey()}|${terrainCache.seed}|${GLMAP.ok ? LANDUSE.key : ""}`;
+  const skey = `${view.ox.toFixed(2)}|${view.oy.toFixed(2)}|${cs.toFixed(3)}|${canvas.width}x${canvas.height}|${shapesKey()}|${terrainCache.seed}|${GLMAP.ok ? LANDUSE.key : ""}|${game && provShowTints() ? `t${ui.openProv}` : ""}`;
   if (skey !== view.staticKey || view.staticMissing) {
     view.staticMissing = renderStatic(cs, dpr);
     view.staticKey = skey;
@@ -4293,8 +4296,11 @@ function renderMapNow() {
     if (motion.on) drawTownTraffic(ctx, cs, motion.now);
     drawFronts(ctx, cs);
     drawNationLabels(ctx, cs);
+    drawProvinceLabels(ctx, cs);
     drawKnownDeposits(ctx, cs);
     drawToolPreview(ctx, cs);
+    drawProvincePreview(ctx, cs);
+    drawVillages(ctx, cs);
     drawCities(ctx, cs);
     drawSites(ctx, cs);
     drawWorks(ctx, cs);
