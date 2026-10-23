@@ -271,6 +271,7 @@ function ensureProvinces(w, g) {
     }
   }
   if (!Array.isArray(g.villages)) { g.villages = []; updateVillages(w, g); }
+  ensureVillages(w, g);   // ids, sites, looks and stories for villages from older saves (10w)
   syncProvinces(w, g);
   ensureGovernors(g);   // money levels and governors (10v), for old saves too
 }
@@ -313,7 +314,7 @@ function recordProvinces(g, nid, econ) {
 }
 function seasonProvinces(w, g, dispatch) {
   if (!g.prov) return;
-  updateVillages(w, g);
+  seasonVillages(w, g, dispatch);   // villages live, grow, die and ask for charters (10w)
   rivalProvinces(w, g, dispatch);
 }
 
@@ -358,51 +359,10 @@ function villageName(w, g, cell, taken) {
   }
   return `${VILLAGE_HEADS[cell % VILLAGE_HEADS.length]}${VILLAGE_TAILS[cell % VILLAGE_TAILS.length]} ${cell}`;
 }
-/* What its people live from, if anything that gathers a village: farmland, a mine or oil field next door, or a
-   fishing coast. null: too few people. `stay` uses the lower threshold (a village is slow to die). */
-function villageKind(w, g, i, stay) {
-  const p = g.pop[i];
-  const mine = (g.sites || []).some(s => !s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res && Math.abs(cellX(s.cell) - cellX(i)) <= 1 && Math.abs(cellY(s.cell) - cellY(i)) <= 1);
-  if (mine && p >= PROV.villageMine * (stay ? 0.7 : 1)) return "mine";
-  if (cellFood(w, g, i) >= 0.3 && p >= (stay ? PROV.villageOff : PROV.villageOn)) return "farm";
-  if (w.coastal[i] && p >= PROV.villageFish * (stay ? 0.8 : 1)) return "fish";
-  return null;
-}
-function villagePop(g, v) { return g.pop[v.cell] * PROV.villageShare * (0.5 + hash2(v.cell, 11, 977)); }   // the biggest village of its land; the rest live on farms and in hamlets
-function updateVillages(w, g) {
-  const townAt = new Set(g.cities.map(c => c.cell));
-  const nearTown = i => g.cities.some(c => Math.abs(cellX(c.cell) - cellX(i)) <= 1 && Math.abs(cellY(c.cell) - cellY(i)) <= 1);
-  const keep = [];
-  const blocked = new Uint8Array(N_CELLS);
-  const block = i => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const x = cellX(i) + dx, y = cellY(i) + dy; if (inBounds(x, y)) blocked[idx(x, y)] = 1; } };
-  // villages that still have their people stay first, so the map does not reshuffle
-  for (const v of g.villages || []) {
-    if (g.owner[v.cell] < 0 || townAt.has(v.cell) || nearTown(v.cell) || blocked[v.cell]) continue;
-    const kind = villageKind(w, g, v.cell, true);
-    if (!kind) continue;
-    v.kind = kind;
-    v.pop = Math.round(villagePop(g, v) * 1e5) / 1e5;
-    keep.push(v); block(v.cell);
-  }
-  const taken = new Set(keep.map(v => v.name));
-  const cand = [];
-  for (let i = 0; i < N_CELLS; i++) {
-    if (g.owner[i] < 0 || blocked[i] || townAt.has(i)) continue;
-    if (g.pop[i] < PROV.villageMine * 0.7) continue;
-    const kind = villageKind(w, g, i, false);
-    if (kind) cand.push({ i, kind, s: g.pop[i] + hash2(i, 7, w.seed) * 0.01 });
-  }
-  cand.sort((a, b) => b.s - a.s || a.i - b.i);
-  for (const c of cand) {
-    if (blocked[c.i] || nearTown(c.i)) continue;
-    const v = { cell: c.i, name: villageName(w, g, c.i, taken), kind: c.kind, born: g.turn || 0, pop: 0 };
-    v.pop = Math.round(villagePop(g, v) * 1e5) / 1e5;
-    taken.add(v.name);
-    keep.push(v); block(c.i);
-  }
-  g.villages = keep.sort((a, b) => a.cell - b.cell);
-}
+/* Villages are worked out by "places that live" (10w); this keeps the old name for the callers. */
+function updateVillages(w, g) { seasonVillages(w, g, null); }
 function villageAt(g, cell) { return (g.villages || []).find(v => v.cell === cell) || null; }
+function villageById(g, id) { return (g.villages || []).find(v => v.id === id) || null; }
 
 /* ---------- Redrawing provinces: weigh a change on copies, then pay, wait, and apply ---------- */
 /* op: { t: "draw", cells, to (province id, or null for a new province), name }

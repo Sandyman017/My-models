@@ -76,7 +76,7 @@ function migrateNation(w, g, n, econ) {
     const W = dests.reduce((s, b) => s + weight(b), 0);
     if (!(W > 0)) continue;
     const pool = (a.unemployed || 0) + JOBS.smallMove * (a.smallholders || 0);
-    const movers = pool * MIGR.share * (a.net === capNet || dests.some(b => b.net === a.net) ? 1 : MIGR.cutoff);
+    const movers = pool * MIGR.share * (a.net === capNet || dests.some(b => b.net === a.net) ? 1 : MIGR.cutoff) * (1 - cityStay(g, a.city));   // after a bust, people hold on (10w)
     for (const b of dests) {
       const m = Math.min(room.get(b), movers * weight(b) / W);
       if (m <= 0) continue;

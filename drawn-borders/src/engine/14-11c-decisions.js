@@ -67,6 +67,8 @@ function effectText(g, e, nid) {
       return { text: `${city(e.cityId)}: ${parts.join(", ")}${e.seasons ? ` for ${e.seasons} season${e.seasons > 1 ? "s" : ""}` : " for good"}`, tone: toneOf((e.mood || 0) + 100 * (e.out || 0) + 10 * (e.def || 0) + (e.loyal || 0) - (e.noIntake ? 1 : 0)) };
     }
     case "cityLoyalty": return { text: `${city(e.cityId)}: loyalty ${signed(e.v)}`, tone: toneOf(e.v) };
+    case "charterTown": return { text: `${e.name} becomes a town with its own district (${e.cells} cell${e.cells === 1 ? "" : "s"} of land, ${fmtPeople(e.people)} people)${e.capitalOf ? `, and the capital of ${e.capitalOf}` : ""}`, tone: "good" };
+    case "villageRefuse": return { text: `${e.name} stays a village; it may ask again in ${Math.round(VIL.charterAgain / 4)} years`, tone: "neutral" };
     case "group": return groupEffectText(e);
     case "general": return { text: "a general becomes Minister of Defence", tone: "neutral" };
     // trade between nations (10s): the same engine actions the Trade panel and rival governments use
@@ -158,6 +160,8 @@ function applyEffects(w, g, nid, effects) {
       case "successor": n.leader = { ...e.leader, since: g.turn, deeds: {}, gdpStart: econ.gdp }; delete n.leader.role; break;
       case "cityMod": { const c = g.cities.find(x => x.id === e.cityId); if (c && c.owner === nid) addCityMod(g, c, e); break; }
       case "cityLoyalty": { const c = g.cities.find(x => x.id === e.cityId); if (c && c.owner === nid) c.loyalty = clamp((c.loyalty ?? CITY.loyalNative) + e.v, 0, 100); break; }
+      case "charterTown": grantCharter(w, g, nid, e.vid, !!e.capitalOf); break;
+      case "villageRefuse": { const v = (g.villages || []).find(x => x.id === e.vid); if (v) { v.charter = { asked: g.turn, refused: g.turn }; villageLog(g, v, "Asked for a town charter, and was told to wait.", "warn"); } break; }
       case "group": applyGroupEffect(g, n, e); break;
       case "general": {
         const M = ministry(n, "defence");
@@ -729,6 +733,8 @@ function effectScore(c, e) {
     case "levee": return 2;
     case "cityMod": return ((e.mood || 0) * 0.12 + (e.out || 0) * 120 + (e.def || 0) * 8 + (e.loyal || 0) * 0.5 + (e.growth || 0) * 300 - (e.noIntake ? 0.5 : 0)) * Math.min(8, e.seasons || 12) / 4;
     case "cityLoyalty": return e.v * 0.15;
+    case "charterTown": return 3 + (e.dGdp || 0) / Math.max(0.5, c.Y * 0.01) * 2 + (e.capitalOf ? 1 : 0) + (personality(c.n).landWeight - 1) * 3;
+    case "villageRefuse": return 0;
     case "group": return groupEffectScore(c.n, e);
     case "general": return c.n.groups && c.n.groups.army && c.n.groups.army.approval < 35 ? 1 : -1;
     // trade (10s): an embargo costs our own output and their goodwill; aid costs grain and earns goodwill
@@ -855,6 +861,7 @@ function storyteller(w, g, rng, dispatch) {
   const out = [];
   const n = g.nations[PLAYER];
   for (const d of embargoDecisions(w, g, rng)) { g.decisions.push(d); out.push(d); S.last = g.turn; S.lastTone = d.tone; }
+  for (const d of charterDecisions(w, g, rng)) { g.decisions.push(d); out.push(d); }   // a village asks for a town charter (10w)
   // stories that continue: a cover-up that may come out, and so on
   for (const q of S.queue.slice()) {
     if (q.at > g.turn) continue;

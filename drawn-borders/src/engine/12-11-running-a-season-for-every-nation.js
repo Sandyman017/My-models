@@ -315,9 +315,11 @@ function runSeason(w, g, plan) {
   for (const n of g.nations) n.navyUpkeep = g.sea ? navyUpkeep(g, n.id) : 0;
   syncProvinces(w, g, dispatch.built);   // land that changed hands joins a province of its new nation (10u)
   g.turn += 1;
+  VILLAGE_ECON = new Map();   // the villages read these economies later this season (10w)
   for (const n of g.nations) {
     if (!n.alive) continue;
     const econN = computeEconomy(w, g, n.id);
+    VILLAGE_ECON.set(n.id, econN);
     recordProvinces(g, n.id, econN);
     const h = historyEntry(n, econN, g.turn, g);
     n.history.push(h);
@@ -329,6 +331,7 @@ function runSeason(w, g, plan) {
   seasonCities(w, g, dispatch);
   seasonProvinces(w, g, dispatch);
   seasonGovernors(w, g, dispatch);
+  VILLAGE_ECON = null;
   seasonGroups(w, g, dispatch);
   if (g.turn % 4 === 2) {
     rollHarvests(w, g);

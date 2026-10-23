@@ -115,12 +115,12 @@ function citySizeSvc(pop) { return clamp(1 + 0.025 * Math.log2(Math.max(0.05, po
 /* Every town helps its defenders (×1.25, as always); big cities more, because they are fought for street by street. */
 function cityDefMult(c) {
   const pop = (c && c.pop) || 3;
-  return clamp(1.25 + 0.05 * Math.log2(Math.max(1, pop / 3)), 1.25, 1.4);
+  return clamp(1.25 + 0.05 * Math.log2(Math.max(1, pop / 3)), 1.25, 1.4) * (1 + ((c && c.siteDef) || 0));   // its site: high ground, a river bend, a pass (10w)
 }
 function cityAtCellDef(g, cell) { const c = g.cities.find(x => x.cell === cell); return c ? cityDefMult(c) : 1; }
 /* Families grow a little faster in a garden city; timed city effects can add more. */
 function cityGrowthBonus(g, c) {
-  let v = cityFocusOn(g, c, "garden") ? 0.001 : 0;
+  let v = (cityFocusOn(g, c, "garden") ? 0.001 : 0) + (c.siteGrow || 0);   // its site: rivers, a harbor bay, crossroads, a bridge (10w)
   for (const m of cityModsActive(g, c)) if (m.growth) v += m.growth;
   return v;
 }
