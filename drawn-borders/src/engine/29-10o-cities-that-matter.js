@@ -156,7 +156,7 @@ function cityEconMods(g, n, c, pop) {
   const mood = c.mood ?? CITY.moodBase, loyal = c.loyalty ?? CITY.loyalNative;
   m.out = 1 + CITY.outPerMood * (mood - CITY.moodBase);
   if (loyal < CITY.loyalResist) m.out *= 1 - 0.3 * (CITY.loyalResist - loyal) / CITY.loyalResist;
-  for (const x of cityModsActive(g, c)) if (x.out) m.out *= 1 + x.out;
+  for (const x of cityModsActive(g, c)) { if (x.out) m.out *= 1 + x.out; if (x.jobs) m.pubJobs += x.jobs; }   // jobs: public works paid by a province (10v)
   const f = activeFocus(g, c);
   m.focus = f;
   if (f === "port") m.svc += 0.08;

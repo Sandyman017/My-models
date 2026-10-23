@@ -245,6 +245,7 @@ function autoDivide(w, g, nid, k, seedCells) {
   const groups = partitionCells(g, cells, Math.max(1, k || autoProvinceCount(cells.length)), [cap ? cap.cell : -1, ...(seedCells || [])].filter(c => c >= 0));
   const made = groups.map(gr => newProvince(w, g, nid, gr.cells, null, g.provinces, g.prov, { capital: true }));
   tidyProvinces(w, g, nid, g.prov, g.provinces);
+  ensureGovernors(g);
   return made;
 }
 
@@ -271,6 +272,7 @@ function ensureProvinces(w, g) {
   }
   if (!Array.isArray(g.villages)) { g.villages = []; updateVillages(w, g); }
   syncProvinces(w, g);
+  ensureGovernors(g);   // money levels and governors (10v), for old saves too
 }
 /* A province capital no longer in its province passes to the province's biggest town (or the province becomes a
    territory). Works on the real map or on copies. Returns [{ p, from, to }] for each change. */
@@ -522,6 +524,7 @@ function applyProvincePlan(g, nid, plan) {
   const others = g.provinces.filter(p => p.owner !== nid);
   g.provinces = others.concat(plan.list.filter(p => p.owner === nid));
   for (const p of plan.created) p.made = g.turn;
+  ensureGovernors(g);
   bumpWorld(g);
 }
 function finishProvince(w, g, p) {

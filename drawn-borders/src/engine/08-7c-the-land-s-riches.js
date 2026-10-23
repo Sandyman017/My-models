@@ -697,7 +697,7 @@ function techAvailable(n, t) { return !hasTech(n, t) && (!TECHS[t].needs || hasT
 function emptyEconomy() {
   return { people: null, cities: [], regions: [], networks: [], gdp: 0, pop: 0.001, food: 0, faminePop: 0, famineShare: 0, isolated: [], roadEdges: 0, area: 0, sites: [], reach: new Map(),
     sectors: {}, subs: {}, goods: { supply: {}, demand: {}, imports: {}, exports: {}, util: {} }, sat: {}, levels: {}, workers: 0, research: 0, effects: {}, armsSat: 1, fuelSat: 1, constructionIndex: 1, exportValue: 0, importBill: 0, access: 0,
-    workforce: 0, unemployed: 0, unemployment: 0, vacancies: 0, armed: 0, publicJobs: 0, granary: null, lostToIdle: 0, programs: 0, seats: 0, citySkill: 0, cityResearch: 0,
+    workforce: 0, unemployed: 0, unemployment: 0, vacancies: 0, armed: 0, publicJobs: 0, granary: null, lostToIdle: 0, programs: 0, seats: 0, citySkill: 0, cityResearch: 0, provGrants: 0,
     trade: emptyTradeEcon(), foodIn: 0, foodOut: 0, tariffBase: 0 };
 }
 
@@ -1167,6 +1167,7 @@ function computeEconomyRaw(w, g, nid) {
     researchMult: 1 + WB.research + modSum(nation, "research"), skillBonus: WB.skill, capitalMult: 1 + WB.capital, interestCut: WB.interest, works: WB,
     programs: regions.reduce((s, r) => s + (r.cm.focus ? focusUpkeepCost(r.cm.focus, r) : 0) + (r.cm.seat && r.cm.focus !== "seat" ? focusUpkeepCost("seat", r) : 0), 0), seats: regions.filter(r => r.cm.seat).length,
     citySkill: Math.min(0.02, 0.01 * regions.filter(r => r.cm.learning).length), cityResearch,
+    provGrants: provGrantsTotal(g, nid, regions),   // the money for the provinces this season (10v)
   };
 }
 

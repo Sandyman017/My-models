@@ -143,6 +143,7 @@ function runNationSeason(w, g, n, rng) {
   if (!n.isPlayer) aiManageSites(w, g, n, econ);
   const budget = computeBudget(n, econ, n.laws);
   n.treasury += budget.balance;
+  n.provPaid = budget.provinces || 0;   // the governors spend it at the end of the season (10v)
   settleGranary(n, econ, budget);
   for (const k of EQUIP_ORDER) n.stock[k] += budget.arms.units[k];
   // what this season's market looked like steers next season's farms, builders and arms makers
@@ -326,6 +327,7 @@ function runSeason(w, g, plan) {
   cabinetSeasonEnd(w, g, dispatch, rng);
   seasonCities(w, g, dispatch);
   seasonProvinces(w, g, dispatch);
+  seasonGovernors(w, g, dispatch);
   seasonGroups(w, g, dispatch);
   if (g.turn % 4 === 2) {
     rollHarvests(w, g);

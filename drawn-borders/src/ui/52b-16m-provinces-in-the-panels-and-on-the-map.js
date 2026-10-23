@@ -135,6 +135,7 @@ function provincesTabHtml() {
     const share = tot.pop > 0 ? s.pop / tot.pop : 0;
     const vill = (game.villages || []).filter(v => game.owner[v.cell] === PLAYER && game.prov[v.cell] === p.id).sort((a, b) => b.pop - a.pop);
     const neigh = provNeighbors(p);
+    const info = provinceNeeds(world, game, p, econ);
     const head = `<div class="prov-head">
         <span class="prov-sw" style="background:${provTint(p)}"></span>
         <button class="linkbtn prov-title" type="button" data-action="prov-open" data-pid="${p.id}">${escapeHtml(p.name)}</button>
@@ -145,7 +146,8 @@ function provincesTabHtml() {
         <span title="Output a year: each town's output shared among the provinces its land lies in, by where its people live">${fmtMoney(s.gdp)}/yr</span>
         <span title="Output per person a year">$${s.perK.toFixed(1)}k each</span>
         <span title="People now against a year ago">${growthTxt(s.growth)}</span>
-      </div>`;
+      </div>
+      ${provMoneyHtml(p, info)}`;
     if (!open) return `<div class="prov-card">${head}</div>`;
     const towns = s.towns.map(t => {
       const r = econ.regions.find(x => x.city.id === t.id);
@@ -158,6 +160,7 @@ function provincesTabHtml() {
         <label class="small">Name <input class="prov-name" type="text" maxlength="32" data-prov-name="${p.id}" value="${escapeHtml(p.name)}"></label>
         <p class="muted small">${fmtArea(s.cells)} · made ${p.made ? seasonLabel(p.made) : "at the founding"}${s.territory ? ` · a territory: run from ${escapeHtml((game.cities.find(c => c.owner === PLAYER && c.capital) || { name: "the capital" }).name)}${s.towns.length ? ". A town has grown here: choose it as the capital to make this a full province" : " until a town grows here"}` : ""}.</p>
         ${towns ? `<span class="eyebrow">Towns and cities</span><ul class="factors">${towns}</ul>` : `<p class="small muted">No town yet.</p>`}
+        ${provNeedsHtml(p, info)}
         <span class="eyebrow">Villages · ${vill.length}</span>
         <p class="small">${vill.length ? `${vill.slice(0, 6).map(v => `${escapeHtml(v.name)} <span class="muted">(${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)})</span>`).join(", ")}${vill.length > 6 ? ` and ${vill.length - 6} more` : ""}. Zoom in on the map to see them.` : "No villages: too few people live off the land here."}</p>
         <div class="actions">${capChoice}${neigh.length ? `<label class="small">Join it to <select data-prov-join="${p.id}"><option value="" selected>…</option>${neigh.map(q => `<option value="${q.id}">${escapeHtml(q.name)}</option>`).join("")}</select></label>` : ""}
@@ -166,11 +169,12 @@ function provincesTabHtml() {
   }).join("");
   return `
     <div class="block">
-      <p class="small">${st.length} province${st.length > 1 ? "s" : ""}${seats.length ? ` · ${seats.length} province capital${seats.length > 1 ? "s" : ""} besides the national capital` : ""}${st.some(s => s.territory) ? ` · ${st.filter(s => s.territory).length} territor${st.filter(s => s.territory).length > 1 ? "ies" : "y"}` : ""}.${upkeep > 0.0005 ? ` Their governments cost ${fmtMoneyFine(upkeep)} a season.` : ""}</p>
+      <p class="small">${st.length} province${st.length > 1 ? "s" : ""}${seats.length ? ` · ${seats.length} province capital${seats.length > 1 ? "s" : ""} besides the national capital` : ""}${st.some(s => s.territory) ? ` · ${st.filter(s => s.territory).length} territor${st.filter(s => s.territory).length > 1 ? "ies" : "y"}` : ""}.${upkeep > 0.0005 ? ` Their governments' offices cost ${fmtMoneyFine(upkeep)} a season.` : ""}${(econ.provGrants || 0) > 0.0005 ? ` Money for the provinces: ${fmtMoneyFine(econ.provGrants)} a season, spent by their governors.` : ""}</p>
       <div class="actions"><button class="btn ${ui.tool === "province" ? "primary" : ""}" type="button" data-action="prov-pen">${ICONS.quill} ${ui.tool === "province" ? "Drawing: draw around land on the map" : "Redraw with the pen"}</button></div>
       ${busy.length ? `<p class="notice info">Under way: ${busy.map(b => `${escapeHtml(b.label)} (${b.seasons - b.progress} season${b.seasons - b.progress > 1 ? "s" : ""} left)`).join("; ")}.</p>` : ""}
     </div>
     ${ui.provDraw ? provDrawCardHtml() : ""}
+    ${provNeedsReportHtml(st, econ)}
     <div class="prov-cards">${cards}</div>
     <p class="muted small">Province capitals (not the national capital) have a governor's offices: 1.5% more public jobs there, people who come to feel at home faster (+1.5 loyalty a season) and are prouder (+${FOCI.seat.mood} mood). Each eases governing a large country (up to ${PROV.seatEaseMax}). If the national capital falls, the government carries on from the biggest one. Upkeep: ${(FOCI.seat.upkeep * 100).toFixed(1)}% of its town's output a season. A new province costs its capital's offices (${pct(PROV.newShare)} of that town's output) and about ${PROV.newSeasons} seasons; joining or moving land takes a season.</p>`;
 }
@@ -359,3 +363,37 @@ function provTooltipLines(i) {
   if (p) out += `<span class="tt-line">${isTerritory(game, p) ? "Territory" : "Province"}: ${escapeHtml(p.name)}</span>`;
   return out;
 }
+
+/* ---------- Money for each province, governors and the needs report (Part 2, engine 10v) ---------- */
+function provMoneyHtml(p, info) {
+  const lv = provFundIndex(p);
+  if (!info.regs.length) return `<p class="muted small">No town of its own yet, so no money to spend: its people are counted in a town of another province.</p>`;
+  return `<div class="prov-money"><span class="small muted">${p.gov ? `Governor ${escapeHtml(p.gov.name)}` : "Run by the Interior ministry"} · money a season</span>
+    <span class="seg">${PGOV.levels.map((L, k) => `<button class="btn small ${k === lv ? "on" : ""}" type="button" data-action="prov-fund" data-pid="${p.id}" data-k="${k}" title="${L.label}: ${(L.share * 100).toFixed(1)}% of the province's output a year, every season">${L.label}${k ? ` ${fmtMoneyFine(provGrantOf(info.gdp, k))}` : ""}</button>`).join("")}</span></div>`;
+}
+function provNeedsHtml(p, info) {
+  const last = (p.govLog || []).slice(-1)[0];
+  const needs = info.needs.filter(x => x.key !== "dev");
+  return `<span class="eyebrow">What it needs</span>
+    <ul class="factors">${needs.length ? needs.map(x => `<li><span><b>${escapeHtml(x.label)}</b>: ${escapeHtml(x.text)}<span class="sub">${x.money ? `Its money pays for ${escapeHtml(x.who)}` : `Money from the province can't fix this: ${escapeHtml(x.who)}`}</span></span></li>`).join("") : `<li><span>Nothing pressing: its money goes to local roads and markets (a little more output).</span></li>`}</ul>
+    ${last && last.spent > 0.0005 ? `<p class="small">Last season ${escapeHtml(governorTitle(game, p))} spent ${fmtMoneyFine(last.spent)}: ${last.items.map(i => `${escapeHtml(i.label)} (${fmtMoneyFine(i.money)}: ${escapeHtml(i.text)})`).join("; ")}.</p>` : ""}`;
+}
+/* Which provinces need money most, from their numbers; and what only the national government can fix. */
+function provNeedsReportHtml(st, econ) {
+  const rows = [];
+  for (const s of st) {
+    const info = provinceNeeds(world, game, s.p, econ);
+    for (const x of info.needs) if (x.key !== "dev") rows.push({ p: s.p, x, lv: provFundIndex(s.p) });
+  }
+  if (!rows.length) return `<div class="block"><span class="eyebrow">Needs report</span><p class="small muted">No province has a pressing need. Their money goes to local roads and markets.</p></div>`;
+  rows.sort((a, b) => (b.x.money ? 1 : 0) - (a.x.money ? 1 : 0) || b.x.weight - a.x.weight);
+  return `<div class="block"><span class="eyebrow">Needs report</span><ul class="factors">${rows.slice(0, 6).map(({ p, x, lv }) => `<li><span><b>${escapeHtml(p.name)}</b> · ${escapeHtml(x.label)}: ${escapeHtml(x.text)}<span class="sub">${x.money ? (lv >= 2 ? `Money ${PGOV.levels[lv].label.toLowerCase()}: its governor pays for ${escapeHtml(x.who)}` : `Money ${PGOV.levels[lv].label.toLowerCase()}: more would pay for ${escapeHtml(x.who)}`) : `Needs ${escapeHtml(x.who)}`}</span></span></li>`).join("")}</ul></div>`;
+}
+function provincesDispatchHtml(d) {
+  const list = d.provinces || [];
+  if (!list.length) return "";
+  return `<div class="block"><span class="eyebrow">Provinces</span><ul class="news">${list.slice(0, 6).map(x => `<li><span class="dot" style="background:var(--gold)"></span><span>${escapeHtml(x.text)}${x.why ? `<span class="why">${escapeHtml(x.why)}</span>` : ""}</span></li>`).join("")}</ul></div>`;
+}
+Object.assign(ACTIONS, {
+  "prov-fund": el => { const p = provById(game, Number(el.dataset.pid)); const k = Number(el.dataset.k); if (p && p.owner === PLAYER && PGOV.levels[k]) { p.fund = k; bumpMap(); } },
+});

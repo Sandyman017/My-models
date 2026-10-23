@@ -22,6 +22,7 @@ function computeBudget(n, econ, laws) {
   const gc = granaryCost(n, econ, laws);
   const cab = cabinetUpkeep(n, econ);
   const programs = econ.programs || 0;
+  const provinces = econ.provGrants || 0;   // money for the provinces, spent by their governors (10v)
   const pensions = pensionCostYear(n, econ, laws) / 4;
   const debt = Math.max(0, -n.treasury);
   const debtRatio = debt / Math.max(1, gdp);
@@ -29,8 +30,8 @@ function computeBudget(n, econ, laws) {
   const interest = (debt * interestRate) / 4;
   return {
     gdp, collection, revenue, services, education, research, tariffs, army, armyUpkeep, arms, soldiersNext, recruits, upkeep, interest, interestRate, debt, debtRatio, navy,
-    granary: gc.cost, granaryFill: gc.fill, ministries: cab, programs, pensions,
-    balance: revenue + tariffs - services - education - research - army - navy - upkeep - interest - gc.cost - cab - programs - pensions,
+    granary: gc.cost, granaryFill: gc.fill, ministries: cab, programs, pensions, provinces,
+    balance: revenue + tariffs - services - education - research - army - navy - upkeep - interest - gc.cost - cab - programs - pensions - provinces,
   };
 }
 

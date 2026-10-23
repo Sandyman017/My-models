@@ -1067,3 +1067,6 @@ button.trade-row:hover { border-color: var(--c); }
 .prov-body .factors li { display: flex; justify-content: space-between; gap: 8px; }
 
 .btn svg { width: 14px; height: 14px; vertical-align: -2px; }
+.prov-money { display: grid; gap: 4px; }
+.prov-money .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.prov-money .btn.on { background: var(--gold); color: #1a1408; border-color: var(--gold); }

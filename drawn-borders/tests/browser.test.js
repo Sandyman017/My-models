@@ -44,6 +44,9 @@ const { chromium } = require("playwright");
   if (!(await page.$(".prov-cards"))) errors.push("the Provinces panel did not open");
   await page.evaluate(() => { const b = document.querySelector('[data-action="prov-open"]'); if (b) b.click(); });
   await page.waitForTimeout(500);
+  await page.evaluate(() => { const b = document.querySelector('[data-action="prov-fund"][data-k="3"]'); if (b) b.click(); });
+  await page.waitForTimeout(500);
+  if (!(await page.$('[data-action="prov-fund"].on'))) errors.push("the money buttons of a province did not work");
   await page.screenshot({ path: path.join(out, "provinces-panel.png") });
   await page.keyboard.press("b");
   // the Trade panel (key X), a good's sellers, the embargo card, and the Statistics trade view
