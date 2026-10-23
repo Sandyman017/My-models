@@ -63,7 +63,7 @@ function cityLoyaltyHtml(city, p) {
     <span class="eyebrow">Loyalty ${L}${o ? ` · many still feel part of the ${escapeHtml(o.name)}` : ""}</span>
     <div class="meter"><span style="width:${clamp(L, 0, 100)}%;background:${L >= 70 ? "var(--good)" : L >= 40 ? "var(--warn)" : "var(--bad)"}"></span></div>
     <ul class="factors">
-      ${o ? `<li><span>It changes ${rate >= 0 ? "+" : "−"}${Math.abs(rate).toFixed(1)} a season${cityFocusOn(game, city, "seat") ? " (faster as a provincial seat)" : ""}; a happier city comes to feel at home sooner</span></li>` : ""}
+      ${o ? `<li><span>It changes ${rate >= 0 ? "+" : "−"}${Math.abs(rate).toFixed(1)} a season${cityFocusOn(game, city, "seat") || provSeat(game, city) ? " (faster as a province capital)" : ""}; a happier city comes to feel at home sooner</span></li>` : ""}
       ${res > 0.005 ? `<li><span class="tone-bad">Workers drag their feet: output −${pct(res)}</span></li>` : ""}
       ${L < CITY.loyalRaise ? `<li><span class="tone-bad">No divisions can be raised here until loyalty reaches ${CITY.loyalRaise}</span></li>` : ""}
       ${o && o.alive ? `<li><span>The ${escapeHtml(o.name)} has a just cause to win it back${L < 45 ? `, and if its army comes, the people may help it` : ""}. At ${CITY.integrate} for ${CITY.integrateSeasons} seasons, the claim ends.</span></li>` : ""}

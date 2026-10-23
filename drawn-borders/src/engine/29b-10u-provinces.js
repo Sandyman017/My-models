@@ -272,6 +272,20 @@ function ensureProvinces(w, g) {
   if (!Array.isArray(g.villages)) { g.villages = []; updateVillages(w, g); }
   syncProvinces(w, g);
 }
+/* A province capital no longer in its province passes to the province's biggest town (or the province becomes a
+   territory). Works on the real map or on copies. Returns [{ p, from, to }] for each change. */
+function resolveCapitals(g, nid, prov, list) {
+  const out = [];
+  for (const p of list) {
+    if (p.owner !== nid || p.capital === null || p.capital === undefined) continue;
+    const c = g.cities.find(x => x.id === p.capital);
+    if (c && c.owner === p.owner && prov[c.cell] === p.id) continue;
+    const next = g.cities.filter(x => x.owner === nid && prov[x.cell] === p.id).sort((a, b) => (b.capital ? 1 : 0) - (a.capital ? 1 : 0) || (b.pop || 0) - (a.pop || 0) || a.id - b.id)[0];
+    p.capital = next ? next.id : null;
+    out.push({ p, from: c || null, to: next || null });
+  }
+  return out;
+}
 /* Land that changed hands joins the nearest province of its new nation; a province capital that was lost
    passes to the province's biggest town (or the province becomes a territory). Returns news for the player. */
 function syncProvinces(w, g, news) {
@@ -279,13 +293,11 @@ function syncProvinces(w, g, news) {
   for (let i = 0; i < N_CELLS; i++) if (g.owner[i] < 0) g.prov[i] = -1;
   for (const n of g.nations) if (n.alive) tidyProvinces(w, g, n.id, g.prov, g.provinces);
   g.provinces = g.provinces.filter(p => g.nations[p.owner] && g.nations[p.owner].alive);
-  for (const p of g.provinces) {
-    if (p.capital === null || p.capital === undefined) continue;
-    const c = g.cities.find(x => x.id === p.capital);
-    if (c && c.owner === p.owner && g.prov[c.cell] === p.id) continue;
-    const next = provTowns(g, p).sort((a, b) => (b.capital ? 1 : 0) - (a.capital ? 1 : 0) || (b.pop || 0) - (a.pop || 0) || a.id - b.id)[0];
-    p.capital = next ? next.id : null;
-    if (news && p.owner === PLAYER) news.push({ tone: "warn", text: next ? `${c ? c.name : "The old capital"} is no longer in ${p.name}: its government moved to ${next.name}.` : `${p.name} has lost its capital${c ? `, ${c.name}` : ""}. It is a territory now, run from the national capital.` });
+  for (const n of g.nations) {
+    if (!n.alive) continue;
+    for (const { p, from, to } of resolveCapitals(g, n.id, g.prov, g.provinces)) {
+      if (news && p.owner === PLAYER) news.push({ tone: "warn", text: to ? `${from ? from.name : "The old capital"} is no longer in ${p.name}: its government moved to ${to.name}.` : `${p.name} has lost its capital${from ? `, ${from.name}` : ""}. It is a territory now, run from the national capital.` });
+    }
   }
 }
 /* Once a season: provinces' numbers for their history, villages, and rivals' redrawing. */
@@ -439,13 +451,21 @@ function provincePlan(w, g, nid, op) {
     target = p;
   } else return fail("Unknown change.");
   tidyProvinces(w, g, nid, prov, list, { splitOff: op.t === "draw" });
+  const capMoves = resolveCapitals(g, nid, prov, list);
   const after = list.filter(p => p.owner === nid);
   const created = after.filter(p => !before.includes(p.id));
   const removed = before.filter(id => !after.some(p => p.id === id)).map(id => g.provinces.find(p => p.id === id)).filter(Boolean);
   if (op.t === "draw" && !created.length && !g.prov.some((v, i) => v !== prov[i] && g.owner[i] === nid)) return fail("This would change nothing.");
   const moved = [];
   for (let i = 0; i < N_CELLS; i++) if (g.owner[i] === nid && g.prov[i] !== prov[i]) moved.push(i);
-  return { ok: true, prov, list, created, removed, target, moved };
+  // the provinces that keep their name but change: land lost or gained, a capital moved
+  const changed = after.filter(p => !created.includes(p)).map(p => {
+    let was = 0, now = 0;
+    for (let i = 0; i < N_CELLS; i++) if (g.owner[i] === nid) { if (g.prov[i] === p.id) was++; if (prov[i] === p.id) now++; }
+    const cm = capMoves.find(x => x.p === p);
+    return { p, was, now, cap: cm || null };
+  }).filter(x => x.was !== x.now || x.cap);
+  return { ok: true, prov, list, created, removed, target, moved, changed };
 }
 function provCost(w, g, nid, plan, op, econ) {
   if (op.t === "join") return { cost: PROV.joinCost, seasons: PROV.joinSeasons };
@@ -485,6 +505,13 @@ function provPlanLines(g, plan) {
     const cap = p.capital !== null ? g.cities.find(c => c.id === p.capital) : null;
     const n = plan.prov.reduce((s, v, i) => s + (v === p.id && g.owner[i] === p.owner ? 1 : 0), 0);
     out.push(`${p.name}: ${fmtArea(n)}, ${cap ? `capital ${cap.name}` : "no town yet, so a territory run from the national capital"}`);
+  }
+  for (const x of plan.changed || []) {
+    if (plan.created.length === 0 && x.p === plan.target && !x.cap) continue;
+    const parts = [];
+    if (x.now !== x.was) parts.push(x.now > x.was ? `grows to ${fmtArea(x.now)}` : `keeps ${fmtArea(x.now)} of ${fmtArea(x.was)}`);
+    if (x.cap) parts.push(x.cap.to ? `its capital moves from ${x.cap.from ? x.cap.from.name : "the old capital"} to ${x.cap.to.name}` : `it loses its capital${x.cap.from ? `, ${x.cap.from.name}` : ""}, and becomes a territory`);
+    if (parts.length) out.push(`${x.p.name} ${parts.join(", and ")}`);
   }
   for (const p of plan.removed) out.push(`${p.name} ends: its land joins ${plan.target ? plan.target.name : "its neighbors"}`);
   if (plan.moved.length && !plan.created.length && plan.target) out.push(`${fmtArea(plan.moved.length)} of land moves into ${plan.target.name}`);

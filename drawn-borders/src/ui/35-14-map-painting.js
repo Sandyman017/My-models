@@ -77,7 +77,7 @@ function updateLanduse() {
     LANDUSE.towns.push({ id: city.id, x: cellX(city.cell) + 0.5, y: cellY(city.cell) + 0.5, r: 0.24 + 0.21 * Math.sqrt(pop), cap: !!city.capital, pop, ind: ind + (fo === "industry" ? 1.5 : 0),
       owner: city.owner, port: !!city.port, era: game.era || 0, focus: fo,
       heavy: lv("heavy") + 0.5 * lv("smelter"), chem: lv("chemical"), power: lv("power_coal") + lv("power_gas"), nuclear: lv("power_nuclear"),
-      light: lv("light") + lv("foodproc") + lv("electronics") + (fo === "industry" ? 1.5 : 0), office: lv("business") + lv("broadcast") + (fo === "market" || fo === "seat" ? 1 : 0) + (fo === "port" ? 0.5 : 0),
+      light: lv("light") + lv("foodproc") + lv("electronics") + (fo === "industry" ? 1.5 : 0), office: lv("business") + lv("broadcast") + (fo === "market" || fo === "seat" || provSeat(game, city) ? 1 : 0) + (fo === "port" ? 0.5 : 0),
       campus: lv("university") + lv("techpark") + (fo === "learning" ? 2 : 0),
       resort: lv("resort") + (fo === "resort" ? 2 : 0), fishing: lv("fishing") });
   }

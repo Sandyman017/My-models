@@ -170,7 +170,7 @@ function cityEconMods(g, n, c, pop) {
   else if (f === "learning") m.learning = true;
   return m;
 }
-/* If the capital is held by the enemy, a provincial seat governs instead: the most populous one still held. */
+/* If the capital is held by the enemy, a province capital governs instead: the most populous one still held. */
 function actingCapitalRegion(g, regions) {
   return regions.filter(r => r.cm && r.cm.seat).sort((a, b) => b.pop - a.pop)[0] || null;
 }

@@ -781,7 +781,7 @@ function computeEconomyRaw(w, g, nid) {
     if (TB && r.city.port && oceanPort(w, r.city) && (!g.sea || portUsableBy(w, g, r.city, nid)) && (!net.seaPort || r.city.capital)) net.seaPort = r.city;
     if (r.city.capital) net.capital = true;
   });
-  // the capital is in enemy hands: a provincial seat governs in its place
+  // the capital is in enemy hands: a province capital governs in its place
   if (!networks.some(x => x.capital)) { const s = actingCapitalRegion(g, regions); if (s) { networks[s.net].capital = true; networks[s.net].acting = s.city.id; } }
   // trade roads: follow roads out of each network through wild land and partners' land
   if (partners.length && g.roads.size) {
