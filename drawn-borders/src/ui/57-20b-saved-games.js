@@ -11,7 +11,7 @@
 Object.assign(ICONS, { save: giSvg("delapouite/save"), cloud: giSvg("delapouite/cloud-upload") });
 const SAVE_FORMAT = "drawn-borders-save";
 const SAVE_VERSION = 6;                         // version 5 saves (before version 18 of the game) load as they are
-const GAME_BUILD = 37;
+const GAME_BUILD = 38;
 const LOCAL_KEYS = { auto: SAVE_KEY, earlier: "drawn-borders/save-earlier-raw", rescued: "drawn-borders/save-rescued", slots: "drawn-borders/slots", slot: "drawn-borders/slot/" };
 const SAVE_LIMITS = { named: 10, earlier: 3, chunk: 200000 };
 const SAVES = {
@@ -41,7 +41,7 @@ function snapshot() {
 }
 function isSaveData(s) { return !!s && typeof s === "object" && (s.v === 5 || s.v === 6) && Number.isFinite(s.seed); }
 function saveGameId(s) { return s ? s.gameId || (s.game ? `legacy-${s.seed}` : null) : null; }
-function saveHasGame(s) { return !!(s && s.game && (s.phase === "play" || s.phase === "collapsed")); }
+function saveHasGame(s) { return !!(s && s.game && (s.phase === "play" || s.phase === "collapsed" || s.phase === "provinces")); }
 function metaOfSave(s) {
   if (s && s.meta) return s.meta;
   const n = s && s.game && s.game.nations && s.game.nations[PLAYER];

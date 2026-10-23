@@ -143,6 +143,7 @@ function runNationSeason(w, g, n, rng) {
   if (!n.isPlayer) aiManageSites(w, g, n, econ);
   const budget = computeBudget(n, econ, n.laws);
   n.treasury += budget.balance;
+  n.provPaid = budget.provinces || 0;   // the governors spend it at the end of the season (10v)
   settleGranary(n, econ, budget);
   for (const k of EQUIP_ORDER) n.stock[k] += budget.arms.units[k];
   // what this season's market looked like steers next season's farms, builders and arms makers
@@ -276,10 +277,11 @@ function runSeason(w, g, plan) {
   }
 
   const wars = runMilitarySeason(w, g, rng, dispatch);
+  dispatch.marches = marchNews(w, g, PLAYER);   // how your marches went, and why some stopped
 
   for (const p of advanceProjects(w, g)) {
     const n = g.nations[p.nid];
-    const text = p.failed ? `${p.label} failed: the land was lost before it was finished. Half the cost was refunded.` : p.kind === "survey" ? surveyText(w, g, p) : p.kind === "ships" ? shipsDoneText(p) : p.kind === "focus" ? focusDoneText(g, p) : p.kind === "capital" ? `The government has moved: ${(g.cities.find(c => c.id === p.cityId) || { name: "the new city" }).name} is the new capital.` : `${p.label} is complete.`;
+    const text = p.kind === "province" ? provinceDoneText(g, p) : p.failed ? `${p.label} failed: the land was lost before it was finished. Half the cost was refunded.` : p.kind === "survey" ? surveyText(w, g, p) : p.kind === "ships" ? shipsDoneText(p) : p.kind === "focus" ? focusDoneText(g, p) : p.kind === "capital" ? `The government has moved: ${(g.cities.find(c => c.id === p.cityId) || { name: "the new city" }).name} is the new capital.` : `${p.label} is complete.`;
     if (p.nid === PLAYER) dispatch.built.push({ text: p.private ? `${text} (built by private investors)` : text, tone: p.failed ? "bad" : "good" });
     else if (!p.private && !(p.kind === "ships" && p.ship === "freighter")) { dispatch.abroad.push({ nid: p.nid, text, why: null }); noteFor(n, g, text, null); }
     if ((!p.private && !(p.kind === "ships" && p.ship === "freighter")) || p.nid === PLAYER) addChronicle(g, p.nid === PLAYER ? text : `${n.name}: ${text}`, p.failed ? "bad" : "neutral", p.nid);
@@ -311,10 +313,13 @@ function runSeason(w, g, plan) {
   recordSeasonStats(g, wars.reports, ownersBefore);
   const pr = reports[PLAYER];
   for (const n of g.nations) n.navyUpkeep = g.sea ? navyUpkeep(g, n.id) : 0;
+  syncProvinces(w, g, dispatch.built);   // land that changed hands joins a province of its new nation (10u)
   g.turn += 1;
   for (const n of g.nations) {
     if (!n.alive) continue;
-    const h = historyEntry(n, computeEconomy(w, g, n.id), g.turn, g);
+    const econN = computeEconomy(w, g, n.id);
+    recordProvinces(g, n.id, econN);
+    const h = historyEntry(n, econN, g.turn, g);
     n.history.push(h);
     if (n.history.length > STATS_KEEP) n.history.shift();
     updatePeaks(g, n, h);
@@ -322,6 +327,8 @@ function runSeason(w, g, plan) {
   openingSeason(w, g, dispatch);
   cabinetSeasonEnd(w, g, dispatch, rng);
   seasonCities(w, g, dispatch);
+  seasonProvinces(w, g, dispatch);
+  seasonGovernors(w, g, dispatch);
   seasonGroups(w, g, dispatch);
   if (g.turn % 4 === 2) {
     rollHarvests(w, g);

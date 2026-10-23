@@ -321,6 +321,40 @@ function moveCost(w, g, type, from, to, nid) {
   if (ctl >= 0 && ctl !== nid && !alliesOf(g, nid).includes(ctl)) c += 0.5;
   return c;
 }
+/* A division's movement points this season (the same numbers the season uses), and why it has fewer than its
+   kind's full points. Each step on the way costs points (moveCost); a division always makes at least one step a
+   season, then stops when the next step costs more than it has left. */
+function divMovePoints(g, d) {
+  const t = DIV_TYPES[d.type], full = t.mp;
+  if (d.training) return { mp: 0, full, why: [`still training (ready in ${d.training} season${d.training > 1 ? "s" : ""})`] };
+  if (d.sailed === g.turn) return { mp: 0, full, why: ["came ashore from the ships this season"] };
+  if (d.voyage && d.voyage.loading) return { mp: 0, full, why: ["boarding the ships"] };
+  if (t.armor && !d.supplied) return { mp: 1, full, why: ["out of supply: tanks without fuel and spare parts crawl"] };
+  let mp = full;
+  const why = [];
+  if (d.org < 0.2) { mp *= 0.5; why.push("exhausted (organization under 20%): half speed"); }
+  if (t.armor) {
+    const fuel = g.nations[d.owner] ? g.nations[d.owner].fuelSat ?? 1 : 1, f = 0.5 + 0.5 * fuel;
+    if (f < 0.995) { mp *= f; why.push(`short of fuel (${pct(fuel)} of the oil the army needs)`); }
+  }
+  return { mp, full, why };
+}
+/* How a march goes season by season, by the same rule as the season itself (enemies met on the way aside):
+   each step's cost, whether it is on a road, and in which season it is made. */
+function pathSchedule(w, g, d, path) {
+  const P = divMovePoints(g, d);
+  const mp = P.mp > 0 ? P.mp : P.full;
+  let left = mp, season = 1 + (d.training || 0), from = d.cell, total = 0;
+  const steps = [];
+  for (const c of path || []) {
+    const cost = moveCost(w, g, d.type, from, c, d.owner);
+    if (cost > left + 1e-6 && left < mp - 1e-6) { season++; left = mp; }
+    left -= cost; total += cost;
+    steps.push({ cell: c, cost, road: g.roads.has(edgeKey(from, c)) && controller(g, from) === controller(g, c), season });
+    from = c;
+  }
+  return { steps, total, mp, full: P.full, why: P.why, seasons: steps.length ? steps[steps.length - 1].season : 0 };
+}
 /* A small binary heap keyed by cost, for path searches. */
 function heapPush(h, cell, pri) {
   h.push([pri, cell]);
@@ -586,10 +620,10 @@ function resolveMilitary(g, w, rng) {
   const index = divIndex(g);
   for (const d of g.divisions) {
     d.supplied = !!(sup[d.owner] && sup[d.owner][d.cell]);
-    const t = DIV_TYPES[d.type];
-    d.mpLeft = d.training || d.sailed === g.turn || (d.voyage && d.voyage.loading) ? 0 : t.armor && !d.supplied ? 1 : t.mp * (d.org < 0.2 ? 0.5 : 1) * (t.armor ? 0.5 + 0.5 * (g.nations[d.owner].fuelSat ?? 1) : 1);
+    d.mpLeft = divMovePoints(g, d).mp;
     d.fullMp = d.mpLeft;
     d.engaged = false; d.moved = d.sailed === g.turn;
+    d.halt = null; d.hadPath = !!(d.path && d.path.length); d.fought = false;
   }
 
   // Movement in small steps so armies on both sides move at the same time.
@@ -603,27 +637,28 @@ function resolveMilitary(g, w, rng) {
     for (const d of order) {
       if (!d.path.length || d.mpLeft <= 0 || d.engaged) continue;
       const next = d.path[0];
-      if (!canEnter(w, g, d.owner, next)) { d.path = []; continue; }
+      if (!canEnter(w, g, d.owner, next)) { d.path = []; d.halt = { why: "closed", to: next }; continue; }
       const cost = moveCost(w, g, d.type, d.cell, next, d.owner);
-      if (cost > d.mpLeft + 1e-6 && d.mpLeft < d.fullMp) { d.mpLeft = 0; continue; }
+      if (cost > d.mpLeft + 1e-6 && d.mpLeft < d.fullMp) { d.mpLeft = 0; d.halt = { why: "mp" }; continue; }
       const here = index.get(next) || [];
       const foes = here.filter(e => e.owner !== d.owner && atWar(g, e.owner, d.owner));
       if (foes.length) {
         if (!attacks.has(next)) attacks.set(next, []);
         attacks.get(next).push(d);
-        d.engaged = true; d.mpLeft = 0; any = true;
+        d.engaged = true; d.mpLeft = 0; any = true; d.halt = { why: "attack", to: next };
         continue;
       }
-      if (here.filter(e => e.owner === d.owner).length >= MIL.maxStack) { d.mpLeft = 0; continue; }
+      if (here.filter(e => e.owner === d.owner).length >= MIL.maxStack) { d.mpLeft = 0; d.halt = { why: "stack", to: next }; continue; }
       moveDivTo(index, d, next);
       d.path.shift();
       d.mpLeft -= cost; d.moved = true; d.entrench = 0; any = true;
       const ctl = controller(g, next);
       if (ctl !== d.owner && (ctl === -1 ? false : atWar(g, ctl, d.owner) || g.owner[next] === d.owner)) occupyCell(g, next, d.owner, news);
-      if (enemyDivAdjacent(g, index, next, d.owner)) d.mpLeft = 0;
+      if (enemyDivAdjacent(g, index, next, d.owner)) { d.mpLeft = 0; if (d.path.length) d.halt = { why: "enemy" }; }
     }
     if (!any) break;
   }
+  for (const d of g.divisions) if (d.hadPath && !d.halt && d.path && d.path.length) d.halt = { why: d.mpLeft <= 0 && d.fullMp <= 0 ? "still" : "mp" };
 
   // Battles
   const cells = [...attacks.keys()].sort(() => rng() - 0.5);
@@ -633,10 +668,12 @@ function resolveMilitary(g, w, rng) {
     for (const d of attacks.get(cell)) { if (!byOwner.has(d.owner)) byOwner.set(d.owner, []); byOwner.get(d.owner).push(d); }
     for (const [owner, list] of byOwner) {
       const att = list.filter(d => d.men > 0).sort((a, b) => divCombatValue(b) - divCombatValue(a)).slice(0, MIL.maxAttackers);
+      for (const d of list) if (!att.includes(d)) d.halt = { why: "crowded", to: cell };
       const def = (index.get(cell) || []).filter(e => e.owner !== owner && atWar(g, e.owner, owner));
       if (!att.length) continue;
       if (REC) REC.step++;
       if (!def.length) {
+        att.forEach(d => { d.halt = { why: "mp" }; });   // the enemy left before the battle: they march on
         if ((index.get(cell) || []).filter(e => e.owner === owner).length < MIL.maxStack && canEnter(w, g, owner, cell)) {
           const lead = att[0];
           moveDivTo(index, lead, cell); lead.path.shift(); lead.moved = true; lead.entrench = 0;
@@ -660,7 +697,8 @@ function resolveMilitary(g, w, rng) {
           moveDivTo(index, lead, cell); lead.path.shift(); lead.moved = true; lead.entrench = 0;
           occupyCell(g, cell, owner, news);
         }
-      } else att.forEach(d => { d.path = []; });
+        att.forEach(d => { d.halt = { why: "won", to: cell }; d.fought = true; });
+      } else att.forEach(d => { d.path = []; d.halt = { why: "lost", to: cell }; d.fought = true; });
       for (const nid of [r.attacker, r.defender]) {
         const l = r.losses[nid];
         g.nations[nid].lastLosses += l.men;
@@ -675,6 +713,7 @@ function resolveMilitary(g, w, rng) {
     if (!r) news.push(`The ${nameOf(g, d.owner)}'s ${d.name} was destroyed.`);
   }
   g.divisions = g.divisions.filter(d => d.men > 300);
+  noteMarches(w, g);
   const fresh = divIndex(g);
   if (REC) { REC.phase = "sweep"; REC.sweep = 0; }
 
@@ -776,3 +815,61 @@ function sendHome(g) {
   for (const a of g.airwings) { const base = g.cities.find(c => c.id === a.base); if (!base || base.owner !== a.owner) rebaseWing(g, a); }
 }
 
+
+/* ---------- What happened to each march this season, in words (for the season report and the division card) ---------- */
+/* Every division that had a route records how the season went: d.lastMove = { turn, why, at, to }. A player's
+   order (d.order: where to, and whether to attack) is forgotten once it is done or can no longer be carried out. */
+function noteMarches(w, g) {
+  for (const d of g.divisions) {
+    if (!d.hadPath) { d.hadPath = false; continue; }
+    let why = d.halt ? d.halt.why : "arrived";
+    const to = d.order ? d.order.cell : d.halt && d.halt.to !== undefined ? d.halt.to : d.cell;
+    if (!d.path || !d.path.length) {
+      if (why === "mp" || why === "enemy" || why === "won" || why === "arrived" || why === "attack") why = d.order && d.order.attack && !d.fought && d.cell === d.order.cell ? "gone" : why === "won" ? "won" : "arrived";
+    }
+    d.lastMove = { turn: g.turn, why, at: d.cell, to, attack: !!(d.order && d.order.attack), why2: divMovePoints(g, d).why.slice(0, 1) };
+    if (!d.path || !d.path.length) d.order = null;
+    d.hadPath = false;
+  }
+}
+function marchText(w, g, d) {
+  const m = d.lastMove;
+  if (!m) return null;
+  const at = placeNameW(w, g, m.at);
+  const left = d.path && d.path.length ? pathSchedule(w, g, d, d.path).seasons : 0;
+  // two nearby places can share a name: then say how far it still is
+  const to = m.to >= 0 && placeNameW(w, g, m.to) !== at ? placeNameW(w, g, m.to) : `its goal, ${d.path && d.path.length ? d.path.length : 0} step${d.path && d.path.length === 1 ? "" : "s"} away`;
+  const slow = m.why2 && m.why2.length ? ` (${m.why2[0]})` : "";
+  switch (m.why) {
+    case "arrived": return `reached ${at}.`;
+    case "gone": return `reached ${at}, but the enemy division had already left.`;
+    case "won": return `won the battle at ${placeNameW(w, g, m.to)}${left ? `, and marches on: about ${left} more season${left > 1 ? "s" : ""} to ${to}` : ""}.`;
+    case "lost": return `attacked ${placeNameW(w, g, m.to)} and was thrown back. Its order is cancelled: give it a new one.`;
+    case "closed": return `stopped at ${at}: the way is closed (land of a nation you are not at war with). Its order is cancelled.`;
+    case "stack": return `waits at ${at}: ${placeNameW(w, g, m.to)} already holds ${MIL.maxStack} of your divisions, the most one place can hold.`;
+    case "crowded": return `waited at ${at}: at most ${MIL.maxAttackers} divisions can attack one place at once, and stronger ones went first.`;
+    case "enemy": return `stopped at ${at}, next to an enemy army: a march halts when it meets the enemy. It goes on next season${left ? ` (about ${left} more to ${to})` : ""}.`;
+    case "attack": return `is fighting at ${placeNameW(w, g, m.to)}.`;
+    case "still": return `could not move this season${slow}.`;
+    default: return `is on the way: at ${at}, about ${left} more season${left > 1 ? "s" : ""} to ${to}${slow}.`;
+  }
+}
+/* The season report's lines about your own orders (generals' divisions are left out). Same news for several
+   divisions is told once. */
+function marchNews(w, g, nid) {
+  const by = new Map();
+  for (const d of g.divisions) {
+    if (d.owner !== nid || d.auto || !d.lastMove || d.lastMove.turn !== g.turn) continue;
+    const t = marchText(w, g, d);
+    if (!t) continue;
+    if (!by.has(t)) by.set(t, { names: [], why: d.lastMove.why });
+    by.get(t).names.push(d.name);
+  }
+  const rank = { lost: 0, closed: 1, gone: 2, stack: 3, crowded: 4, enemy: 5, still: 6, won: 7, arrived: 8, attack: 9, mp: 10 };
+  return [...by.entries()].sort((a, b) => (rank[a[1].why] ?? 9) - (rank[b[1].why] ?? 9))
+    .map(([t, x]) => {
+      const many = x.names.length > 1;
+      const said = many ? t.replace(/^is /, "are ").replace(/^was /, "were ").replace(/^waits /, "wait ").replace(/^stopped at ([^:]+): the way is closed/, "stopped at $1: the way is closed").replace(" It goes on", " They go on").replace("Its order is cancelled: give it a new one", "Their orders are cancelled: give them new ones").replace("Its order is cancelled", "Their orders are cancelled") : t;
+      return { tone: ["lost", "closed", "gone", "stack", "crowded", "still"].includes(x.why) ? "warn" : "neutral", text: `${bJoin(x.names.map((n, k) => `${k ? "the" : "The"} ${n}`))} ${said}` };
+    });
+}

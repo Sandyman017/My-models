@@ -307,6 +307,7 @@ function setupGame(w, playerCells, playerName, seed) {
   for (const n of g.nations) ensurePeople(w, g, n);
   for (const n of g.nations) if (n.alive) ensureGroups(w, g, n);
   tradeMigrate(w, g);   // the first contracts between nations (10s)
+  ensureProvinces(w, g);   // every nation divided into provinces, villages on the land (10u)
   return g;
 }
 

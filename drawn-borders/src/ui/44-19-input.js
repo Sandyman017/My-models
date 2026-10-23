@@ -108,6 +108,15 @@ function onPointerDown(e) {
     return;
   }
   if (ui.play) return;
+  if (ui.phase === "provinces" || (ui.phase === "play" && ui.tool === "province" && !ui.dispatch && e.button === 0)) {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    const { x, y } = eventCell(e);
+    drawingPath = [[x, y]];
+    ui.provDraw = null;
+    renderAll();
+    return;
+  }
   if (ui.phase === "draw") {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
@@ -186,6 +195,7 @@ function onPointerUp() {
   if (!drawingPath) return;
   const path = drawingPath;
   drawingPath = null;
+  if (ui.phase !== "draw") { provPenDone(path); renderAll(); return; }
   applyClaimResult(claimFromPath(world, path));
   saveGame();
   renderAll();
@@ -243,15 +253,10 @@ function foundNation() {
   const name = cleanName(ui.name);
   game = setupGame(world, ui.drawCells, name, ui.seed);
   ui.gameId = newGameId();
-  ui.phase = "play"; ui.tab = null; ui.tool = "select";
-  const cap = game.cities.find(c => c.owner === PLAYER && c.capital).cell;
-  const rivals = game.nations.filter(n => !n.isPlayer).map(n => {
-    const rc = game.cities.find(c => c.owner === n.id && c.capital);
-    return `the ${n.name} to the ${directionWord(cap, rc.cell)}`;
-  });
-  addChronicle(game, `${name} is founded. Its neighbors: ${bJoin(rivals)}.`, "neutral", PLAYER);
+  // the second step of the founding: divide the country into provinces (16m); time starts after it
+  ui.phase = "provinces"; ui.tab = null; ui.tool = "select"; ui.provDraw = null;
   bumpMap();
-  startDeliberation();
+  provFocusOwnLand();
 }
 
 function setLaw(law, value) {
@@ -467,5 +472,5 @@ function answerEnvoy(id, accept) {
   bumpMap();
 }
 
-function setTool(tool) { ui.tool = tool; ui.roadFrom = null; ui.hoverQuote = null; ui.pending = null; quoteMemo.key = ""; }
+function setTool(tool) { ui.tool = tool; ui.roadFrom = null; ui.hoverQuote = null; ui.pending = null; ui.provDraw = null; quoteMemo.key = ""; }
 

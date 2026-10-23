@@ -32,7 +32,7 @@ function cityOrd(k) { const s = ["th", "st", "nd", "rd"], v = k % 100; return k 
    programs it can take. */
 const CITY_ROLES = {
   capital:    { label: "Capital", icon: "lorc/queen-crown", tip: "Seat of the government: ministries, parliament and the national food reserve. The nation's pride, and the prize every enemy wants." },
-  seat:       { label: "Provincial seat", icon: "delapouite/vote", tip: "A governor, courts and offices of the ministries govern the region from here. If the capital falls, the government moves here." },
+  seat:       { label: "Province capital", icon: "delapouite/vote", tip: "A governor, courts and offices of the ministries govern the province from here. If the national capital falls, the government moves here." },
   front:      { label: "Front line", icon: "sbed/fire", tip: "Enemy soldiers hold ground within a few days' march." },
   port:       { label: "Port city", icon: "lorc/anchor", tip: "Ships from the whole world load and unload here: the nation's door to the world's markets." },
   metro:      { label: "Metropolis", icon: "delapouite/modern-city", tip: "Over 18 million people. Big cities are more productive (more firms, more customers), but crime and traffic weigh on their people." },
@@ -77,7 +77,8 @@ const FOCI = {
   seat:     { label: "Provincial seat", icon: "delapouite/vote", area: "interior", setup: 0.03, seasons: 2, upkeep: 0.004, mood: 4,
               does: "A governor, courts and ministries' offices: public jobs for 1.5% more of its workers, loyalty grows 1.5 points a season faster, people +4 happier, governing a large country costs 20% less stability, and if the capital falls the government moves here." },
 };
-const FOCUS_ORDER = ["port", "industry", "market", "mining", "farms", "learning", "resort", "garden", "fortress", "seat"];
+// "seat" (provincial seat) is no longer offered: since v38 province capitals do its work (10u)
+const FOCUS_ORDER = ["port", "industry", "market", "mining", "farms", "learning", "resort", "garden", "fortress"];
 const FOCUS_TASTE = {
   militarist:   { fortress: 1.6, industry: 1.4, mining: 1.3, seat: 1.1, garden: 0.7, resort: 0.6, port: 0.9 },
   mercantile:   { port: 1.6, market: 1.5, resort: 1.3, learning: 1.2, garden: 1.1, fortress: 0.6, mining: 0.9 },
@@ -155,7 +156,7 @@ function cityEconMods(g, n, c, pop) {
   const mood = c.mood ?? CITY.moodBase, loyal = c.loyalty ?? CITY.loyalNative;
   m.out = 1 + CITY.outPerMood * (mood - CITY.moodBase);
   if (loyal < CITY.loyalResist) m.out *= 1 - 0.3 * (CITY.loyalResist - loyal) / CITY.loyalResist;
-  for (const x of cityModsActive(g, c)) if (x.out) m.out *= 1 + x.out;
+  for (const x of cityModsActive(g, c)) { if (x.out) m.out *= 1 + x.out; if (x.jobs) m.pubJobs += x.jobs; }   // jobs: public works paid by a province (10v)
   const f = activeFocus(g, c);
   m.focus = f;
   if (f === "port") m.svc += 0.08;
@@ -165,10 +166,11 @@ function cityEconMods(g, n, c, pop) {
   else if (f === "mining") { m.haul = 0.6; m.siteW = 0.85; m.siteOut = 1.1; }
   else if (f === "resort") m.resort = 1.25;
   else if (f === "seat") { m.pubJobs = 0.015; m.seat = true; }
+  if (!m.seat && provSeat(g, c)) { m.pubJobs = 0.015; m.seat = true; }   // province capitals (10u) are what the provincial seats were
   else if (f === "learning") m.learning = true;
   return m;
 }
-/* If the capital is held by the enemy, a provincial seat governs instead: the most populous one still held. */
+/* If the capital is held by the enemy, a province capital governs instead: the most populous one still held. */
 function actingCapitalRegion(g, regions) {
   return regions.filter(r => r.cm && r.cm.seat).sort((a, b) => b.pop - a.pop)[0] || null;
 }
@@ -224,9 +226,9 @@ function cityProfilesRaw(w, g, econs) {
       L(`${fmtPeople(pop)} people`, 6 * Math.log2(1 + pop / 0.5));
       L(`Output ${fmtMoney(gdp)} a year`, 5 * Math.log2(1 + gdp / 40));
       // government
-      const seat = cityFocusOn(g, c, "seat");
+      const seat = cityFocusOn(g, c, "seat") || provSeat(g, c);
       if (c.capital) L("Capital: seat of the government", 15);
-      else if (seat) L("Provincial seat: governs its region", 5);
+      else if (seat) L(`Capital of ${(provinceOfCity(g, c) || { name: "its province" }).name}`, 5);
       if (!c.capital && c.wasCapital !== undefined && c.wasCapital !== null) L("Former capital", 4);
       // the sea
       p.ocean = oceanPort(w, c);
@@ -407,6 +409,7 @@ function cityProfilesRaw(w, g, econs) {
       if (c.liberated !== undefined && c.liberated !== null && g.turn - c.liberated <= 8) M("Freed: back with its own nation", 6);
       const f = activeFocus(g, c);
       if (f && FOCI[f].mood) M(`City program: ${FOCI[f].label.toLowerCase()}`, FOCI[f].mood);
+      if (f !== "seat" && provSeat(g, c)) M("Proud to be a province capital", FOCI.seat.mood);
       for (const m of cityModsActive(g, c)) if (m.mood) M(m.label, m.mood);
       const inflow = flows.filter(x => x.to === c.id).reduce((s, x) => s + x.people, 0);
       p.inflow = inflow;
@@ -444,7 +447,7 @@ function cityProfilesRaw(w, g, econs) {
 function cityLoyaltyRate(g, c) {
   const origin = g.nations[c.origin];
   let v = CITY.loyalRate + CITY.loyalMoodK * ((c.mood ?? CITY.moodBase) - 50);
-  if (cityFocusOn(g, c, "seat")) v += 1.5;
+  if (cityFocusOn(g, c, "seat") || provSeat(g, c)) v += 1.5;
   if (!origin || !origin.alive) v += 0.6;
   else if (atWar(g, c.owner, c.origin)) v -= 0.6;
   for (const m of cityModsActive(g, c)) if (m.loyal) v += m.loyal;
@@ -465,6 +468,7 @@ function focusBlockFor(w, g, c, k, p, r, econ, cap, capNet, seats) {
   if (k === "garden") return p.pop >= 6 ? null : "Needs at least 6 million people.";
   if (k === "resort") return p.resorts >= 1 || industryCap("resort", r.res, r.pop, c.port) >= 1 ? null : "Needs a coast or mountains that draw visitors.";
   if (k === "seat") {
+    return "Provincial seats are now province capitals: choose them in the Provinces panel.";
     if (c.capital) return "The capital already governs.";
     if (p.pop < 2) return "Needs at least 2 million people.";
     if (cap && r.net === capNet && dist(cap.cell, c.cell) < 7) return "Too close to the capital: it must be 7 cells away, or not joined to it by road.";
@@ -587,13 +591,13 @@ function cityStabilityTerms(g, n) {
     else if (k === 3) terms.push({ label: `Unrest in ${unrest.length - 3} more town${unrest.length - 3 > 1 ? "s" : ""}`, value: v });
     else terms[terms.length - 1].value += v;
   });
-  const seatHeld = own.some(c => held(c) && cityFocusOn(g, c, "seat"));
+  const seatHeld = own.some(c => held(c) && (cityFocusOn(g, c, "seat") || provSeat(g, c)));
   let occSum = 0;
   for (const c of own.filter(c => !held(c)).sort((a, b) => imp(b) - imp(a))) {
     let v = -(imp(c) / tot) * CITY.occK * (c.capital && seatHeld ? 0.5 : 1);
     v = Math.max(-CITY.occCap - occSum, v);
     occSum += v;
-    if (v <= -0.15) terms.push({ label: `The enemy holds ${c.name}${c.capital ? `, our capital${seatHeld ? " (the government carries on from a provincial seat)" : ""}` : c.rankN && c.rankN <= 3 ? `, our ${["", "first", "second", "third"][c.rankN]} city` : ""}`, value: v });
+    if (v <= -0.15) terms.push({ label: `The enemy holds ${c.name}${c.capital ? `, our capital${seatHeld ? " (the government carries on from a province capital)" : ""}` : c.rankN && c.rankN <= 3 ? `, our ${["", "first", "second", "third"][c.rankN]} city` : ""}`, value: v });
   }
   return terms;
 }
@@ -632,7 +636,10 @@ function focusSetupCost(key, r) { const F = FOCI[key]; return Math.round(clamp(f
 function focusUpkeepCost(key, r) { const F = FOCI[key]; return Math.round(clamp(focusBaseCost(F, r, F.upkeep, F.upkeepFood, F.upkeepSite), 0.03, 2.5) * 100) / 100; }
 function cityProgramsUpkeep(g, n, econ) {
   let s = 0;
-  for (const r of econ.regions || []) if (r.city.focus && FOCI[r.city.focus] && g.turn >= (r.city.focusAt || 0)) s += focusUpkeepCost(r.city.focus, r);
+  for (const r of econ.regions || []) {
+    if (r.city.focus && FOCI[r.city.focus] && g.turn >= (r.city.focusAt || 0)) s += focusUpkeepCost(r.city.focus, r);
+    if (r.cm && r.cm.seat && r.cm.focus !== "seat") s += focusUpkeepCost("seat", r);   // a province capital's government offices (10u)
+  }
   return s;
 }
 function quoteFocus(w, g, nid, city, key, base) {

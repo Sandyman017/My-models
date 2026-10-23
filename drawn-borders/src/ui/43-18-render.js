@@ -1,7 +1,7 @@
 /* =====================================================================
    18. Render
    ===================================================================== */
-const PANELS = [["realm", "crown", "Realm", "1"], ["cities", "city", "Cities", "c"], ["groups", "groups", "Groups", "p"], ["people", "toolbox", "People", "o"], ["cabinet", "cabinet", "Ministries", "m"], ["agenda", "flag", "Agenda", "2"], ["economy", "output", "Economy", "3"], ["trade", "freighter", "Trade", "x"], ["army", "army", "Army", "4"], ["navy", "anchor", "Navy", "9"], ["selected", "select", "Inspect", "5"], ["nations", "globe", "Nations", "6"], ["letters", "mail", "Letters", "7"], ["chronicle", "scroll", "Log", "8"]];
+const PANELS = [["realm", "crown", "Realm", "1"], ["cities", "city", "Cities", "c"], ["provinces", "capitol", "Provinces", "b"], ["groups", "groups", "Groups", "p"], ["people", "toolbox", "People", "o"], ["cabinet", "cabinet", "Ministries", "m"], ["agenda", "flag", "Agenda", "2"], ["economy", "output", "Economy", "3"], ["trade", "freighter", "Trade", "x"], ["army", "army", "Army", "4"], ["navy", "anchor", "Navy", "9"], ["selected", "select", "Inspect", "5"], ["nations", "globe", "Nations", "6"], ["letters", "mail", "Letters", "7"], ["chronicle", "scroll", "Log", "8"]];
 function dockHtml() {
   const letters = game.inbox.filter(it => it.status === "open").length;
   const unread = assemblyUnread(game);
@@ -104,7 +104,7 @@ function renderOverlays() {
     ui.composeDirty = false;
     if (wasHidden) { const ta = document.getElementById("letter-text"); if (ta) ta.focus(); }
   }
-  canvas.className = ui.phase === "draw" ? "tool-draw" : playing ? `tool-${ui.tool}${ui.sel.length || ui.fleetSel.length ? " has-sel" : ""}` : "";
+  canvas.className = ui.phase === "draw" || ui.phase === "provinces" ? "tool-draw" : playing ? `tool-${ui.tool}${ui.sel.length || ui.fleetSel.length ? " has-sel" : ""}` : "";
 }
 function renderAll() {
   renderHud();

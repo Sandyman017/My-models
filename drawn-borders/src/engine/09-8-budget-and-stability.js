@@ -22,6 +22,7 @@ function computeBudget(n, econ, laws) {
   const gc = granaryCost(n, econ, laws);
   const cab = cabinetUpkeep(n, econ);
   const programs = econ.programs || 0;
+  const provinces = econ.provGrants || 0;   // money for the provinces, spent by their governors (10v)
   const pensions = pensionCostYear(n, econ, laws) / 4;
   const debt = Math.max(0, -n.treasury);
   const debtRatio = debt / Math.max(1, gdp);
@@ -29,16 +30,17 @@ function computeBudget(n, econ, laws) {
   const interest = (debt * interestRate) / 4;
   return {
     gdp, collection, revenue, services, education, research, tariffs, army, armyUpkeep, arms, soldiersNext, recruits, upkeep, interest, interestRate, debt, debtRatio, navy,
-    granary: gc.cost, granaryFill: gc.fill, ministries: cab, programs, pensions,
-    balance: revenue + tariffs - services - education - research - army - navy - upkeep - interest - gc.cost - cab - programs - pensions,
+    granary: gc.cost, granaryFill: gc.fill, ministries: cab, programs, pensions, provinces,
+    balance: revenue + tariffs - services - education - research - army - navy - upkeep - interest - gc.cost - cab - programs - pensions - provinces,
   };
 }
 
 function stabilityTerms(n, econ, budget, laws, mood, extra = []) {
   const terms = [{ label: "Founding conditions (shape of the realm)", value: n.baseStability, base: true }];
-  const seatCut = 1 - 0.2 * Math.min(CITY.seatMax, econ.seats || 0);
+  // each province capital eases governing a large country (10u), at most as much as two provincial seats did before v38
+  const seatN = Math.min(PROV.seatEaseMax, econ.seats || 0), seatCut = 1 - PROV.seatEase * seatN;
   const sizeTerm = -Math.max(0, econ.area - FOUNDING.sizeThreshold) / FOUNDING.sizePerPoint * seatCut;
-  if (sizeTerm < -0.05) terms.push({ label: `Governing ${fmtArea(econ.area)}${seatCut < 1 ? " (eased by provincial seats)" : ""}`, value: sizeTerm });
+  if (sizeTerm < -0.05) terms.push({ label: `Governing ${fmtArea(econ.area)}${seatCut < 1 ? ` (eased by ${seatN} province capital${seatN > 1 ? "s" : ""})` : ""}`, value: sizeTerm });
   const tax = taxLaw(laws.tax);
   if (tax.stab) terms.push({ label: `${tax.label} taxes`, value: tax.stab });
   const sv = SERVICE_LAWS[laws.services];
