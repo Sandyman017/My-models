@@ -139,11 +139,12 @@ function ministryPageHtml(key) {
       <label class="check"><input type="checkbox" id="min-auto" data-key="${key}" ${M.auto ? "checked" : ""}> Let ${escapeHtml(m.name.split(" ")[0])} act on ${hisHer(m)} own each season</label>
       <label class="small muted" for="min-limit">Spending allowed each season without asking</label>
       <select id="min-limit" data-key="${key}" ${M.auto ? "" : "disabled"}>${[1, 2, 3].map(i => `<option value="${i}" ${M.limit === i ? "selected" : ""}>${LIMIT_LABELS[i]}: up to ${fmtMoney(CAB.limits[i] * econ.gdp)}</option>`).join("")}</select>
-      <p class="small muted">${heShe(m).charAt(0).toUpperCase() + heShe(m).slice(1)} only starts projects and measures ${heShe(m)} would advise, and never changes a law or proposes a treaty without you.</p>
+      <p class="small muted">${heShe(m).charAt(0).toUpperCase() + heShe(m).slice(1)} only starts projects and measures ${heShe(m)} would advise, and never changes a law, proposes a treaty, starts or ends an embargo, or sends food aid without you.</p>
     </div>
     ${log ? `<div class="block"><span class="eyebrow">Recent work</span><ul class="news">${log}</ul></div>` : ""}`;
 }
-function ordersStamp() { const n = game.nations[PLAYER]; return `${game.turn}|${game.projects.length}|${Math.round(n.treasury * 10)}|${JSON.stringify(n.laws)}|${(n.mods || []).length}|${game.letters.length}|${game.divisions.length}|${mapVersion}`; }
+// what the orders depend on: when one of these changes, the menu is worked out again (trade: embargoes, preferred sellers, aid)
+function ordersStamp() { const n = game.nations[PLAYER], T = game.trade; return `${game.turn}|${game.projects.length}|${Math.round(n.treasury * 10)}|${JSON.stringify(n.laws)}|${(n.mods || []).length}|${game.letters.length}|${game.divisions.length}|${mapVersion}|${T ? `${T.turn}:${T.nextId}:${(T.embargoes || []).length}:${JSON.stringify(T.prefer || [])}:${(T.aid || []).length}` : ""}`; }
 function ministerCardHtml(m, key) {
   return `<div class="minister">${ministerPortrait(m, 64)}<div class="who">
     <strong>${escapeHtml(m.name)}</strong><span class="small muted">${escapeHtml(MINISTRIES[key].title)} · age ${m.age}${m.since <= game.turn ? ` · since ${escapeHtml(seasonLabel(m.since))}` : ""}</span>

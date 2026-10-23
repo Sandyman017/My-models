@@ -55,7 +55,7 @@ function historyEntry(n, econ, turn, g) {
   Object.assign(e, {
     area: econ.area || 0, towns: econ.cities.length, divs, tanks: Math.round(tanks + ((n.stock && n.stock.tanks) || 0)), planes: Math.round(planes),
     power: Math.round(armyPower(g, n.id)), techs: Object.keys(n.techs || {}).length, food: sr(econ.pop > 0.01 ? econ.food / econ.pop : 0),
-    skill: sr(n.skill ?? 0.35), exp: sr(econ.exportValue || 0), imp: sr(econ.importBill || 0), research: sr(econ.research || 0),
+    skill: sr(n.skill ?? 0.35), exp: sr(econ.exportValue || 0), imp: sr(econ.importBill || 0), fin: sr(econ.foodIn || 0), research: sr(econ.research || 0),
     sec: ["primary", "secondary", "tertiary", "quaternary"].map(k => sr(sec[k] ? sec[k].va : 0, 1)),
     opP: n.isPlayer ? null : Math.round(opinionDetail(g, n.id, PLAYER).value),
   });
@@ -211,7 +211,7 @@ function addChronicle(g, text, tone = "neutral", nid = null) {
    `plan` carries the rivals' decisions (from Claude or the built-in rules), made at the start of the season. */
 function runSeason(w, g, plan) {
   const rng = mulberry32((w.seed * 7919 + g.turn * 104729 + 17) >>> 0);
-  const dispatch = { season: seasonLabel(g.turn), player: null, abroad: [], built: [], warnings: [], war: [], diplomacy: [], economy: [], ambitions: [], firsts: [], decisions: [], leader: [], cabinet: [], opening: [], cities: [], groups: [] };
+  const dispatch = { season: seasonLabel(g.turn), player: null, abroad: [], built: [], warnings: [], war: [], diplomacy: [], economy: [], ambitions: [], firsts: [], decisions: [], leader: [], cabinet: [], opening: [], cities: [], groups: [], trade: [] };
   const ownersBefore = new Map(g.cities.map(c => [c.id, c.owner]));
   const pn = g.nations[PLAYER];
   const last = pn.history[pn.history.length - 1];
@@ -223,6 +223,8 @@ function runSeason(w, g, plan) {
     dispatch.diplomacy.push(`You left the ${nameOf(g, it.from)}'s envoy without an answer. They took it as a refusal.`);
   }
   expireDecisions(w, g, dispatch);
+  reviewEmbargoes(w, g, dispatch);   // rivals keep or lift their embargoes, by fixed rules (10t)
+  rivalPreferredSellers(w, g);
 
   for (const n of g.nations) n.navyUpkeep = g.sea ? navyUpkeep(g, n.id) : 0;
   // Rivals act on the decisions they made at the start of the season.
@@ -231,6 +233,7 @@ function runSeason(w, g, plan) {
     const menu = (plan && plan.menus && plan.menus[n.id]) || buildMenu(g, w, n);
     const orders = (plan && plan.orders && plan.orders[n.id]) || ruleOrders(g, w, n, menu);
     applyOrders(g, w, n, orders, menu, dispatch);
+    tradeEarlyWarning(w, g, n, menu, orders, dispatch);
   }
   cabinetSeasonStart(w, g, dispatch);
   const worksPaid = advanceWorks(w, g, dispatch);
@@ -301,6 +304,7 @@ function runSeason(w, g, plan) {
     noteFor(n, g, text, null);
   }
   for (const t of checkEliminations(g)) { dispatch.war.push(t); addChronicle(g, t, "bad", null); }
+  tradeForgetDead(g);
   for (const t of wars.news) addChronicle(g, t, "warn", null);
   dispatch.battles = wars.reports.filter(r => r.attacker === PLAYER || r.defender === PLAYER || sameSideAs(g, PLAYER, r.attacker) || sameSideAs(g, PLAYER, r.defender));
 
@@ -327,9 +331,15 @@ function runSeason(w, g, plan) {
     const store = monthsOfFood((P.granary && P.granary.stock) || 0, P.history.length ? P.history[P.history.length - 1].pop || 0 : 0);
     if (P.alive && (Math.abs(h - 1) >= 0.03 || dry)) dispatch.economy.push({ text: `The harvest is in: ${harvestWord(h)}, ${pct(h)} of a normal year${dry ? ", after the dry summer" : ""}. It feeds the nation until next autumn.${h < 0.95 ? (store >= 0.5 ? ` If the fields can't feed everyone, the national reserve (${fmt1(store)} months of food) makes up the rest while it lasts.` : " There is no grain in the national reserve to make up a shortfall.") : ""}`, tone: h < 0.95 ? "warn" : "good" });
   }
+  // merchants sign next season's contracts, with the harvest known (10s); the season's statistics then show them
+  noteEmbargoCuts(g);
+  for (const x of clearWorldTrade(w, g, { history: true })) { dispatch.trade.push(x); addChronicle(g, x.text, x.tone === "good" ? "good" : x.tone === "warn" ? "warn" : "neutral", PLAYER); }
+  refreshEmbargoes(w, g);
+  rivalFoodAid(w, g, dispatch);
   checkGrowthDeeds(w, g);
   checkFirsts(w, g, dispatch);
   if (g.nations[PLAYER].alive) checkAmbitions(w, g, dispatch);
+  cabinetConcernNews(w, g, dispatch);   // your ministers' worries, with this season's new trade contracts (10m)
   dispatch.decisions = storyteller(w, g, rng, dispatch);
   checkIntel(w, g, dispatch);
   pruneMods(g);

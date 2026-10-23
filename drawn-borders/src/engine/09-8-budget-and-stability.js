@@ -10,7 +10,8 @@ function computeBudget(n, econ, laws) {
   const services = econ.pop * SERVICE_LAWS[laws.services].costK / 4;
   const education = econ.pop * EDU_LAWS[laws.education || "basic"].costK / 4;
   const research = q * RESEARCH_LAWS[laws.research || "low"].share;
-  const tariffs = (econ.importBill || 0) / 4 * TRADE_LAWS[laws.trade || "balanced"].tariff;
+  // import tax on what pays duty (everything from the world market, and from nations without a trade agreement)
+  const tariffs = (econ.tariffBase ?? econ.importBill ?? 0) / 4 * TRADE_LAWS[laws.trade || "balanced"].tariff;
   const mil = n.mil || { men: n.soldiers || 0, value: 0 };
   const soldiersNext = mil.men, recruits = 0;
   const armyUpkeep = (mil.men * MIL.upkeepK) / 4e6 + mil.value * MIL.maintenance;

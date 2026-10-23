@@ -24,6 +24,7 @@ function turnboxHtml() {
 }
 
 function tooltipHtml(i) {
+  if (ui.phase === "play" && ui.tradeHover && !ui.hoverQuote) return tradeLaneTooltipHtml(ui.tradeHover);
   if (i < 0) return "";
   if (ui.phase === "play" && ui.hoverQuote) {
     const q = ui.hoverQuote;
@@ -102,6 +103,7 @@ function dispatchHtml(d) {
     ${warHtml}
     <div class="block"><span class="eyebrow">News</span>${newsHtml}</div>
     ${econHtml}
+    ${tradeDispatchHtml(d)}
     ${citiesDispatchHtml(d)}
     ${groupsDispatchHtml(d)}
     ${peopleDispatchHtml(d)}

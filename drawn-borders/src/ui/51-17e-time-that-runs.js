@@ -104,6 +104,7 @@ function seasonHeadlines(d) {
   for (const x of d.firsts || []) add(x.nid === PLAYER ? 70 : 44, "star", x.text, x.nid === PLAYER ? "good" : "neutral", { panel: "agenda" });
   for (const x of d.economy || []) add(x.tone === "bad" ? 64 : x.tone === "good" ? 55 : 40, /harvest|food|granar/i.test(x.text) ? "food" : /moved|people/i.test(x.text) ? "people" : "output", x.text, x.tone, { panel: "economy" });
   for (const t of d.diplomacy || []) add(mentionsMe(t) ? 62 : 46, "globe", t, "neutral", { panel: "nations" });
+  for (const x of d.trade || []) add(x.pause ? 94 : x.tone === "bad" ? 70 : x.tone === "warn" ? 62 : x.tone === "good" ? 52 : 40, "freighter", x.text, x.tone, { panel: "trade" });
   for (const a of d.abroad || []) {
     const t = `The ${nameOf(g, a.nid)}: ${a.text.charAt(0).toLowerCase()}${a.text.slice(1)}`;
     const big = /\bwar\b|civil war|collapsed|conquered|Grand Harbor|Railway|Academy|Stock Exchange|World's Fair|Monument|Atomic|Broadcasting|Fortresses|Great Dam/.test(a.text);
@@ -220,6 +221,8 @@ function autoPauseReason(d, before) {
   const fresh = g.inbox.filter(it => it.status === "open" && !before.inbox.includes(it.id));
   const letter = fresh.find(it => it.threat) || fresh[0];   // a demand first: it matters most
   if (letter) return { text: `${letter.threat ? "A demand" : "A letter"} from the ${nameOf(g, letter.from)} is waiting for your answer${fresh.length > 1 ? `, and ${fresh.length - 1} more letter${fresh.length > 2 ? "s" : ""}` : ""}.`, act: { label: "Read it", panel: "letters" } };
+  const cut = (d.trade || []).find(x => x.pause);   // a new embargo on food, fuel or what industry cannot do without
+  if (cut) return { text: shortLine(cut.text, 150), act: { label: "Trade", panel: "trade" } };
   if ((d.opening || []).some(x => x.tone === "bad")) return { text: shortLine(d.opening.find(x => x.tone === "bad").text, 150), act: { label: "Army", panel: "army" } };
   return null;
 }

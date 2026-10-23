@@ -1,9 +1,10 @@
 # Drawn Borders — Maz's strategy game
 
-A grand strategy game that runs in the browser. You draw your own country's borders on a generated world, then run it season by season against rival nations: economy from geography (mines, farms, factories, trade), roads and cities, army and navy, diplomacy and letters, ministers, interest groups, and people and work (ages, skills, wages, labour laws).
+A grand strategy game that runs in the browser. You draw your own country's borders on a generated world, then run it season by season against rival nations: economy from geography (mines, farms, factories), trade between nations (contracts, embargoes, grain and aid), roads and cities, army and navy, diplomacy and letters, ministers, interest groups, and people and work (ages, skills, wages, labour laws).
 
 - **Play**: double-click `drawn-borders.html` (Chrome or Edge). It is built from `src/` and committed, so it is always ready to play.
-- **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v34) and what each added, and ideas for next steps. Read it before big changes.
+- **Windows program** (since v35): `desktop/` wraps the same built file in Electron. Maz installs it from the GitHub Releases page.
+- **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v37) and what each added, and ideas for next steps. Read it before big changes.
 
 ## About the player (Maz)
 - English is his second language: explain things in **simple English**.
@@ -23,7 +24,30 @@ Until v33 the game was one hand-edited 2.1 MB file. Now the source is split into
 **After every change:**
 1. `node build.js` — rebuilds `drawn-borders.html`. Always commit it together with the source; `node build.js --check` fails if it is out of date.
 2. `node tests/engine.test.js [worlds] [seasons]` — plays whole worlds with the engine in Node (default 2 × 12) and checks nothing breaks and the save round-trips.
-3. `node tests/browser.test.js` — opens the built game in Chrome (Playwright), founds a nation, plays 3 seasons, fails on any error or broken characters; screenshot in `tests/out/`.
+3. `node tests/trade.test.js [worlds] [seasons]` — checks trade between nations (default 2 × 10): contracts are sane, the same game signs the same contracts, an embargo cuts supply and its preview says so, grain reaches a hungry nation, the book survives a save and old saves get one.
+4. `node tests/browser.test.js` — opens the built game in Chrome (Playwright), founds a nation, plays 3 seasons, opens the Trade panel and the trade statistics, fails on any error or broken characters; screenshots in `tests/out/`.
+5. At the end of a version only: `node tests/compare.js 8 40 new.json` here and on the previous version (`git worktree add /tmp/old <commit>`, folder `/tmp/old/drawn-borders`), then `node tests/compare.js --diff old.json new.json` (output, stability, wars, the opening war, season time). It takes about 15 minutes of computer time but very little usage.
+
+## How we work (Maz's choice after v37: the same quality, less usage)
+v37 (trade) took about a day and a half and hit the usage limit many times. Most of that went to helper agents (each one re-reads the code from scratch, and their work was lost when the limit cut them off), not to the tests. So:
+- **No helper agents or parallel workers** unless Maz asks for them. Build it yourself, one part after another, committing and pushing after each part.
+- **A short plan, then build.** For a big feature: read the code it touches, give Maz a plan of about 10 lines in simple English, and start when he says yes. No separate research or critic rounds; review your own design against the code instead.
+- **Big ideas in parts** he can play between (each part finished, tested and released), rather than one giant version.
+- **Quality stays the same**: run the quick tests (steps 1–4) after each part; run the 8-world comparison (step 5) once at the end of a version; look at a screenshot of every new or changed screen (once, not again and again).
+- **A new chat for each new feature.** Keep this file and `game-plan.md` up to date, so a fresh chat knows everything it needs.
+
+## Trade between nations (since v37)
+- **The merchants' book** `game.trade` (saved): once a season, at the end of `runSeason` after the harvest, `clearWorldTrade` signs the next season's contracts — who sells what to whom — by the price at the buyer's border (world price, transport by road, caravan or sea, import tax unless there is a trade agreement, the middlemen's cut from beyond the map). What no nation can sell or buy goes to the world market through harbors and trade partners. No randomness: ties go by nation id.
+- `computeEconomy` only **reads** the book (it never writes it). A war, an embargo or a lost harbor cuts a contract at once; merchants make quick deals with spare goods between seasons. Worlds imagined to weigh a choice (`hypothetical`) share the book; `{embargo}`, `{lift}` and `{noReroute}` change it there.
+- Files: `engine/25b-…` (book, prices, links, embargoes, food aid, read helpers such as `tradeOf`, `tradeWith`, `tradeOffers`, `tradeRisks`, `embargoPreview`), `engine/25c-…` (rivals' trade decisions: embargoes, lifting, food aid, early warnings), `ui/54b-…` (Trade panel), `ui/51b-…` (Nations, letters, season report), `ui/42b-…` (trade on the map), Statistics "Trade" view in `ui/45-17c-…`.
+- Old saves get a book when they load (`tradeMigrate`); a fault in the clearing never stops a season (the old contracts stand).
+
+## The Windows program (`desktop/`, `package.json`)
+- `desktop/main.js` opens `drawn-borders.html` in its own window (maximized, F11 full screen, one copy at a time, links open in the normal browser). `desktop/preload.js` gives the page `window.desktop` = `{ savesFolder, saveFile(name, data) }`; "Export to file" uses it to write to `Documents\Drawn Borders\Saves`. Autosaves and named saves stay in localStorage, which Electron keeps in the user's AppData.
+- The game must still work without `window.desktop` (browser, claude.ai): check for it, never require it.
+- `npm install`, then `npm start` runs it; `npm run dist` builds the installer (on Windows).
+- **Releasing**: bump `version` in `package.json` when the game changes, and push. On every push to `main` or a `claude/**` branch that touches `drawn-borders/`, the workflow `.github/workflows/drawn-borders-windows.yml` checks the build, plays two worlds, builds `Drawn-Borders-Setup-<version>.exe` on Windows and publishes it on the Releases page as `drawn-borders-v<version>` (only a new version is published; pushes without a version bump just check that the installer still builds). Not code-signed: Windows shows "Windows protected your PC" → More info → Run anyway.
+- Claude features (letters, ministers' answers, account saves) need claude.ai's `window.claude`; in the program they fall back to the built-in rules.
 
 New sections: add a new numbered file in the right folder (pick a number between its neighbors, e.g. `31b-...js`, since names sort as text). Anything before section 13 belongs in `engine/` and must not touch the browser.
 

@@ -80,10 +80,14 @@ function whyFood() {
   const fish = econ.regions.reduce((s, r) => s + (r.fish || 0), 0);
   const hv = econ.harvest || 1;
   const G = econ.granary, months = monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop);
-  const spare = econ.food - econ.pop;
+  const fin = econ.foodIn || 0, fout = econ.foodOut || 0;
+  const spare = econ.food + fin - fout - econ.pop;
+  const T = econ.trade || {};
   const rows = [
     { label: "Farms and fishing can feed", sub: `this year's harvest: ${harvestWord(hv)} (${pct(hv)} of normal)`, value: fmtPop(econ.food) },
     ...(fish > 0.005 ? [{ label: "of which fishing", value: fmtPeople(fish) }] : []),
+    ...(fin > 0.001 ? [{ label: "Bought abroad", sub: tradeWhoShort(T.importsFrom && T.importsFrom.food, "from", fin, 3), value: `+${fmtPeople(fin)}`, tone: "good" }] : []),
+    ...(fout > 0.001 ? [{ label: "Sold abroad", sub: tradeWhoShort(T.exportsTo && T.exportsTo.food, "to", fout, 3), value: `−${fmtPeople(fout)}` }] : []),
     { label: "People to feed", value: fmtPop(econ.pop) },
     { label: spare >= 0 ? "To spare" : "Short", value: fmtPeople(Math.abs(spare)), tone: spare >= 0 ? "good" : "bad", total: true },
     { sec: "National food reserve" },
@@ -92,7 +96,7 @@ function whyFood() {
   if (G && G.release > 0.0005) rows.push({ label: "Handed out this season", sub: "the fields can't feed everyone", value: `${fmtPeople(G.release * 4)} fed`, tone: "warn" });
   if (G && G.fill > 0.0005) rows.push({ label: "Bought from your farms this season", value: fmtMoneyFine(G.fill * GRAN.priceB) });
   if (econ.famineShare > 0.001) rows.push({ label: "People short of food", value: pct(econ.famineShare), tone: "bad" });
-  return whyCard("Food", `${pct(econ.food / Math.max(0.01, econ.pop))} of need${G && G.release > 0.0005 ? " + store" : ""}`, rows, "Towns joined by road share their food. Irrigation and fishing add more; the reserve feeds the towns joined to the capital when a harvest fails.");
+  return whyCard("Food", `${pct(econ.food / Math.max(0.01, econ.pop))} of need${G && G.release > 0.0005 ? " + store" : fin > 0.01 * econ.pop ? " + imports" : ""}`, rows, "Towns joined by road share their food. Grain bought abroad feeds hungry towns before the reserve is opened. Irrigation and fishing add more; the reserve feeds the towns joined to the capital when a harvest fails.");
 }
 function whyStability() {
   const n = game.nations[PLAYER], fc = forecast(world, game, PLAYER, n.laws);
@@ -155,7 +159,7 @@ function showWhy(target) {
   const fn = WHY[target.dataset.why];
   if (!fn || !game || ui.phase === "draw" || ui.play) return;
   const el = whyEl();
-  try { el.innerHTML = fn(); } catch (e) { el.hidden = true; return; }
+  try { el.innerHTML = fn(target); } catch (e) { el.hidden = true; return; }
   el.hidden = false;
   const r = target.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
   const x = clamp(r.left + r.width / 2 - w / 2, 8, window.innerWidth - w - 8);
@@ -237,6 +241,8 @@ function granaryBlockHtml(econ) {
       <div class="row"><span>Grain in store<span class="sub">enough to feed all your people for ${fmtNum(months)} months</span></span><span class="num">${fmtNum(stock * 0.25)} Mt</span></div>
       ${(b.granaryFill || 0) > 0.0005 ? `<div class="row"><span>Bought from your farms this season</span><span class="num">${fmtMoneyFine(-(b.granary || 0))}</span></div>` : ""}
       ${last && last.release > 0.0005 && last.turn === game.turn - 1 ? `<div class="row"><span>Handed out last season<span class="sub">the harvest fell short</span></span><span class="num tone-warn">${fmtPeople(last.release * 4)} fed</span></div>` : ""}
+      ${(econ.foodIn || 0) > 0.001 ? `<div class="row"><span>Grain bought abroad<span class="sub">${escapeHtml(tradeWhoShort(econ.trade.importsFrom.food, "from", econ.foodIn, 3))}</span></span><span class="num">${fmtPeople(econ.foodIn)} fed a year</span></div>` : ""}
+      ${(econ.foodOut || 0) > 0.001 ? `<div class="row"><span>Grain sold abroad<span class="sub">${escapeHtml(tradeWhoShort(econ.trade.exportsTo.food, "to", econ.foodOut, 3))}</span></span><span class="num">${fmtPeople(econ.foodOut)} fed a year</span></div>` : ""}
       <div class="row"><span>This year's harvest<span class="sub">brought in each autumn; it feeds the nation for a year</span></span><span class="num tone-${(econ.harvest || 1) < 0.95 ? "warn" : (econ.harvest || 1) > 1.02 ? "good" : "neutral"}">${pct(econ.harvest || 1)} of normal</span></div>
       <div class="row"><span>Lost to damp and rats</span><span class="num">${pct(GRAN.spoil)} a season</span></div>
     </div>

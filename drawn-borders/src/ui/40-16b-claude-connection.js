@@ -62,12 +62,13 @@ function newComposer(to, terms = []) {
 function composerTermOptions(g, to) {
   const war = atWar(g, PLAYER, to);
   const opts = war ? [["peace", "Peace"]] : [["trade", "Trade agreement"], ["nap", "Non-aggression pact"], ["alliance", "Defensive alliance"], ["border", "Border accord"]];
-  return opts.concat([["payment", "One-off payment"], ["tribute", "Payment each season"], ["city", "Hand over a town"]]);
+  return opts.concat(liftTermOptions(g, to), [["payment", "One-off payment"], ["tribute", "Payment each season"], ["city", "Hand over a town"]]);
 }
 
 function readComposerTerm(c) {
   const g = game;
   if (["trade", "nap", "alliance", "border", "peace"].includes(c.termType)) return { type: c.termType };
+  if (/^lift_/.test(c.termType)) return readLiftTerm(c);
   if (c.termType === "payment" || c.termType === "tribute") {
     const amount = Math.round(Number(c.amount) * 2) / 2;
     const t = { type: c.termType, from: c.dir === "us" ? PLAYER : c.to, amount };
@@ -199,6 +200,7 @@ function envoyImpactLines(g, w, it) {
       if (city) lines.push(t.from === PLAYER ? `You lose ${city.name} and ${fmtMoney(regionValue(w, g, city).gdp)} of output a year` : `You gain ${city.name}`);
     }
     if (t.type === "peace") lines.push("The war ends; occupied land returns to its owners unless handed over");
+    if (t.type === "lift_embargo") lines.push(...liftImpactLines(g, w, t, it.from, it.terms));
   }
   if (it.threat) {
     const ratio = armyPower(g, it.from) / Math.max(1, armyPower(g, PLAYER));
@@ -209,7 +211,7 @@ function envoyImpactLines(g, w, it) {
 
 function envoyCardHtml(it) {
   const g = game, n = g.nations[it.from];
-  const label = { call: "Call to arms", warning: "Warning", declaration: "Declaration of war", demand_tribute: "Demand", demand_city: "Demand", peace: "Peace offer", peace_demand: "Peace offer", peace_concede: "Peace offer" }[it.kind] || "Proposal";
+  const label = { call: "Call to arms", warning: "Warning", declaration: "Declaration of war", demand_tribute: "Demand", demand_city: "Demand", peace: "Peace offer", peace_demand: "Peace offer", peace_concede: "Peace offer", embargo: "Embargo" }[it.kind] || (it.terms.some(t => t.type === "lift_embargo") ? "Trade" : "Proposal");
   const status = { accepted: "You accepted", declined: "You declined", ignored: "You left it unanswered", void: "No longer possible", info: "" }[it.status] || "";
   const impact = it.status === "open" ? envoyImpactLines(g, world, it) : [];
   const actions = it.status === "open" ? `<div class="actions">
@@ -363,6 +365,7 @@ function rivalCardHtml(n) {
       <div><span>Towns</span><span class="num">${econ.cities.length}</span></div>
     </div>
     <div class="block" style="gap:6px"><span class="eyebrow">Treaties with you</span><div class="chips">${chips}</div>${cancelAsk}</div>
+    ${rivalTradeHtml(n)}
     ${rivalCabinetHtml(n)}
     ${rivalGroupsHtml(n)}
     ${rivalPeopleHtml(n)}
@@ -389,12 +392,13 @@ function nationRowHtml(n) {
   const war = atWar(g, PLAYER, n.id);
   const tr = treatiesBetween(g, n.id, PLAYER).map(t => TREATY_INFO[t.type].label.toLowerCase());
   const d = gap(world, g, PLAYER, n.id);
-  const status = war ? `<span class="tone-bad">at war</span>` : tr.length ? escapeHtml(tr.join(", ")) : d === 0 ? "neighbor" : "";
+  const status = war ? `<span class="tone-bad">at war</span>` : tradeRowEmbargo(n.id) ? `<span class="tone-bad">embargo</span>${tr.length ? ` · ${escapeHtml(tr.join(", "))}` : ""}` : tr.length ? escapeHtml(tr.join(", ")) : d === 0 ? "neighbor" : "";
+  const tradeNote = war ? "" : tradeRowNote(n.id);
   const open = ui.openNation === n.id;
   return `<button class="nation-row ${open ? "on" : ""}" type="button" data-action="nation-open" data-nid="${n.id}" aria-expanded="${open}" style="--c:${n.color}">
     <span class="swatch"></span>
     <span class="nr-main"><strong>${escapeHtml(n.name)}</strong><span class="muted small">${n.minor ? "City-state" : ARCHETYPES[n.archetype].label} · ${n.leader ? escapeHtml(leaderName(n)) : ""}</span></span>
-    <span class="nr-side"><span class="num tone-${toneOf(op)}">${signed(op)}</span><span class="small muted">${status}</span>${riskPillHtml(n.id)}</span>
+    <span class="nr-side"><span class="num tone-${toneOf(op)}">${signed(op)}</span><span class="small muted">${status}</span>${tradeNote ? `<span class="small muted">${escapeHtml(tradeNote)}</span>` : ""}${riskPillHtml(n.id)}</span>
   </button>`;
 }
 

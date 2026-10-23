@@ -4,7 +4,7 @@
 const SITE_COLORS = { mine: "#9db4c9", coalmine: "#3b3632", goldmine: "#e3be45", oilfield: "#5a4a6e", logging: "#6f8f45", fishing: "#4f9fcf" };
 const RES_COLORS = { 1: "#a9c3dc", 2: "#b79a7a", 3: "#a77fd0", 4: "#e9c247" };
 const SPARK_COLORS = { mine: "#a9c3dc", coalmine: "#b79a7a", goldmine: "#e9c247", oilfield: "#a77fd0", logging: "#8fb35a", fishing: "#6fb6e0" };
-function aAn(word) { return /^[aeiou]/i.test(word) ? "an" : "a"; }
+function articleFor(word) { return /^[aeiou]/i.test(word) ? "an" : "a"; }   // just the article: aAn() (10o) gives "an oil field"
 const PRICE_COLORS = { timber: "#8fb35a", metals: "#9db4c9", coal: "#b79a7a", oil: "#a77fd0", gold: "#e3be45" };
 const PRICE_LABELS = { timber: "Timber", metals: "Metals", coal: "Coal", oil: "Oil and gas", gold: "Gold" };
 
@@ -343,7 +343,7 @@ function depositDetailHtml(i, t) {
   if (mine) {
     const reach = econ.reach && econ.reach.get(i);
     const q = quoteSite(world, game, PLAYER, i, kind, econ);
-    if (q.ok) actions += `<button class="btn primary" type="button" data-action="site-build" data-cell="${i}" data-kind="${kind}">Open ${aAn(def.label)} ${def.label.toLowerCase()} · ${fmtMoney(q.cost)}</button>`;
+    if (q.ok) actions += `<button class="btn primary" type="button" data-action="site-build" data-cell="${i}" data-kind="${kind}">Open ${articleFor(def.label)} ${def.label.toLowerCase()} · ${fmtMoney(q.cost)}</button>`;
     else if (!reach) {
       const qr = bestAccessRoad(world, game, PLAYER, i, econ);
       actions += qr.ok ? `<button class="btn primary" type="button" data-action="site-road" data-cell="${i}">Build a road here from ${escapeHtml(qr.from.name)} · ${fmtMoney(qr.cost)}</button>` : `<p class="muted small">${escapeHtml(qr.reason)}</p>`;
@@ -362,7 +362,7 @@ function depositDetailHtml(i, t) {
       ${!knowSize ? `<p class="muted small">A surface guess. A survey measures it exactly and may find more deposits nearby.</p>` : ""}
     </div>
     <div class="block">
-      <span class="eyebrow">${aAn(def.label) === "an" ? "An" : "A"} ${def.label.toLowerCase()} here</span>
+      <span class="eyebrow">${articleFor(def.label) === "an" ? "An" : "A"} ${def.label.toLowerCase()} here</span>
       <p class="small">${escapeHtml(ind.does)} Each level employs ${fmtWorkers(ind.workers * (0.85 + 0.15 * (DIFFICULTY[world.terrain[i]] || 1)))} workers and produces about ${escapeHtml(fmtSiteOutput(kind, perLevel))}. It can grow to level ${clamp(1 + Math.floor(world.depTotal[i] / RES[t].perLevel), 1, def.maxLevel)}.</p>
       ${mine ? "" : owner >= 0 ? `<p class="muted small">It belongs to the ${escapeHtml(game.nations[owner].name)}.</p>` : `<p class="muted small">Wild land. Found a town nearby to claim it.</p>`}
     </div>

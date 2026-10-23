@@ -70,7 +70,7 @@ const AMBITIONS = {
       return k ? { good: k, w: 1.5 } : null;
     },
     title: a => `Make all the ${GOODS[a.good].label.toLowerCase()} we need`,
-    why: a => `We depend on others for ${GOODS[a.good].label.toLowerCase()}. In a war or a trade dispute, that dependence could cripple us.`,
+    why: (a, g) => { const d = g && g.trade ? dependence(g, PLAYER, a.good)[0] : null; return `We depend on others for ${GOODS[a.good].label.toLowerCase()}${d && d.share >= 0.2 ? ` (${pct(d.share)} of it comes from the ${nameOf(g, d.from)})` : ""}. In a war or a trade dispute, that dependence could cripple us.`; },
     progress: (c, a) => { const G = c.econ.goods; const f = G.demand[a.good] > 0 ? G.supply[a.good] / G.demand[a.good] : 1; return { cur: f, need: 1, frac: Math.min(1, f), text: `We make ${pct(Math.min(9.99, f))} of what we use`, done: f >= 0.999 }; },
     reward: () => [{ t: "mod", key: "amb_selfsuff", label: "Proud of our own industry", stab: 3, seasons: 8 }],
   },
@@ -84,11 +84,28 @@ const AMBITIONS = {
   },
   exports: {
     cat: "Trade", icon: "coin", seasons: 12, prestige: 12,
-    offer: c => (c.econ.access > 0 ? { target: roundNice(Math.max(4, c.econ.exportValue * 1.6 + 2)), w: 1 } : null),
+    offer: c => (tradeOpen(c.econ) ? { target: roundNice(Math.max(4, c.econ.exportValue * 1.6 + 2)), w: 1 } : null),
     title: a => `Earn ${fmtMoney(a.target)} a year from exports`,
     why: () => "Selling abroad brings in money, friends and influence.",
     progress: (c, a) => ({ cur: c.econ.exportValue, need: a.target, frac: c.econ.exportValue / a.target, text: `${fmtMoney(c.econ.exportValue)} of ${fmtMoney(a.target)}`, done: c.econ.exportValue >= a.target }),
     reward: c => [{ t: "money", v: Math.round(c.Y * 0.005 * 10) / 10 }],
+  },
+  diversify: {
+    // a key good bought mostly from one nation (the engine's trade risks, 10s): find a second seller
+    cat: "Trade", icon: "coin", seasons: 12, prestige: 10,
+    offer: c => {
+      if (!c.g.trade || !c.g.trade.v) return null;
+      const r = tradeRisks(c.w, c.g, PLAYER, c.econ, { cheap: true }).find(x => x.share >= 0.6 && TRADE.key.includes(x.k) && x.from >= 0);
+      return r ? { good: r.k, from: r.from, share: sr(r.share, 3), w: 1.3 + (r.level >= 2 ? 1 : 0) } : null;
+    },
+    title: a => `Find a second seller of ${goodWord(a.good)}`,
+    why: (a, g) => `We buy ${pct(a.share)} of our ${goodWord(a.good)} from the ${nameOf(g, a.from)}. If they stopped selling, we would go short. Another seller (a trade agreement, a trade road, a harbor) or more of our own would make us safer.`,
+    progress: (c, a) => {
+      const d = dependence(c.g, PLAYER, a.good).find(x => x.from === a.from);
+      const sh = d ? d.share : 0, met = a.good === "food" ? 1 - c.econ.famineShare : c.econ.sat[a.good] ?? 1;
+      return { cur: sh, need: 0.4, frac: clamp((a.share - sh) / Math.max(0.01, a.share - 0.4), 0, 1), text: `${pct(sh)} from the ${nameOf(c.g, a.from)} now, need 40% or less with 90% of our need met (now ${pct(met)})`, done: sh <= 0.4 && met >= 0.9 };
+    },
+    reward: () => [{ t: "mod", key: "amb_supplies", label: "Safe supplies", stab: 2, seasons: 8 }],
   },
   debt: {
     cat: "Wealth", icon: "coin", seasons: 16, prestige: 18,
@@ -139,12 +156,19 @@ const AMBITIONS = {
   trade: {
     cat: "Diplomacy", icon: "globe", seasons: 10, prestige: 10,
     offer: c => {
-      const z = liveNations(c.g).filter(z => z.id !== PLAYER && !atWar(c.g, PLAYER, z.id) && !hasTreaty(c.g, PLAYER, z.id, "trade") && opinionDetail(c.g, z.id, PLAYER).value > -25)
-        .sort((a, b) => opinionDetail(c.g, b.id, PLAYER).value - opinionDetail(c.g, a.id, PLAYER).value)[0];
-      return z ? { nid: z.id, w: 1.2 } : null;
+      // a nation that could sell us what we now buy at the middlemen's price, or go without, comes first (10s)
+      const op = new Map(), lack = new Map();
+      for (const z of liveNations(c.g)) if (z.id !== PLAYER) op.set(z.id, opinionDetail(c.g, z.id, PLAYER).value);
+      const cands = liveNations(c.g).filter(z => z.id !== PLAYER && !atWar(c.g, PLAYER, z.id) && !hasTreaty(c.g, PLAYER, z.id, "trade") && op.get(z.id) > -25);
+      for (const z of cands) lack.set(z.id, sellsWhatWeLack(c.g, PLAYER, z.id));
+      const useful = id => lack.get(id).v >= 0.002 * c.Y;
+      const z = cands.sort((a, b) => (useful(b.id) ? 1 : 0) - (useful(a.id) ? 1 : 0) || op.get(b.id) - op.get(a.id) || a.id - b.id)[0];
+      return z ? { nid: z.id, goods: useful(z.id) ? lack.get(z.id).goods.slice(0, 3) : [], linked: lack.get(z.id).linked, w: 1.2 + (useful(z.id) ? 0.4 : 0) } : null;
     },
     title: (a, g) => `Sign a trade agreement with the ${nameOf(g, a.nid)}`,
-    why: () => "Trade partners buy our goods and sell us what we lack. Write to them in the Nations panel.",
+    why: (a, g) => a.goods && a.goods.length
+      ? `The ${nameOf(g, a.nid)} has ${bJoin(a.goods.map(goodWord))} to spare, which we now buy from the world market at the middlemen's price, or go without. A trade agreement ends the import tax between us${a.linked ? "" : "; no route joins us yet, but a trade road or a harbor could open one"}. Write to them in the Nations panel.`
+      : "Trade partners buy our goods and sell us what we lack. Write to them in the Nations panel.",
     progress: (c, a) => { const ok = hasTreaty(c.g, PLAYER, a.nid, "trade"); return { cur: ok ? 1 : 0, need: 1, frac: ok ? 1 : 0, text: ok ? "Signed" : "Not yet signed", done: ok, lost: !c.g.nations[a.nid].alive }; },
     reward: c => [{ t: "money", v: Math.round(c.Y * 0.003 * 10) / 10 }],
   },

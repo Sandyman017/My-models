@@ -1,0 +1,65 @@
+# Builds the Drawn Borders Windows installer on every change (a check that it still builds), and publishes it on
+# the Releases page as "drawn-borders-v<version from package.json>" when that version is new. Bump the version in
+# package.json to release. Also runs from "Run workflow" on the Actions tab.
+name: Drawn Borders for Windows
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths: ["drawn-borders/**", ".github/workflows/drawn-borders-windows.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: drawn-borders
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: drawn-borders/package-lock.json
+      - run: npm ci
+      - name: The built game matches the source
+        run: node build.js --check
+      - name: Play two worlds with the game rules
+        run: node tests/engine.test.js 2 8
+      - name: Check trade between nations
+        run: node tests/trade.test.js 2 8
+      - name: Build the installer
+        run: npx electron-builder --win nsis --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Drawn-Borders-Setup
+          path: drawn-borders/release/*.exe
+      - name: Read the version
+        id: version
+        shell: bash
+        run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Is this version already published?
+        id: exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "drawn-borders-v${{ steps.version.outputs.v }}" >/dev/null 2>&1; then echo "yes=1" >> "$GITHUB_OUTPUT"; else echo "yes=0" >> "$GITHUB_OUTPUT"; fi
+      - name: Publish on the Releases page (new versions only, so work in progress never replaces a release)
+        if: steps.exists.outputs.yes == '0'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: drawn-borders-v${{ steps.version.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Drawn Borders ${{ steps.version.outputs.v }}
+          make_latest: true
+          files: drawn-borders/release/*.exe
+          body: |
+            **To install:** download `Drawn-Borders-Setup-….exe` below and run it.
+            Windows may say "Windows protected your PC": click **More info**, then **Run anyway** (the game is not signed with a paid certificate).
+            The game installs for you only, adds a desktop icon and starts by itself. Press F11 for full screen.
+            Saved games stay on this computer; "Export to file" puts a copy in Documents\Drawn Borders\Saves.

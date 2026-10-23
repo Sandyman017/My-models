@@ -14,7 +14,7 @@ function serializeGame(g) {
     prices: g.prices, priceShock: g.priceShock, priceHist: g.priceHist, lastLetter: g.lastLetter, ver: g.ver,
     divisions: g.divisions, airwings: g.airwings, battles: g.battles, extraDeposits: g.extraDeposits || [],
     story: g.story, decisions: g.decisions, amb: g.amb, works: g.works, firsts: g.firsts, era: g.era || 0, intel: g.intel || {},
-    sea: g.sea || null, depth: 1,
+    sea: g.sea || null, trade: g.trade || null, opening: g.opening || null, cabSalt: g.cabSalt, topCity: g.topCity, depth: 1,
   };
 }
 function deserializeGame(s) {
@@ -37,6 +37,12 @@ function deserializeGame(s) {
   g.amb = { offers: [], active: [], log: [], offersTurn: -1, ...(s.amb || {}) };
   g.sea = s.sea || null;
   if (g.sea) seaState(g);
+  g.trade = s.trade || null;
+  if (g.trade) ensureTrade(g);
+  // kept since v37 (they were lost on every reload before): the neighbour's opening claim, the ministers' salt, the top city
+  if (s.opening) g.opening = s.opening;
+  if (s.cabSalt !== undefined) g.cabSalt = s.cabSalt;
+  if (s.topCity !== undefined) g.topCity = s.topCity;
   for (const c of g.cities) if (c.port && !c.portLvl) c.portLvl = 1;
   if (g.assembly) for (const t of g.assembly.topics) for (const m of t.msgs) if (m.pending) { m.pending = false; if (!m.text) m.text = m.fallback; }
   for (const L of g.letters) if (L.status !== "done") { L.status = "done"; L.reply = L.reply || "(The reply was lost when the page closed. Their decision still stands.)"; }
@@ -82,6 +88,7 @@ function restore(saved) {
     }
     refreshCities(world, game, { init: !saved.game.cities.some(c => c.imp !== undefined) });
     for (const n of game.nations) if (n.alive) ensureGroups(world, game, n);
+    if (!saved.game.trade) tradeMigrate(world, game);   // saves from before trade between nations: merchants sign their first contracts, quietly
     ui.phase = saved.phase;
   } else if (Array.isArray(saved.drawCells)) {
     applyClaimResult({ ok: true, cells: saved.drawCells, droppedCells: 0 });

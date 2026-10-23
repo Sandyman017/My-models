@@ -78,6 +78,9 @@ function onPointerMove(e) {
       return;
     }
   }
+  const lh = game && ui.phase === "play" && !ui.hoverQuote && !ui.dispatch ? tradeLaneAt(mapPx(e).px, mapPx(e).py) : null;
+  if ((lh && lh.lane) !== (ui.tradeHover && ui.tradeHover.lane)) scheduleMapRender();
+  ui.tradeHover = lh;
   const tip = document.getElementById("tooltip");
   const html = ui.dispatch ? "" : tooltipHtml(cell);
   tip.hidden = !html;
@@ -92,7 +95,7 @@ function onPointerMove(e) {
 }
 
 function onPointerLeave() {
-  ui.hoverCell = -1; ui.hoverQuote = null; ui.hoverPath = null; ui.fleetHover = null;
+  ui.hoverCell = -1; ui.hoverQuote = null; ui.hoverPath = null; ui.fleetHover = null; ui.tradeHover = null;
   document.getElementById("tooltip").hidden = true;
   scheduleMapRender();
 }
@@ -246,7 +249,7 @@ function foundNation() {
     const rc = game.cities.find(c => c.owner === n.id && c.capital);
     return `the ${n.name} to the ${directionWord(cap, rc.cell)}`;
   });
-  addChronicle(game, `${name} is founded. Its neighbors: ${rivals.join(" and ")}.`, "neutral", PLAYER);
+  addChronicle(game, `${name} is founded. Its neighbors: ${bJoin(rivals)}.`, "neutral", PLAYER);
   bumpMap();
   startDeliberation();
 }

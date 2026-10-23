@@ -981,3 +981,70 @@ details.mreport[open] > summary::before { content: "▾"; }
 ul.mrep { margin: 4px 0 4px 14px; padding: 0; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.4; }
 ul.mrep li { list-style: none; position: relative; padding-left: 10px; }
 ul.mrep li::before { content: "·"; position: absolute; left: 0; color: var(--gold); font-weight: 700; }
+
+/* ===== v37 trade: D (Trade panel, Economy, food, dock) ===== */
+/* the dock sizes its buttons to the window: --n buttons share the height between the top bar and the zoom box */
+.dock { --db: clamp(26px, calc((100vh - 150px) / var(--n, 17) / 1.17), 46px); gap: clamp(3px, calc(var(--db) * 0.17), 8px); padding: clamp(4px, calc(var(--db) * 0.17), 8px); }
+.dock .dock-btn { width: var(--db); height: var(--db); }
+.dock .dock-btn svg { width: calc(var(--db) * 0.48); height: calc(var(--db) * 0.48); }
+.dock .dock-sep { margin: 1px 8px; }
+.dock .dock-btn .badge { min-width: clamp(13px, calc(var(--db) * 0.4), 18px); height: clamp(13px, calc(var(--db) * 0.4), 18px); font-size: clamp(9px, calc(var(--db) * 0.23), 10.5px); top: -5px; right: -6px; }
+.btn.small { padding: 4px 9px; font-size: 12px; font-weight: 500; }
+.btn.small.on { border-color: var(--gold); color: var(--gold); }
+.trade-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.row .trade-btns { margin-top: 6px; }
+.trade-head { display: grid; grid-template-columns: 10px minmax(0, 1fr) 84px 84px; gap: 8px; padding: 0 10px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.trade-head span:nth-child(n+3) { text-align: right; }
+.trade-list { display: grid; gap: 4px; }
+.trade-row { box-sizing: border-box; display: grid; grid-template-columns: 10px minmax(0, 1fr) 84px 84px; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; background: var(--panel-2); border: 1px solid transparent; border-radius: 6px; color: inherit; font: inherit; }
+button.trade-row { cursor: pointer; }
+button.trade-row:hover { border-color: var(--c); }
+.trade-row.on { border-color: var(--c); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.trade-row .swatch { width: 10px; height: 26px; border-radius: 3px; background: var(--c); }
+.trade-row.world .swatch { background: repeating-linear-gradient(45deg, var(--c) 0 3px, transparent 3px 6px); }
+.trade-row .tr-main { display: grid; gap: 1px; min-width: 0; }
+.trade-row .tr-main strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.trade-row .tr-num { display: grid; justify-items: end; gap: 0; min-width: 0; }
+.trade-row .tr-num .num { font-family: var(--font-mono); font-size: 12.5px; }
+.trade-row .tr-num .small { max-width: 84px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.trade-card { display: grid; gap: 8px; padding: 8px 10px 10px; margin: -4px 0 4px; background: var(--panel); border: 1px solid var(--c); border-top: 0; border-radius: 0 0 6px 6px; }
+.trade-card p { margin: 0; }
+.trade-stress { display: grid; gap: 4px; padding: 8px; border-radius: 6px; background: var(--panel-2); }
+.trade-goods tr.trade-good { cursor: pointer; }
+.trade-goods tr.trade-good:hover td, .trade-goods tr.trade-good.on td { background: var(--panel-2); }
+.trade-goods td .num { font-family: var(--font-mono); }
+.trade-goods tr.trade-why > td { padding: 0 0 10px; }
+.trade-detail { display: grid; gap: 8px; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.trade-detail p { margin: 0; }
+.trade-detail .regions td { padding-top: 4px; padding-bottom: 4px; }
+.trade-goods th { white-space: nowrap; }
+.trade-price { border-bottom: 1px dotted var(--muted); cursor: help; font-family: var(--font-mono); }
+.trade-star { background: none; border: 0; padding: 0 5px 0 0; color: var(--faint); cursor: pointer; font-size: 13px; line-height: 1; }
+.trade-star:hover { color: var(--gold); }
+.trade-star.on { color: var(--gold); }
+.trade-emb { gap: 8px; }
+.emb-step { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; align-items: start; }
+.emb-step > .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding-top: 4px; }
+.emb-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg-chip { font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+.seg-chip:hover { border-color: var(--muted); }
+.seg-chip.on { background: var(--gold); border-color: var(--gold); color: #1c1608; }
+.seg-chip:focus-visible, .trade-star:focus-visible, .trade-price:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.trade-idea { padding: 6px 0 6px 10px; border-left: 3px solid var(--c); font-size: 13px; }
+.trade-idea ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 4px; font-size: 12.5px; color: var(--fg); }
+.trade-idea .btn.small { margin-left: 4px; padding: 2px 8px; }
+/* ===== end D =====
+
+/* ===== v37 trade: E (Statistics) ===== */
+.st-matrix.trade td { width: 46px; min-width: 46px; font-size: 11px; cursor: default; }
+.st-matrix.trade td.tot { background: transparent; color: var(--muted); width: 56px; }
+.st-matrix.trade td.emb { background-image: repeating-linear-gradient(45deg, transparent 0 4px, color-mix(in srgb, var(--div-neg) 70%, transparent) 4px 6px); }
+.st-matrix.trade td.emb.part { background-image: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--div-neg) 45%, transparent) 6px 7px); }
+.st-key .sw.hatch { background: repeating-linear-gradient(45deg, var(--div-mid) 0 3px, var(--div-neg) 3px 4px); }
+/* ===== end E =====
+
+/* ===== v37 trade: F (map) ===== */
+/* ===== end F ===== */
+
+/* ===== v37 trade: G (nations, letters, news) ===== */
+/* ===== end G ===== */

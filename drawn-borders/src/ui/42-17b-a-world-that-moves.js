@@ -278,6 +278,7 @@ function trafficEdges() {
     const oa = game.owner[a], ob = game.owner[b];
     const occupied = game.occ[a] >= 0 || game.occ[b] >= 0;
     if (occupied) continue;
+    if (oa !== ob && oa >= 0 && ob >= 0 && !tradePairTrades(oa, ob)) continue;   // a road across a border has carts only while the two trade
     const trade = oa !== ob || oa < 0;
     const lanes = trade ? 2 : 1;
     for (let l = 0; l < lanes; l++) out.push({ a, b, trade, phase: hash2(a, b + l * 7, 3), speed: 0.18 + 0.12 * hash2(b, a, 9), dir: hash2(a + l, b, 5) < 0.5 });

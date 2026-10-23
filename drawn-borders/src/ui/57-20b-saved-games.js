@@ -11,7 +11,7 @@
 Object.assign(ICONS, { save: giSvg("delapouite/save"), cloud: giSvg("delapouite/cloud-upload") });
 const SAVE_FORMAT = "drawn-borders-save";
 const SAVE_VERSION = 6;                         // version 5 saves (before version 18 of the game) load as they are
-const GAME_BUILD = 33;
+const GAME_BUILD = 37;
 const LOCAL_KEYS = { auto: SAVE_KEY, earlier: "drawn-borders/save-earlier-raw", rescued: "drawn-borders/save-rescued", slots: "drawn-borders/slots", slot: "drawn-borders/slot/" };
 const SAVE_LIMITS = { named: 10, earlier: 3, chunk: 200000 };
 const SAVES = {
@@ -429,7 +429,11 @@ async function exportSave(id) {
     const file = JSON.stringify({ format: SAVE_FORMAT, v: data.v, build: data.build || GAME_BUILD, savedAt: data.savedAt || new Date().toISOString(), meta, data: await packSave(data) });
     const name = fileNameFor(meta);
     const dl = window.claude && typeof window.claude.use === "function" ? await window.claude.use("downloads") : null;
-    if (dl) {
+    if (window.desktop) {
+      // the Windows program: straight into the game's own Saves folder, no download dialog
+      const where = await window.desktop.saveFile(name, file);
+      SAVES.notice = `Saved the file ${name} in ${where}.`;
+    } else if (dl) {
       try { await dl.save({ filename: name, data: file }); SAVES.notice = `Saved the file ${name}.`; }
       catch (e) { SAVES.notice = e && e.code === "declined" ? "The download was cancelled." : "The file couldn't be saved here."; }
     } else {
@@ -519,6 +523,8 @@ function savesHtml() {
   const busy = S.busy ? "disabled" : "";
   const store = SAVES.status === "cloud"
     ? `<p class="save-where good">${ICONS.cloud} Saved in your Claude account at the end of every season. Your saves follow you to any browser or computer where you open this game.</p>`
+    : window.desktop
+      ? `<p class="save-where good">${ICONS.cloud} Saved on this computer at the end of every season. Export a file to keep an extra copy in ${escapeHtml(window.desktop.savesFolder)}.</p>`
     : SAVES.status === "cloud-error"
       ? `<p class="save-where warn">${ICONS.cloud} Your Claude account couldn't take saves just now, so they are kept in this browser. Export a file to keep a safe copy.</p>`
       : `<p class="save-where warn">${ICONS.cloud} Saves are kept in this browser only${window.claude ? "" : " (this copy of the game runs outside Claude)"}. Export a file to keep a safe copy.</p>`;

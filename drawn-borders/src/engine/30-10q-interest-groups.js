@@ -170,6 +170,11 @@ function groupTerms(w, g, n, econ, L, k, ctx) {
     else if (ctx.growth !== null && ctx.growth < 0) T(`A shrinking economy (${pct1(ctx.growth)} in a year)`, -6);
     if (n.crisisUntil > g.turn) T("A banking crisis", -10);
     if (ctx.atWar) T(ARMS_ORDER.indexOf(L.arms || "low") >= 3 ? "War brings arms contracts" : "War disrupts trade", ARMS_ORDER.indexOf(L.arms || "low") >= 3 ? 3 : -4);
+    // trade between nations (10s): our own bans cost the exporters; a rival's ban hurts our merchants
+    const ban = ourBanLoss(g, n);
+    if (ban) T(ban.v >= 0.005 ? `Our trade bans cost exporters ${bMoney(ban.v)} a year (goods nobody else buys)` : "Our trade bans (merchants dislike them)", banTerm(ban.v, econ));
+    const hit = [...new Set(embargoesOn(g, n.id).filter(e => g.nations[e.by] && g.nations[e.by].alive).map(e => e.by))];
+    if (hit.length) T(hit.length === 1 ? `The ${nameOf(g, hit[0])}'s trade ban hurts our merchants` : `Trade bans by ${bJoin(hit.map(b => `the ${nameOf(g, b)}`))} hurt our merchants`, -2);
   } else if (k === "army") {
     T(`Conscription: ${ARMY_LAWS[L.army].label.toLowerCase()}`, { small: -12, standard: -4, large: 3, mobilized: 6 }[L.army] || 0);
     T(`Arms production: ${ARMS_LAWS[L.arms || "low"].label.toLowerCase()}`, { none: -10, low: -4, medium: 0, high: 4, war: 6 }[L.arms || "low"] || 0);
@@ -187,6 +192,7 @@ function groupTerms(w, g, n, econ, L, k, ctx) {
     if (L.army === "mobilized") T("Total mobilization takes the farm hands", -4);
     const irr = (econ.cities || []).filter(c => c.irrigated).length;
     if (irr) T(`Irrigated fields (${irr} town${irr > 1 ? "s" : ""})`, Math.min(3, irr));
+    if (embargoesBy(g, n.id).some(e => e.dir !== "buy" && (e.k === "food" || (e.k === "all" && e.food)))) T("Our ban on selling grain abroad", -3);
   } else if (k === "faith") {
     T(`${EDU_LAWS[L.education || "basic"].label} schools`, { minimal: 3, basic: 0, good: -2, excellent: -5 }[L.education || "basic"] || 0);
     T(`${SERVICE_LAWS[L.services].label} help for the poor`, { minimal: -4, basic: 0, good: 2, generous: 3 }[L.services] || 0);
@@ -194,6 +200,7 @@ function groupTerms(w, g, n, econ, L, k, ctx) {
     else if (ctx.atWar && ctx.wars.some(x => x.sideB.includes(n.id))) T("Defending the homeland", 2);
     if (n.stability < 35) T("Disorder in the country", -5);
     if (L.trade === "free") T("Foreign goods and foreign ways", -2);
+    if (((g.trade && g.trade.aid) || []).some(a => a.from === n.id && g.turn - a.turn < 8)) T("We fed the hungry abroad", 2);
   }
   peopleGroupTerms(n, econ, L, k, T);
   // their people in the government
@@ -202,6 +209,53 @@ function groupTerms(w, g, n, econ, L, k, ctx) {
   const s = groupOf(n, k);
   if (s) for (const m of groupModsActive(g, s)) T(m.label, m.v);
   return out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+}
+/* What our own embargoes cost our exporters, a year: goods we have left unsold that the nations we embargo still
+   buy from the world market or go without (what they would buy from us without the ban). Read from the book.
+   `skip`: leave one embargo out (what lifting it would change). */
+function ourBanLoss(g, n, skip) {
+  const E = embargoesBy(g, n.id).filter(e => g.nations[e.on] && g.nations[e.on].alive && e.id !== skip);
+  if (!E.length) return null;
+  const T = g.trade, ix = tradeIndex(g), left = {};
+  let v = 0;
+  for (const e of E) {
+    if (e.dir === "buy") continue;
+    for (const k of TRADE_GOODS) {
+      if (!embargoCovers(e, k)) continue;
+      if (!(k in left)) left[k] = (T.unsold[k] || [])[n.id] || 0;
+      if (left[k] <= 1e-4) continue;
+      const theirWorld = ((ix.into[e.on] || {})[k] || []).filter(f => f.s < 0).reduce((s, f) => s + f.q, 0);
+      const q = Math.min(left[k], ((T.unmet[k] || [])[e.on] || 0) + theirWorld);
+      left[k] -= q;
+      v += goodWorth(g, k, q);
+    }
+  }
+  return { v, count: E.length };
+}
+// business people's mood about our trade bans: −1, and −4 more for each 1% of output our exporters lose (at most −8)
+function banTerm(v, econ) { return -clamp(1 + 4 * 100 * v / Math.max(1, econ.gdp), 1, 8); }
+function grainBanOf(g, nid, skip) { return embargoesBy(g, nid).some(e => e.id !== skip && e.dir !== "buy" && (e.k === "food" || (e.k === "all" && e.food))); }
+/* How a new embargo of ours would move the groups' mood while it lasts (the same terms as groupTerms): business by
+   the sales our exporters would lose (from the embargo preview), farmers when it stops grain sales. */
+function banGroupDelta(g, n, econ, lost, food) {
+  const cur = ourBanLoss(g, n), out = {};
+  const b = Math.round(banTerm((cur ? cur.v : 0) + Math.max(0, lost), econ) - (cur ? banTerm(cur.v, econ) : 0));
+  if (b) out.business = b;
+  if (food && !grainBanOf(g, n.id)) out.farmers = -3;
+  return out;
+}
+/* And what lifting one of our embargoes would give back. */
+function liftGroupDelta(g, n, econ, e) {
+  const cur = ourBanLoss(g, n), rest = ourBanLoss(g, n, e.id), out = {};
+  const b = Math.round((rest ? banTerm(rest.v, econ) : 0) - (cur ? banTerm(cur.v, econ) : 0));
+  if (b) out.business = b;
+  if (grainBanOf(g, n.id) && !grainBanOf(g, n.id, e.id)) out.farmers = 3;
+  return out;
+}
+/* "Business −3, Farmers −3 (approval, while it lasts)": the lasting mood change of a trade action, for its order. */
+function lastingGroupText(d, when) {
+  const parts = GROUP_ORDER.filter(k => d[k]).map(k => `${GROUPS[k].short} ${signed(d[k])}`);
+  return parts.length ? `${parts.join(", ")} (approval, ${when})` : "";
 }
 function groupTarget(w, g, n, econ, L, k, ctx) {
   return Math.round(clamp(50 + groupTerms(w, g, n, econ, L, k, ctx || groupCtx(w, g, n, econ)).reduce((s, t) => s + t.value, 0), 5, 95) * 10) / 10;
@@ -231,7 +285,7 @@ const GROUP_DEMANDS = {
     { key: "trade", applies: (n) => lawIs(n, "trade", ["protect"]), met: (n) => !lawIs(n, "trade", ["protect"]), law: () => ({ law: "trade", value: "balanced" }), label: () => "End protectionism (balanced or free trade)" },
     { key: "banks", applies: (n) => lawIs(n, "finance", ["strict"]), met: (n) => !lawIs(n, "finance", ["strict"]), law: () => ({ law: "finance", value: "balanced" }), label: () => "Ease the banking rules (balanced or loose)" },
     { key: "debt", applies: (n, c) => c.budget && c.budget.debtRatio > 0.8, met: (n, c) => !c.budget || c.budget.debtRatio < 0.6, label: () => "Bring the debt below 60% of a year's output" },
-    { key: "free", applies: (n, c) => lawIs(n, "trade", ["balanced"]) && (n.groups.business.share || 0) >= 0.25 && c.econ.access > 0, met: (n) => lawIs(n, "trade", ["free"]), law: () => ({ law: "trade", value: "free" }), label: () => "Free trade" },
+    { key: "free", applies: (n, c) => lawIs(n, "trade", ["balanced"]) && (n.groups.business.share || 0) >= 0.25 && tradeOpen(c.econ), met: (n) => lawIs(n, "trade", ["free"]), law: () => ({ law: "trade", value: "free" }), label: () => "Free trade" },
   ],
   army: [
     { key: "winback", applies: (n, c) => !!c.lost, met: (n, c, d) => !!c.econ.cities.find(z => z.id === d.cityId), gone: (g, n, c, d) => { const city = g.cities.find(z => z.id === d.cityId); return !city || city.origin !== n.id; }, label: (n, c) => `Win back ${c.lost.name}`, extra: (n, c) => ({ cityId: c.lost.id }), deadline: 16 },
@@ -416,6 +470,7 @@ const DEC_GROUPS = {
   bridge: { a: { business: 2 } },
   fair: { a: { business: 3 } },
   oldquarter: { a: { faith: 4, business: -3 }, b: { business: 4, faith: -5 }, c: { faith: 1, business: 1 } },
+  embargoed: { a: { business: 2 }, b: { business: 1, faith: 1 }, c: { army: 2, business: -3 }, d: { business: -2 }, e: { business: 3, army: -2 } },
 };
 function decisionGroupEffects(key, d) {
   const T = DEC_GROUPS[key];

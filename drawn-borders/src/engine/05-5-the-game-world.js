@@ -306,6 +306,7 @@ function setupGame(w, playerCells, playerName, seed) {
   refreshCities(w, g, { init: true });
   for (const n of g.nations) ensurePeople(w, g, n);
   for (const n of g.nations) if (n.alive) ensureGroups(w, g, n);
+  tradeMigrate(w, g);   // the first contracts between nations (10s)
   return g;
 }
 
