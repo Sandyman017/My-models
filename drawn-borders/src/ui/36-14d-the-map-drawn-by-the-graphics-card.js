@@ -3842,6 +3842,33 @@ function drawRoute(c, cs, cells, color, width, dash) {
   c.restore();
 }
 
+function mpNum(v) { return String(Math.round(v * 10) / 10); }
+/* Road steps of a route in blue over the dashes, and a numbered dot where each season's march ends. */
+function drawRouteSteps(c, cs, start, steps) {
+  c.save();
+  c.lineCap = "round";
+  let from = start;
+  for (const st of steps) {
+    if (st.road) {
+      const [x1, y1] = cellCenter(from, cs), [x2, y2] = cellCenter(st.cell, cs);
+      c.strokeStyle = "rgba(12,9,6,0.8)"; c.lineWidth = 5; c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+      c.strokeStyle = "#8fd0ff"; c.lineWidth = 2.8; c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    }
+    from = st.cell;
+  }
+  steps.forEach((st, k) => {
+    const last = k === steps.length - 1;
+    if (!last && steps[k + 1].season === st.season) return;
+    if (last && steps.length && st.season === (steps[0].season) && steps.every(x => x.season === st.season)) return;
+    const [x, y] = cellCenter(st.cell, cs), r = clamp(cs * 0.22, 6, 9);
+    c.fillStyle = "rgba(12,9,6,0.85)"; c.beginPath(); c.arc(x, y, r + 1.5, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#f3dc9a"; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#1a1408"; c.font = `700 ${Math.round(r * 1.3)}px "IBM Plex Sans", system-ui, sans-serif`; c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(String(st.season), x, y + 0.5);
+  });
+  c.restore();
+}
+
 function drawUnitPaths(c, cs) {
   const sel = new Set(ui.sel);
   const seen = new Set();
@@ -3867,7 +3894,10 @@ function drawUnitPaths(c, cs) {
   if (hp && hp.cells && !ui.play) {
     drawRoute(c, cs, hp.cells, "rgba(12,9,6,0.75)", 4.5, [4, 4]);
     drawRoute(c, cs, hp.cells, hp.attack ? "#ff8a5c" : "#f3dc9a", 2.4, [4, 4]);
+    if (hp.steps) drawRouteSteps(c, cs, hp.cells[0], hp.steps);
   }
+  // the selected divisions' own routes: roads and season ends too
+  if (!ui.play) for (const d of selectedDivs()) if (d.path && d.path.length && !(hp && hp.cells)) drawRouteSteps(c, cs, d.cell, pathSchedule(world, game, d, d.path).steps);
   if (hp && hp.seaCells && !ui.play) {
     drawRoute(c, cs, hp.seaCells, "rgba(4,12,20,0.75)", 4.5, [4, 4]);
     drawRoute(c, cs, hp.seaCells, hp.bad ? "#ff8a5c" : hp.attack ? "#ffb38a" : "#9fd3ee", 2.4, [4, 4]);
@@ -3912,9 +3942,7 @@ function placeName(cell) {
 }
 function pathSeasons(d) {
   if (!d.path || !d.path.length) return 0;
-  let cost = 0, from = d.cell;
-  for (const c of d.path) { cost += moveCost(world, game, d.type, from, c, d.owner); from = c; }
-  return Math.max(1, Math.ceil(cost / DIV_TYPES[d.type].mp)) + (d.training || 0);
+  return pathSchedule(world, game, d, d.path).seasons;
 }
 function natoSvg(type) {
   const inner = type === "inf" ? '<path d="M1 1L21 13M21 1L1 13"/>' : type === "arm" ? '<ellipse cx="11" cy="7" rx="6.5" ry="3.6"/>' : type === "art" ? '<circle cx="11" cy="7" r="2.4" fill="currentColor"/>' : '<path d="M3 9c3-5 6-6 8-6s5 1 8 6M11 3v8"/>';
@@ -3960,19 +3988,29 @@ function orderMove(target, force) {
     }
     if (sea && sea.fail && (!land || force)) { ui.hoverPath = null; flashHint(sea.fail); return; }
   }
-  let ok = 0, eta = 0, refusal = null;
+  let ok = 0, eta = 0;
+  const stay = [], later = [];
+  const foes = game.divisions.filter(e => e.cell === target && atWar(game, PLAYER, e.owner)).length;
   for (const d of divs) {
-    if (d.cell === target) { d.path = []; d.auto = false; d.voyage = null; ok++; continue; }
+    if (d.cell === target) { d.path = []; d.auto = false; d.voyage = null; d.order = null; ok++; continue; }
     const p = findDivPath(world, game, d, target);
-    if (!p) { refusal = moveRefusal(d, target); continue; }
+    if (!p) { stay.push(`the ${d.name} stays: ${moveRefusal(d, target).replace(/^The [^ ]+ [^ ]+ can't/, "it can't").replace(/\.$/, "")}`); continue; }
     d.path = p.path; d.auto = false; d.voyage = null; ok++;
-    eta = Math.max(eta, p.seasons + (d.training || 0));
+    d.order = { cell: target, attack: foes > 0, turn: game.turn };
+    const sc = pathSchedule(world, game, d, p.path);
+    eta = Math.max(eta, sc.seasons);
+    const P = divMovePoints(game, d);
+    if (P.mp <= 0) later.push(`the ${d.name} starts later: ${P.why[0]}`);
+    else if (P.why.length) later.push(`the ${d.name} is slow: ${P.why[0]}`);
   }
   ui.hoverPath = null;
-  if (!ok) { flashHint(refusal); return; }
-  const foes = game.divisions.filter(e => e.cell === target && atWar(game, PLAYER, e.owner)).length;
+  const notes = [];
+  if (foes && ok > MIL.maxAttackers) notes.push(`only ${MIL.maxAttackers} divisions can attack one place at once (the strongest go first)`);
+  else if (!foes && ok > MIL.maxStack) notes.push(`one place holds at most ${MIL.maxStack} of your divisions: the others stop next to it`);
+  const tail = [...stay, ...later, ...notes].map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(". ");
+  if (!ok) { flashHint(tail || moveRefusal(divs[0], target)); return; }
   const what = foes ? `attack ${placeName(target)} (${foes} enemy division${foes > 1 ? "s" : ""} there)` : eta ? `march to ${placeName(target)}` : "hold here";
-  flashHint(`${ok} division${ok > 1 ? "s" : ""} ordered to ${what}${eta ? ` · about ${eta} season${eta > 1 ? "s" : ""}` : ""}. Orders are carried out when the season ends.`);
+  flashHint(`${ok === divs.length ? "" : `${ok} of ${divs.length}: `}${ok} division${ok > 1 ? "s" : ""} ordered to ${what}${eta ? ` · about ${eta} season${eta > 1 ? "s" : ""}` : ""}. They move when the season ends.${tail ? ` ${tail}.` : ""}`);
 }
 
 function hoverRoute(cell, force) {
@@ -3985,10 +4023,13 @@ function hoverRoute(cell, force) {
   if (sea && sea.plan) return { cells: [lead.cell, ...sea.plan.landPath], seaCells: sea.plan.sea, attack: sea.plan.defenders > 0, bad: !sea.plan.enough || sea.plan.threats.some(x => x.hostile), text: seaHoverText(sea.plan, p) };
   if (!p) return { cells: null, text: sea && sea.fail ? sea.fail : moveRefusal(lead, cell), bad: true };
   const foes = game.divisions.filter(e => e.cell === cell && atWar(game, PLAYER, e.owner));
-  const s = p.seasons + (lead.training || 0);
+  const sc = pathSchedule(world, game, lead, p.path);
+  const s = sc.seasons;
+  const roadSteps = sc.steps.filter(x => x.road).length;
   return {
-    cells: [lead.cell, ...p.path], attack: foes.length > 0,
+    cells: [lead.cell, ...p.path], steps: sc.steps, attack: foes.length > 0,
     text: (foes.length ? `Right-click to attack ${foes.length} enemy division${foes.length > 1 ? "s" : ""} · ${s} season${s > 1 ? "s" : ""} to reach` : `Right-click to march here · ${s} season${s > 1 ? "s" : ""}`)
+      + ` · ${mpNum(sc.total)} movement points, ${mpNum(sc.mp)} a season${roadSteps ? ` · ${roadSteps} of ${sc.steps.length} steps on roads (blue)` : ""}`
       + (!force && s >= 2 && canShipTroops() && beachSeaCell(world, cell) >= 0 ? " · Shift+right-click to go by sea" : "") + routeWeatherNote(lead, p.path),
   };
 }
@@ -4018,7 +4059,20 @@ function divisionCardHtml(d) {
     ${gaugeHtml("Organization", d.org, pct(d.org))}
     <p class="muted small">${equipText(d)} · ${expLevel(d.exp).label.toLowerCase()} (${pct(d.exp)} experience)${d.battles ? ` · ${d.battles} battle${d.battles > 1 ? "s" : ""}${d.wins ? `, ${d.wins} won` : ""}` : ""}${d.entrench > 0.05 ? ` · dug in +${pct(d.entrench)}` : ""}</p>
     <p class="small tone-${st.tone}">${escapeHtml(st.text)} · ${d.auto ? "under the generals" : "under your orders"}</p>
+    ${divMoveHtml(d)}
   </div>`;
+}
+/* Movement points: how far it goes this season, and why fewer than its kind's full points. */
+function divMoveHtml(d) {
+  const P = divMovePoints(game, d);
+  const last = !d.auto && d.lastMove && d.lastMove.turn === game.turn - 1 ? marchText(world, game, d) : null;
+  return `<p class="small">Movement: <b>${mpNum(P.mp)}</b> of ${P.full} points a season${P.why.length ? ` <span class="tone-warn">(${escapeHtml(P.why.join("; "))})</span>` : ""}</p>${last ? `<p class="small muted">Last season it ${escapeHtml(last)}</p>` : ""}`;
+}
+/* What each step costs, this season. */
+function moveCostsHtml() {
+  const sw = seasonWar(game);
+  const extra = (sw.offRoad || sw.rugged) ? ` <span class="tone-warn">${escapeHtml(sw.name)}: off the roads +${mpNum(sw.offRoad || 0)}${sw.rugged && sw.rugged !== sw.offRoad ? ` (+${mpNum(sw.rugged)} in hills and mountains)` : ""}.</span>` : "";
+  return `<p class="muted small">Each step costs movement points: road 0.5 · plains ${MOVE_COST[T.PLAINS]} · forest ${MOVE_COST[T.FOREST]} · hills ${MOVE_COST[T.HILLS]} · mountains ${MOVE_COST[T.MOUNTAIN]} · a river with no bridge +1 (a great river +1.5${sw.frozen ? "; frozen now: free" : ""}) · enemy land +0.5 · tanks ×1.5 off the plains. Infantry has ${DIV_TYPES.inf.mp} points a season, artillery ${DIV_TYPES.art.mp}, tanks ${DIV_TYPES.arm.mp}. A march stops when it meets the enemy; one place holds ${MIL.maxStack} of your divisions, and ${MIL.maxAttackers} can attack it at once.${extra}</p>`;
 }
 
 function selectionHtml() {
@@ -4026,12 +4080,13 @@ function selectionHtml() {
   if (!divs.length) return "";
   const anyAuto = divs.some(d => d.auto), anyManual = divs.some(d => !d.auto);
   const cards = divs.length <= 2 ? divs.map(divisionCardHtml).join("")
-    : `<table class="regions divlist"><tbody>${divs.map(d => { const st = divStatus(d); return `<tr data-action="select-div" data-id="${d.id}"><td>${natoSvg(d.type)}${escapeHtml(d.name)}</td><td class="num">${pct(menFill(d) * equipFill(d))}</td><td class="num">${pct(d.org)}</td><td class="small tone-${st.tone}">${escapeHtml(st.text.split(" · ")[0])}</td></tr>`; }).join("")}</tbody></table>
-      <p class="muted small">Columns: strength, organization. Click one to look at it alone.</p>`;
+    : `<table class="regions divlist"><tbody>${divs.map(d => { const st = divStatus(d); return `<tr data-action="select-div" data-id="${d.id}"><td>${natoSvg(d.type)}${escapeHtml(d.name)}</td><td class="num">${pct(menFill(d) * equipFill(d))}</td><td class="num">${pct(d.org)}</td><td class="num" title="Movement points this season">${mpNum(divMovePoints(game, d).mp)}</td><td class="small tone-${st.tone}">${escapeHtml(st.text.split(" · ")[0])}</td></tr>`; }).join("")}</tbody></table>
+      <p class="muted small">Columns: strength, organization, movement points this season. Click one to look at it alone.</p>`;
   return `<div class="block selection">
     <div class="law-head"><span class="eyebrow">Selected · ${divs.length} division${divs.length > 1 ? "s" : ""}</span><button class="linkbtn" type="button" data-action="clear-sel">Clear</button></div>
-    <p class="small">Right-click the map to march or attack. Shift-click or drag a box to select more.</p>
+    <p class="small">Right-click the map to march or attack. Shift-click or drag a box to select more. On the route, blue is road and the numbers show where each season's march ends.</p>
     ${cards}
+    ${moveCostsHtml()}
     <div class="actions">
       <button class="btn" type="button" data-action="halt-sel">Halt <kbd>H</kbd></button>
       ${anyManual ? `<button class="btn" type="button" data-action="auto-sel">Hand to the generals <kbd>G</kbd></button>` : ""}
@@ -4225,7 +4280,7 @@ function playerRaise(type) {
 function setSelAuto(auto) {
   for (const d of selectedDivs()) { d.auto = auto; if (auto) { d.path = []; d.voyage = null; } }
 }
-function haltSel() { for (const d of selectedDivs()) { d.path = []; d.auto = false; d.voyage = null; } }
+function haltSel() { for (const d of selectedDivs()) { d.path = []; d.auto = false; d.voyage = null; d.order = null; } }
 function disbandSel() {
   const divs = selectedDivs();
   divs.forEach(d => disbandDivision(game, d));

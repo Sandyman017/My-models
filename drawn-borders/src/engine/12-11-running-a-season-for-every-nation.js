@@ -277,6 +277,7 @@ function runSeason(w, g, plan) {
   }
 
   const wars = runMilitarySeason(w, g, rng, dispatch);
+  dispatch.marches = marchNews(w, g, PLAYER);   // how your marches went, and why some stopped
 
   for (const p of advanceProjects(w, g)) {
     const n = g.nations[p.nid];
