@@ -291,7 +291,7 @@ Eleven small ideas were offered and Maz said "Go". Seven are in this version; th
 - **Checks** (headless, against v32): 8 whole worlds × 40 seasons give the same wars and conquests and the same stability (55.5 against 55.8), world output 3% lower after 10 years; the opening war with three kinds of new player over 8 worlds is about the same (one world worse, one better). Invariants over many seasons (shares add up, ages and skills in range, wages and pensions sensible, saves round-trip, old saves get people) hold. Seasons about 8% slower. The old browser suites (ministers, saves 40/40, real-time play, ministers' files) and the new People test pass (the saves test needed longer waits because this machine loads the page slowly, about 20 s, the same for v32).
 - File 2.13 MB, 26781 lines. Files: scratchpad/v33 (splice33.py builds on the v32 splices; people-engine.js and people-ui.js are the new sections; splice33-engine.py and splice33-ui.py hook them in; inv33.js and ui33.py are the checks).
 
-## Next: provinces (agreed with Maz after v37; Part 1 is done in v38, Part 2 next)
+## Next: provinces (agreed with Maz after v37; Parts 1 and 2 are done in v38.0 and v38.1, Part 3 next)
 Why Maz wants it: the game is about drawing borders, and this brings that back for the whole game. His model is **the United States**: a country, states (provinces) each with a capital, and inside them cities, towns and villages. Everything applies to rival nations too.
 
 **Decisions**
@@ -310,7 +310,7 @@ Why Maz wants it: the game is about drawing borders, and this brings that back f
 5. The old "provincial seat" program (at most 2) becomes the province capitals; keep its total effect on stability and the like the same as before (check with `tests/compare.js`).
 6. Rivals draw and redraw provinces; old saves load with provinces.
 
-**Part 2**: governors, the money for each province, the needs report. **Part 3**: a big village can become a town; a map mode colouring provinces by any number.
+**Part 2 (done in v38.1)**: governors, the money for each province, the needs report. **Part 3**: a big village can become a town; a map mode colouring provinces by any number.
 
 ## Next steps (ideas)
 1. **Elections** (the next step for the groups): parties backed by the groups, an election every few years that changes the government; and revolutions when a furious group is strong enough.
@@ -376,4 +376,13 @@ Why Maz wants it: the game is about drawing borders, and this brings that back f
 - Also: three project skills for Claude (`play-and-look`, `balance-check`, `release`) with `tests/look.js` (play the built game and screenshot any screen) and `tests/balance.sh` (compare two versions on the same 8 worlds in one command).
 - **Checks** (headless, against v37, 8 worlds × 40 seasons, passive player): the opening war starts in the same season in 8 of 8 worlds; world output −0.8% (one world −20% after its war went differently, the others −4% to +7%); stability 56.4 against 56.4; wars 1.75 against 1.75 a world, towns taken the same; no famine; trade agreements 4.6 against 5.9 a world (fewer in some worlds as their histories part); seasons as fast as before (+0.7%). Province capitals alone change no nation's output or stability at the start; their offices cost each nation $0.2–0.3B a season. A v37 save with a provincial seat loads with provinces (the seat becomes a province capital) and plays on. Engine, trade and browser tests pass (the browser test now divides the country and opens the Provinces panel).
 - GAME_BUILD 38, installer version 38.0.0.
+
+### Version 38.1: provinces, part 2 — governors and the money for each province (Maz: "do part 2")
+- **Money for each province**: in the Provinces panel every province has four buttons: None, Small, Normal (the start), Large: 0, 0.1%, 0.2% or 0.4% of the province's own output a year, paid every season from the national treasury (a new budget line, "Money for the provinces"). A province with no town of its own gets nothing (its people are counted in a town of another province).
+- **Governors**: every full province has a governor with a name (no traits, no corruption, no coups); a territory's money is spent by the Interior ministry. Each season the governor spends the money on what the province's own numbers say it needs, so provinces spend on different things: **public works** where more than 4% of workers have no job (real jobs at the town's service wage), **police, clinics and festivals** in unhappy towns (mood up to +7), **schools and local officials** in conquered towns that still feel foreign (loyalty up to +1.4 a season), and **local roads and markets** with what is left (output up to +2%). The money is split by how big each need is, and inside a need by town. The effects last a season and show in each town's mood, loyalty and jobs, named "paid by the province".
+- **Needs report** at the top of the Provinces panel: the most pressing needs of all provinces, with the numbers (who is jobless, which town is unhappy, which feels foreign) and what more money would do; and what money from a province can't fix, with who can: hunger (grain, a road to farmland, irrigation) and towns cut off from the capital (a road, or a harbor and freighters). Each province card shows its needs and what its governor spent last season, and the season report has a "Provinces" section.
+- **Rivals** set their provinces' money once a year by the same numbers: more where there are needs and when rich, less when the treasury is in debt and losing money.
+- Old saves: every province starts at Normal and gets its governor.
+- **Checks**: CHECKS_PLACEHOLDER
+- GAME_BUILD 38, installer version 38.1.0.
 
