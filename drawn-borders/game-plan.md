@@ -391,6 +391,6 @@ Why Maz wants it: the game is about drawing borders, and this brings that back f
 - **The route on the map**: the road parts are blue, and a numbered dot marks where each season's march ends. The hover text gives the total points and the points a season. Season counts now follow the real rule (a division stops when the next step costs more than it has left), so they are honest where they were a little too short before (`pathSchedule`).
 - **The order message names who won't go and why**: "the 3rd Infantry stays: it can't …", "the 1st Armored starts later: still training", "is slow: short of fuel", and warns when more divisions are sent than one place holds or can attack.
 - **The season report has "Your orders"**: for every division under your command, what happened to its march: reached, still on the way (and how many seasons more), stopped next to an enemy army, waiting because the place is full, the way closed (no war with that nation, order cancelled), attacked and thrown back (order cancelled: give a new one), won and marching on, or "reached it, but the enemy division had already left". The division card says the same under "Last season".
-- **Checks**: the same worlds give exactly the same results as v38.1 (the rules are unchanged). Engine, trade and browser tests pass.
+- **Checks**: 3 worlds × 20 seasons give exactly the same numbers as v38.1 (output, stability, wars, the opening war): the rules are unchanged. Engine, trade and browser tests pass.
 - GAME_BUILD 38, installer version 38.2.0.
 
