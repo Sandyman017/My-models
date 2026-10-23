@@ -10,7 +10,12 @@ const { chromium } = require("playwright");
 (async () => {
   const out = path.join(__dirname, "out");
   fs.mkdirSync(out, { recursive: true });
-  const browser = await chromium.launch({ args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
+  // cloud sessions have a Chromium at /opt/pw-browsers/chromium that may not match the Playwright version
+  const opts = { args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] };
+  const browser = await chromium.launch(opts).catch(e => {
+    if (fs.existsSync("/opt/pw-browsers/chromium")) return chromium.launch({ ...opts, executablePath: "/opt/pw-browsers/chromium" });
+    throw e;
+  });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
