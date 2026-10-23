@@ -291,6 +291,27 @@ Eleven small ideas were offered and Maz said "Go". Seven are in this version; th
 - **Checks** (headless, against v32): 8 whole worlds × 40 seasons give the same wars and conquests and the same stability (55.5 against 55.8), world output 3% lower after 10 years; the opening war with three kinds of new player over 8 worlds is about the same (one world worse, one better). Invariants over many seasons (shares add up, ages and skills in range, wages and pensions sensible, saves round-trip, old saves get people) hold. Seasons about 8% slower. The old browser suites (ministers, saves 40/40, real-time play, ministers' files) and the new People test pass (the saves test needed longer waits because this machine loads the page slowly, about 20 s, the same for v32).
 - File 2.13 MB, 26781 lines. Files: scratchpad/v33 (splice33.py builds on the v32 splices; people-engine.js and people-ui.js are the new sections; splice33-engine.py and splice33-ui.py hook them in; inv33.js and ui33.py are the checks).
 
+## Next: provinces (agreed with Maz after v37; build Part 1 first)
+Why Maz wants it: the game is about drawing borders, and this brings that back for the whole game. His model is **the United States**: a country, states (provinces) each with a capital, and inside them cities, towns and villages. Everything applies to rival nations too.
+
+**Decisions**
+- Places by size: town, city, large city, metropolis (by population), and **villages that appear by themselves** where people live in the countryside (farmland, mines, fishing coasts). No counties between province and town.
+- Provinces are **drawn by the player**: at the founding, after the country, 3–4 provinces with the same pen (**optional**: "Divide it for me" does it). Later a Provinces tool splits (draw a line), joins or moves borders. The player names provinces (the game suggests names) and chooses each capital (not necessarily the biggest city, like Albany).
+- **Territories**: a province with no town yet is run from the national capital, like a US territory; it can become a full province once a town grows there.
+- Redrawing works **like real life**: a new province costs money and about 2 seasons (its capital's government offices). New towns and conquered land join the nearest province until redrawn; conquered land has no special identity.
+- Governors (Part 2): they manage their province from its numbers (some provinces spend more on some things than others), **no traits, corruption or coups**. **The player decides how much money each province gets**, and a report shows what each province needs. One set of national laws for now (provinces differ in spending, not laws).
+- Rivals get provinces by the same rules and redraw as they grow. Old saves get provinces drawn automatically at load.
+
+**Part 1 (first): provinces and places on the map**
+1. Town sizes shown with real names; villages appear and grow or shrink by themselves, visible only when zoomed in. Villages do **not** change the economy in Part 1 (those people are already counted; we only show where they live).
+2. Provinces: a province id for every cell of a nation; the optional drawing step at the founding; territories; the Provinces tool (split, join, move, with cost and time); new land joins the nearest province.
+3. Map: thin province lines inside every country, names when zoomed in, a mark on province capitals.
+4. A simple Provinces panel: each province's capital, cities, towns and villages, people, output, output per person, growth (sums of its towns, no new rules).
+5. The old "provincial seat" program (at most 2) becomes the province capitals; keep its total effect on stability and the like the same as before (check with `tests/compare.js`).
+6. Rivals draw and redraw provinces; old saves load with provinces.
+
+**Part 2**: governors, the money for each province, the needs report. **Part 3**: a big village can become a town; a map mode colouring provinces by any number.
+
 ## Next steps (ideas)
 1. **Elections** (the next step for the groups): parties backed by the groups, an election every few years that changes the government; and revolutions when a furious group is strong enough.
 2. The rest of the v20 ideas: rivals who remember for years, coalitions against conquerors (town character is done: v31 cities). City ideas for later: city buildings chosen one by one (hospitals, police, stadiums), suburbs that spill into the next district, city-states and free cities, rail between cities.
