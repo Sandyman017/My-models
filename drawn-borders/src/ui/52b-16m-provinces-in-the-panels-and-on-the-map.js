@@ -282,28 +282,41 @@ function drawProvinceLabels(c, cs) {
   if (!sh.provLabels || !sh.provLabels.length) return;
   const tint = provShowTints();
   const az = smooth01(1.45, 1.9, view.zoom) * (1 - 0.6 * smooth01(3.5, 5, view.zoom));
-  for (const l of sh.provLabels) {
+  const taken = (view.townBoxes || []).concat((view.siteBoxes || []).map(b => ({ x0: b.x - b.r, x1: b.x + b.r + 110, y0: b.y - b.r, y1: b.y + b.r })));   // mines and camps with their names
+  view.provBoxes = [];
+  const hit = b => taken.some(p => b.x0 < p.x1 && b.x1 > p.x0 && b.y0 < p.y1 && b.y1 > p.y0);
+  for (const l of sh.provLabels.slice().sort((a, b) => b.n - a.n)) {
     const mineTint = tint && l.p.owner === PLAYER;
     const a = mineTint ? 0.95 : az;
     if (a < 0.03 || (!mineTint && l.n < 5)) continue;
-    const size = clamp(Math.sqrt(l.n) * cs * 0.075, 10, 22);
-    const own = l.p.owner === PLAYER;
-    drawLabel(c, l.p.name.toUpperCase(), l.x * cs, l.y * cs, size, 700, a * (own ? 0.8 : 0.55), size * 0.18);
-    if (isTerritory(game, l.p) && (mineTint || cs >= 24)) drawLabel(c, "territory", l.x * cs, l.y * cs + size * 0.95, size * 0.62, 600, a * 0.6, 1);
+    const size = clamp(Math.sqrt(l.n) * cs * (mineTint ? 0.075 : 0.06), 10, mineTint ? 22 : 18);
+    const text = l.p.name.toUpperCase(), terr = isTerritory(game, l.p) && (mineTint || cs >= 24);
+    c.font = `700 ${size}px "Big Shoulders Display", "Arial Narrow", sans-serif`;
+    const half = (c.measureText(text).width + text.length * size * 0.18) / 2;
+    // the middle of the province, or a little above or below it when a town's name is there
+    let at = null;
+    for (const dy of [0, 1.1, -1.1, 2.2, -2.2]) {
+      const y = (l.y + dy) * cs, b = { x0: l.x * cs - half, x1: l.x * cs + half, y0: y - size * 0.6, y1: y + size * (terr ? 1.3 : 0.6) };
+      if (!hit(b)) { at = { y, b }; break; }
+    }
+    if (!at) { if (!mineTint) continue; const y = l.y * cs; at = { y, b: { x0: l.x * cs - half, x1: l.x * cs + half, y0: y - size * 0.6, y1: y + size * 0.6 } }; }
+    taken.push(at.b); view.provBoxes.push(at.b);
+    drawLabel(c, text, l.x * cs, at.y, size, 700, a * (mineTint ? 0.85 : l.p.owner === PLAYER ? 0.6 : 0.45), size * 0.18);
+    if (terr) drawLabel(c, "territory", l.x * cs, at.y + size * 0.95, size * 0.62, 600, a * 0.6, 1);
   }
 }
 function drawProvinceCapitalMark(c, city, x, y, rad) {
   if (!provSeat(game, city)) return;
-  c.strokeStyle = "rgba(12,10,8,0.85)"; c.lineWidth = 2.6;
-  c.beginPath(); c.arc(x, y, rad + 2.2, 0, Math.PI * 2); c.stroke();
-  c.strokeStyle = "#f0d58a"; c.lineWidth = 1.3;
-  c.beginPath(); c.arc(x, y, rad + 2.2, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = "rgba(12,10,8,0.9)"; c.lineWidth = 4.2;
+  c.beginPath(); c.arc(x, y, rad + 2.4, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = "#f0d58a"; c.lineWidth = 2;
+  c.beginPath(); c.arc(x, y, rad + 2.4, 0, Math.PI * 2); c.stroke();
 }
 function drawVillages(c, cs) {
   if (!game.villages || cs < 26) return;
   const a = smooth01(26, 36, cs);
-  const named = cs >= 38;
-  const placed = [];
+  const named = cs >= 46;
+  const placed = (view.townBoxes || []).concat(view.provBoxes || []);
   const x0 = -view.ox / cs - 1, y0 = -view.oy / cs - 1, x1 = x0 + view.vw / cs + 2, y1 = y0 + view.vh / cs + 2;
   for (const v of game.villages) {
     const vx = cellX(v.cell) + 0.3 + 0.4 * hash2(v.cell, 1, 31), vy = cellY(v.cell) + 0.3 + 0.4 * hash2(v.cell, 2, 31);

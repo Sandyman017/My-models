@@ -3624,6 +3624,7 @@ function drawCities(c, cs) {
   const near = cs >= 24;
   const placed = [];
   const fits = box => { if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) return false; placed.push(box); return true; };
+  view.townBoxes = placed;
   const list = [];
   for (const n of game.nations) for (const r of econs[n.id].regions) list.push({ city: r.city, pop: r.pop, r, color: NATION_COLORS[n.id], occBy: -1 });
   for (const city of game.cities) if (game.occ[city.cell] >= 0) list.push({ city, pop: 0.5, r: null, color: NATION_COLORS[city.owner], occBy: game.occ[city.cell] });
@@ -3668,6 +3669,7 @@ function drawCities(c, cs) {
     const lx = x + rad + 4, ly = y + size * 0.15;
     const box = { x0: lx - 2, x1: lx + tw + 2, y0: ly - size * 0.6, y1: ly + size * 0.6 };
     if (!fits(box) && !city.capital && !(ui.selectedCity === city.id)) continue;
+    if (!placed.includes(box)) placed.push(box);
     if ("letterSpacing" in c) c.letterSpacing = city.capital ? "0.8px" : "0px";
     drawPlaceLabel(c, text, lx, ly, size, weight);
     if ("letterSpacing" in c) c.letterSpacing = "0px";
@@ -4296,12 +4298,12 @@ function renderMapNow() {
     if (motion.on) drawTownTraffic(ctx, cs, motion.now);
     drawFronts(ctx, cs);
     drawNationLabels(ctx, cs);
-    drawProvinceLabels(ctx, cs);
     drawKnownDeposits(ctx, cs);
     drawToolPreview(ctx, cs);
     drawProvincePreview(ctx, cs);
-    drawVillages(ctx, cs);
     drawCities(ctx, cs);
+    drawProvinceLabels(ctx, cs);   // after the towns, so province names and villages make room for town names (16m)
+    drawVillages(ctx, cs);
     drawSites(ctx, cs);
     drawWorks(ctx, cs);
     drawUnitPaths(ctx, cs);
