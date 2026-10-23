@@ -383,6 +383,6 @@ Why Maz wants it: the game is about drawing borders, and this brings that back f
 - **Needs report** at the top of the Provinces panel: the most pressing needs of all provinces, with the numbers (who is jobless, which town is unhappy, which feels foreign) and what more money would do; and what money from a province can't fix, with who can: hunger (grain, a road to farmland, irrigation) and towns cut off from the capital (a road, or a harbor and freighters). Each province card shows its needs and what its governor spent last season, and the season report has a "Provinces" section.
 - **Rivals** set their provinces' money once a year by the same numbers: more where there are needs and when rich, less when the treasury is in debt and losing money.
 - Old saves: every province starts at Normal and gets its governor.
-- **Checks**: CHECKS_PLACEHOLDER
+- **Checks** (headless, against v38.0, 8 worlds × 40 seasons, passive player): the opening war starts in the same season in 8 of 8 worlds; world output +2.9%; stability 57.0 against 56.4; wars 1.4 against 1.75 a world, towns taken the same; no famine; trade agreements 5.3 against 4.6; seasons as fast as before. Every nation pays about 0.8% of its output a year for its provinces at Normal, and gets most of it back as output, jobs and calmer towns. Engine, trade and browser tests pass (the browser test now also presses a province's money button).
 - GAME_BUILD 38, installer version 38.1.0.
 
