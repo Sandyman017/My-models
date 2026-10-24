@@ -109,6 +109,7 @@ function dispatchHtml(d) {
     ${tradeDispatchHtml(d)}
     ${citiesDispatchHtml(d)}
     ${provincesDispatchHtml(d)}
+    ${villagesDispatchHtml(d)}
     ${groupsDispatchHtml(d)}
     ${peopleDispatchHtml(d)}
     ${dipHtml}

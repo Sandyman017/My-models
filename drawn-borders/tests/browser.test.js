@@ -65,10 +65,22 @@ const { chromium } = require("playwright");
   await page.waitForTimeout(800);
   if (!(await page.$(".st-matrix.trade"))) errors.push("the Statistics trade view did not open");
   await page.screenshot({ path: path.join(out, "statistics-trade.png") });
+  // villages (v39): the Statistics villages view, then a village's own page
+  await page.evaluate(() => { const b = document.querySelector('[data-action="st-view"][data-view="villages"]'); if (b) b.click(); });
+  await page.waitForTimeout(800);
+  if (!(await page.$(".st-share"))) errors.push("the Statistics villages view did not open");
+  await page.screenshot({ path: path.join(out, "statistics-villages.png") });
+  await page.keyboard.press("i");
+  await page.waitForTimeout(500);
+  const vname = await page.evaluate(() => { const v = game.villages.find(x => game.owner[x.cell] === PLAYER && x.status !== "ruin"); if (!v) return null; selectVillage(v.id); renderAll(); return v.name; });
+  await page.waitForTimeout(800);
+  const vpage = await page.evaluate(() => document.body.innerText);
+  if (!vname || !vpage.includes(vname) || !vpage.includes("How it looks") || !vpage.includes("Its site")) errors.push(`the village page did not open (${vname})`);
+  await page.screenshot({ path: path.join(out, "village-page.png") });
   const text = await page.evaluate(() => document.body.innerText);
   const broken = text.match(/â[\u0080-⃿]|Â·/g) || [];
   await browser.close();
   if (broken.length) errors.push(`broken characters on screen: ${broken.slice(0, 5).join(" ")}`);
   if (errors.length) { console.error("FAILED\n" + errors.join("\n")); process.exit(1); }
-  console.log("browser test ok: founded a nation, divided it into provinces, played 3 seasons, opened the Provinces panel, the Trade panel and the trade statistics; no errors, characters fine");
+  console.log("browser test ok: founded a nation, divided it into provinces, played 3 seasons, opened the Provinces panel, the Trade panel, the trade and village statistics and a village's page; no errors, characters fine");
 })();

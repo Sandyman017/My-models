@@ -18,6 +18,8 @@ const ui = {
   hoverQuote: null,
   selectedCity: null,
   selectedCell: -1,
+  selectedVillage: null,   // a village's page is open (16n)
+  hoverXY: null,           // the map point under the mouse, in cells
   resView: false,
   dispatch: null,
   confirmRestart: false,

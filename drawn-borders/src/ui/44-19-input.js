@@ -59,7 +59,8 @@ function onPointerMove(e) {
     if (Math.hypot(x - last[0], y - last[1]) > 0.35) { drawingPath.push([x, y]); scheduleMapRender(); }
     return;
   }
-  const { cell } = eventCell(e);
+  const ec = eventCell(e), { cell } = ec;
+  ui.hoverXY = { x: ec.x, y: ec.y };
   if (cell !== ui.hoverCell) {
     ui.hoverCell = cell;
     const key = `${cell}|${ui.tool}|${ui.roadFrom}|${mapVersion}|${!!ui.pending}`;
@@ -166,6 +167,9 @@ function selectClick(press) {
   if (hw && !press.shift) { ui.tab = "agenda"; return; }
   const hs = hitSite(press.px, press.py);
   if (hs) { ui.selectedCity = null; ui.selectedCell = hs.cell; if (!press.shift) ui.tab = "selected"; return; }
+  // a village (16n): its own page; a town's square still opens the town
+  const hvd = view.cs >= 26 && !game.cities.some(c => c.cell === press.cell) ? villageNearPoint(press.px / view.cs, press.py / view.cs, view.cs) : null;
+  if (hvd && hvd.named) { selectVillage(hvd.v.id); return; }
   let city = cityNear(press.cell);
   if (city && city.cell !== press.cell && (siteAt(press.cell) || knownDepositAt(press.cell))) city = null;
   ui.selectedCity = city ? city.id : null;
@@ -333,7 +337,7 @@ function startOver() {
   deliberation = null;
   game = null;
   ui.phase = "draw"; ui.name = ""; ui.confirmRestart = false; ui.dispatch = null; ui.pending = null;
-  ui.selectedCity = null; ui.selectedCell = -1; ui.tool = "select"; ui.sel = [];
+  ui.selectedCity = null; ui.selectedCell = -1; ui.selectedVillage = null; ui.tool = "select"; ui.sel = [];
   newWorld(randomSeed());
   bumpMap();
 }

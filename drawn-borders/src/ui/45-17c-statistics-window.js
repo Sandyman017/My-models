@@ -10,6 +10,7 @@ const STAT_VIEWS = [
   ["trade", "Trade", "Who sells what to whom, embargoes"],
   ["military", "Military", "Armies, wars, battles"],
   ["diplomacy", "Diplomacy", "Who likes whom, and every treaty"],
+  ["villages", "Villages", "Every village, its people, ruins, charters"],
   ["chronicle", "History", "Records and the world's events"],
 ];
 const STAT_METRICS = {
@@ -277,7 +278,7 @@ function statsWidth() {
 function statsHtml() {
   STAT_CHARTS.clear();
   const g = game, S = ui.stats;
-  const body = { world: statsWorldHtml, legacy: statsLegacyHtml, nation: statsNationHtml, compare: statsCompareHtml, economy: statsEconomyHtml, trade: statsTradeHtml, military: statsMilitaryHtml, diplomacy: statsDiplomacyHtml, chronicle: statsChronicleHtml }[S.view]();
+  const body = { world: statsWorldHtml, legacy: statsLegacyHtml, nation: statsNationHtml, compare: statsCompareHtml, economy: statsEconomyHtml, trade: statsTradeHtml, military: statsMilitaryHtml, diplomacy: statsDiplomacyHtml, chronicle: statsChronicleHtml, villages: statsVillagesHtml }[S.view]();
   return `<div class="st-win" role="dialog" aria-modal="true" aria-labelledby="st-title">
     <header class="st-head">
       <div class="block" style="gap:2px"><span class="eyebrow">Statistics · ${seasonLabel(g.turn)}</span><h2 id="st-title">${STAT_VIEWS.find(v => v[0] === S.view)[1]}</h2></div>

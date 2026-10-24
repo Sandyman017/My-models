@@ -90,6 +90,8 @@ function staticSites(w) {
   if (w._vsite && w._vsite.seed === w.seed) return w._vsite.list;
   const list = new Array(N_CELLS);
   const rc = riverCells(w), RG = riverGeo(w);
+  const E = new Float32Array(N_CELLS), MO = new Float32Array(N_CELLS);   // height and wetness at every cell's middle
+  for (let i = 0; i < N_CELLS; i++) { E[i] = elevationAt(w.seed, cellX(i) + 0.5, cellY(i) + 0.5); MO[i] = moistureAt(w.seed, cellX(i) + 0.5, cellY(i) + 0.5); }
   for (let i = 0; i < N_CELLS; i++) {
     list[i] = [];
     if (!isLand(w, i)) continue;
@@ -103,16 +105,16 @@ function staticSites(w) {
       if (cls >= 2) F.push("mouth");
       if (sea8 >= 2 && sea8 <= 3) F.push("bay"); else if (sea8 >= 5) F.push("exposed");
     }
-    const m = moistureAt(w.seed, x + 0.5, y + 0.5);
+    const m = MO[i];
     if (m < 0.33 && cls < 2 && !w.coastal[i]) F.push("dry");
-    const e = elevationAt(w.seed, x + 0.5, y + 0.5);
+    const e = E[i];
     let lower = 0, wetAround = 0;
     for (const [dx, dy] of DIRS8) {
       if (!inBounds(x + dx, y + dy)) continue;
       const k = idx(x + dx, y + dy);
       if (!isLand(w, k)) continue;
-      if (elevationAt(w.seed, x + dx + 0.5, y + dy + 0.5) < e) lower++;
-      if (rc[k] >= 2 || moistureAt(w.seed, x + dx + 0.5, y + dy + 0.5) > 0.5) wetAround++;
+      if (E[k] < e) lower++;
+      if (rc[k] >= 2 || MO[k] > 0.5) wetAround++;
     }
     if (t === T.PLAINS && cls >= 3 && e < w.seaLevel + 0.6 * (w.hillLevel - w.seaLevel)) F.push("floodplain");
     else if (t !== T.MOUNTAIN && lower >= 6 && wetAround >= 3 && (cls >= 2 || m > 0.48)) F.push("drypoint");
@@ -166,9 +168,9 @@ function roadSites(w, g) {
 function villageCtx(w, g) {
   const key = `${g.turn}|${g.ver || 0}|${(g.sites || []).length}|${g.cities.length}|${g.roads.size}`;
   if (g._vctx && g._vctx.key === key) return g._vctx;
-  const mine = new Uint8Array(N_CELLS), town = new Uint8Array(N_CELLS), border = new Uint8Array(N_CELLS);
+  const mine = new Uint8Array(N_CELLS), mineAt = new Uint8Array(N_CELLS), town = new Uint8Array(N_CELLS), border = new Uint8Array(N_CELLS);
   const mark = (arr, c, r) => { const x = cellX(c), y = cellY(c); for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (inBounds(x + dx, y + dy)) arr[idx(x + dx, y + dy)] = 1; };
-  for (const s of g.sites || []) if (!s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res) mark(mine, s.cell, 1);
+  for (const s of g.sites || []) if (!s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res) { mark(mine, s.cell, 1); mineAt[s.cell] = 1; }
   for (const c of g.cities) mark(town, c.cell, 1);
   for (let i = 0; i < N_CELLS; i++) {
     const o = g.owner[i];
@@ -182,7 +184,7 @@ function villageCtx(w, g) {
   }
   const townDist = new Float32Array(N_CELLS).fill(99);
   for (let i = 0; i < N_CELLS; i++) for (const c of g.cities) { const d = dist(c.cell, i); if (d < townDist[i]) townDist[i] = d; }
-  const C = { key, mine, town, border, townDist };
+  const C = { key, mine, mineAt, town, border, townDist };
   Object.defineProperty(g, "_vctx", { enumerable: false, writable: true, configurable: true, value: C });   // not saved
   return C;
 }
@@ -264,7 +266,7 @@ function villagePlanFor(w, g, v, F) {
   if (modernAt(w, g, v.cell, v.pop)) return "modern";
   const x = cellX(v.cell) + 0.5, y = cellY(v.cell) + 0.5, m = moistureAt(w.seed, x, y);
   if (m < 0.34 && !F.includes("greatriver") && !F.includes("bigriver")) return "compound";
-  if (F.includes("hill") || F.includes("bend")) return "hill";
+  if (F.includes("hill")) return "hill";
   if (F.includes("river") || F.includes("bigriver") || F.includes("greatriver") || (F.includes("road") && hash2(v.cell, 3, w.seed + 811) < 0.4)) return "line";
   if (m > 0.48 || F.includes("forest")) return "grove";
   if (g.pop[v.cell] < 0.12 && !F.includes("border")) return "scatter";
@@ -299,7 +301,7 @@ function villageSizeWord(pop) { return pop < 0.0005 ? "hamlet" : pop < 0.0025 ? 
 function villageKindAt(w, g, i, stay) {
   const p = g.pop[i];
   const R = roadSites(w, g);
-  const mine = villageCtx(w, g).mine[i] === 1;
+  const mine = villageCtx(w, g).mineAt[i] === 1;   // the camp stands at the pit; the villages around it still farm
   if (mine && p >= PROV.villageMine * (stay ? 0.5 : 1)) return "mine";
   const jt = g.villMeta && g.villMeta.junctions ? g.villMeta.junctions[i] : undefined;
   if (marketSpot(w, g, i) && jt !== undefined && g.turn - jt >= VIL.marketDelay && p >= VIL.marketMin * (stay ? 0.7 : 1)) return "market";
@@ -320,7 +322,7 @@ function campPeople(g, cell) {
   let w = 0;
   for (const s of g.sites || []) {
     if (s.exhausted || !SITE_KINDS[s.kind] || !SITE_KINDS[s.kind].res) continue;
-    if (Math.abs(cellX(s.cell) - cellX(cell)) > 1 || Math.abs(cellY(s.cell) - cellY(cell)) > 1) continue;
+    if (s.cell !== cell) continue;
     w += s.lastWorkers || 0;
   }
   return w * VIL.famShare * VIL.campShare;
@@ -457,7 +459,7 @@ function seasonVillages(w, g, dispatch) {
     if (v.status === "bust" && kind === "farm" && v.pop < 0.002) { v.status = "village"; v.kind = "farm"; say(v, "The miners have gone, but farmers stayed on: it is a farm village now.", "neutral"); }
     // a new mine: a boom
     if (v.kind === "mine" && v.status !== "bust") {
-      const fresh = (g.sites || []).some(s => !s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res && Math.abs(cellX(s.cell) - cellX(v.cell)) <= 1 && Math.abs(cellY(s.cell) - cellY(v.cell)) <= 1 && g.turn - (s.opened || 0) <= VIL.boomSeasons && s.opened > 0);
+      const fresh = (g.sites || []).some(s => !s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res && s.cell === v.cell && g.turn - (s.opened || 0) <= VIL.boomSeasons && s.opened > 0);
       if (fresh && v.status !== "boom") { v.status = "boom"; say(v, "A new mine has opened: fortune seekers pour in, tents and shacks go up overnight.", "good", true); }
       else if (!fresh && v.status === "boom") { v.status = "village"; say(v, "The boom has settled: the camp is a mining village now.", "neutral"); }
     }
@@ -690,11 +692,14 @@ function hamletsOf(w, g, cell) {
   const HS = HAMLET_STYLE[plan];
   const total = P * HS.share * (g.owner[cell] >= 0 ? 1 : 0.6);
   const G = VIL.grid, x0 = cellX(cell), y0 = cellY(cell);
+  // only cells by the sea need each square tested for water (inland every square is land)
+  let nearSea = false;
+  for (const [dx, dy] of DIRS8) if (isSeaXY(w, x0 + dx, y0 + dy)) { nearSea = true; break; }
   const sq = [];
   for (let cy = Math.ceil(y0 / G - 0.5); (cy + 0.5) * G < y0 + 1; cy++) for (let cx = Math.ceil(x0 / G - 0.5); (cx + 0.5) * G < x0 + 1; cx++) {
     const x = (cx + 0.5) * G, y = (cy + 0.5) * G;
     if (Math.floor(x) !== x0 || Math.floor(y) !== y0) continue;
-    if (elevationAt(w.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, w.seed + 333, 4) - 0.5) <= w.seaLevel + 0.003) continue;
+    if (nearSea && elevationAt(w.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, w.seed + 333, 4) - 0.5) <= w.seaLevel + 0.003) continue;
     sq.push({ cx, cy, x, y, h: hash2(cx, cy, w.seed + 7100) });
   }
   if (!sq.length) return [];

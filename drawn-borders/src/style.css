@@ -1070,3 +1070,9 @@ button.trade-row:hover { border-color: var(--c); }
 .prov-money { display: grid; gap: 4px; }
 .prov-money .seg { display: flex; flex-wrap: wrap; gap: 4px; }
 .prov-money .btn.on { background: var(--gold); color: #1a1408; border-color: var(--gold); }
+
+/* villages (16n): who lives where in the countryside */
+.st-share { display: grid; gap: 6px; }
+.st-share-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.st-share-bar { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.st-share-bar i { display: block; height: 100%; border-radius: 5px; }

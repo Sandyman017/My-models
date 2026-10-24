@@ -133,7 +133,6 @@ function provincesTabHtml() {
   const cards = st.map(s => {
     const p = s.p, open = ui.openProv === p.id;
     const share = tot.pop > 0 ? s.pop / tot.pop : 0;
-    const vill = (game.villages || []).filter(v => game.owner[v.cell] === PLAYER && game.prov[v.cell] === p.id).sort((a, b) => b.pop - a.pop);
     const neigh = provNeighbors(p);
     const info = provinceNeeds(world, game, p, econ);
     const head = `<div class="prov-head">
@@ -161,8 +160,7 @@ function provincesTabHtml() {
         <p class="muted small">${fmtArea(s.cells)} · made ${p.made ? seasonLabel(p.made) : "at the founding"}${s.territory ? ` · a territory: run from ${escapeHtml((game.cities.find(c => c.owner === PLAYER && c.capital) || { name: "the capital" }).name)}${s.towns.length ? ". A town has grown here: choose it as the capital to make this a full province" : " until a town grows here"}` : ""}.</p>
         ${towns ? `<span class="eyebrow">Towns and cities</span><ul class="factors">${towns}</ul>` : `<p class="small muted">No town yet.</p>`}
         ${provNeedsHtml(p, info)}
-        <span class="eyebrow">Villages · ${vill.length}</span>
-        <p class="small">${vill.length ? `${vill.slice(0, 6).map(v => `${escapeHtml(v.name)} <span class="muted">(${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)})</span>`).join(", ")}${vill.length > 6 ? ` and ${vill.length - 6} more` : ""}. Zoom in on the map to see them.` : "No villages: too few people live off the land here."}</p>
+        ${provinceVillagesHtml(p)}
         <div class="actions">${capChoice}${neigh.length ? `<label class="small">Join it to <select data-prov-join="${p.id}"><option value="" selected>…</option>${neigh.map(q => `<option value="${q.id}">${escapeHtml(q.name)}</option>`).join("")}</select></label>` : ""}
           <button class="btn small" type="button" data-action="prov-center" data-pid="${p.id}">Show on the map</button></div>
       </div></div>`;
@@ -175,6 +173,7 @@ function provincesTabHtml() {
     </div>
     ${ui.provDraw ? provDrawCardHtml() : ""}
     ${provNeedsReportHtml(st, econ)}
+    ${countrysideHtml()}
     <div class="prov-cards">${cards}</div>
     <p class="muted small">Province capitals (not the national capital) have a governor's offices: 1.5% more public jobs there, people who come to feel at home faster (+1.5 loyalty a season) and are prouder (+${FOCI.seat.mood} mood). Each eases governing a large country (up to ${PROV.seatEaseMax}). If the national capital falls, the government carries on from the biggest one. Upkeep: ${(FOCI.seat.upkeep * 100).toFixed(1)}% of its town's output a season. A new province costs its capital's offices (${pct(PROV.newShare)} of that town's output) and about ${PROV.newSeasons} seasons; joining or moving land takes a season.</p>`;
 }
@@ -316,35 +315,7 @@ function drawProvinceCapitalMark(c, city, x, y, rad) {
   c.strokeStyle = "#f0d58a"; c.lineWidth = 2;
   c.beginPath(); c.arc(x, y, rad + 2.4, 0, Math.PI * 2); c.stroke();
 }
-function drawVillages(c, cs) {
-  if (!game.villages || cs < 26) return;
-  const a = smooth01(26, 36, cs);
-  const named = cs >= 46;
-  const placed = (view.townBoxes || []).concat(view.provBoxes || []);
-  const x0 = -view.ox / cs - 1, y0 = -view.oy / cs - 1, x1 = x0 + view.vw / cs + 2, y1 = y0 + view.vh / cs + 2;
-  for (const v of game.villages) {
-    const vx = cellX(v.cell) + 0.3 + 0.4 * hash2(v.cell, 1, 31), vy = cellY(v.cell) + 0.3 + 0.4 * hash2(v.cell, 2, 31);
-    if (vx < x0 || vx > x1 || vy < y0 || vy > y1 || game.owner[v.cell] < 0) continue;
-    const x = vx * cs, y = vy * cs, r = clamp(1.2 + v.pop * 80, 1.6, 2.8);
-    c.globalAlpha = a;
-    c.fillStyle = "#efe6cf"; c.strokeStyle = "rgba(12,10,8,0.85)"; c.lineWidth = 1;
-    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); c.stroke();
-    c.globalAlpha = 1;
-    if (!named) continue;
-    const size = clamp(cs * 0.2, 9.5, 12);
-    c.font = `italic 500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
-    const tw = c.measureText(v.name).width;
-    const box = { x0: x + r + 2, x1: x + r + 4 + tw, y0: y - size * 0.6, y1: y + size * 0.6 };
-    if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) continue;
-    placed.push(box);
-    c.font = `italic 500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
-    c.textAlign = "left"; c.textBaseline = "middle"; c.lineJoin = "round";
-    c.globalAlpha = a * 0.92;
-    c.lineWidth = 2.6; c.strokeStyle = "rgba(10,9,8,0.75)"; c.strokeText(v.name, x + r + 3, y);
-    c.fillStyle = "#efe8d6"; c.fillText(v.name, x + r + 3, y);
-    c.globalAlpha = 1;
-  }
-}
+function drawVillages(c, cs) { drawVillageNames(c, cs); }   // names sized by their people, ruins and boom camps (16n)
 function drawProvincePreview(c, cs) {
   let cells = null, color = "rgba(220,184,94,0.36)";
   if (ui.provDraw) cells = ui.provDraw.cells;
@@ -357,9 +328,7 @@ function drawProvincePreview(c, cs) {
 function provTooltipLines(i) {
   if (!game || !game.prov) return "";
   const p = provAt(game, i);
-  const v = villageAt(game, i);
-  let out = "";
-  if (v && game.owner[i] >= 0) out += `<span class="tt-line">${escapeHtml(v.name)}: ${VILLAGE_KINDS[v.kind].toLowerCase()} of about ${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)} people</span>`;
+  let out = villageTooltipLines(i);   // the village or hamlet under the mouse (16n)
   if (p) out += `<span class="tt-line">${isTerritory(game, p) ? "Territory" : "Province"}: ${escapeHtml(p.name)}</span>`;
   return out;
 }

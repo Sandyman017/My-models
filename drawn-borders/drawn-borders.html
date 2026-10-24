@@ -1077,6 +1077,12 @@ button.trade-row:hover { border-color: var(--c); }
 .prov-money { display: grid; gap: 4px; }
 .prov-money .seg { display: flex; flex-wrap: wrap; gap: 4px; }
 .prov-money .btn.on { background: var(--gold); color: #1a1408; border-color: var(--gold); }
+
+/* villages (16n): who lives where in the countryside */
+.st-share { display: grid; gap: 6px; }
+.st-share-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.st-share-bar { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.st-share-bar i { display: block; height: 100%; border-radius: 5px; }
 </style>
 
 <div class="app">
@@ -15990,6 +15996,8 @@ function staticSites(w) {
   if (w._vsite && w._vsite.seed === w.seed) return w._vsite.list;
   const list = new Array(N_CELLS);
   const rc = riverCells(w), RG = riverGeo(w);
+  const E = new Float32Array(N_CELLS), MO = new Float32Array(N_CELLS);   // height and wetness at every cell's middle
+  for (let i = 0; i < N_CELLS; i++) { E[i] = elevationAt(w.seed, cellX(i) + 0.5, cellY(i) + 0.5); MO[i] = moistureAt(w.seed, cellX(i) + 0.5, cellY(i) + 0.5); }
   for (let i = 0; i < N_CELLS; i++) {
     list[i] = [];
     if (!isLand(w, i)) continue;
@@ -16003,16 +16011,16 @@ function staticSites(w) {
       if (cls >= 2) F.push("mouth");
       if (sea8 >= 2 && sea8 <= 3) F.push("bay"); else if (sea8 >= 5) F.push("exposed");
     }
-    const m = moistureAt(w.seed, x + 0.5, y + 0.5);
+    const m = MO[i];
     if (m < 0.33 && cls < 2 && !w.coastal[i]) F.push("dry");
-    const e = elevationAt(w.seed, x + 0.5, y + 0.5);
+    const e = E[i];
     let lower = 0, wetAround = 0;
     for (const [dx, dy] of DIRS8) {
       if (!inBounds(x + dx, y + dy)) continue;
       const k = idx(x + dx, y + dy);
       if (!isLand(w, k)) continue;
-      if (elevationAt(w.seed, x + dx + 0.5, y + dy + 0.5) < e) lower++;
-      if (rc[k] >= 2 || moistureAt(w.seed, x + dx + 0.5, y + dy + 0.5) > 0.5) wetAround++;
+      if (E[k] < e) lower++;
+      if (rc[k] >= 2 || MO[k] > 0.5) wetAround++;
     }
     if (t === T.PLAINS && cls >= 3 && e < w.seaLevel + 0.6 * (w.hillLevel - w.seaLevel)) F.push("floodplain");
     else if (t !== T.MOUNTAIN && lower >= 6 && wetAround >= 3 && (cls >= 2 || m > 0.48)) F.push("drypoint");
@@ -16066,9 +16074,9 @@ function roadSites(w, g) {
 function villageCtx(w, g) {
   const key = `${g.turn}|${g.ver || 0}|${(g.sites || []).length}|${g.cities.length}|${g.roads.size}`;
   if (g._vctx && g._vctx.key === key) return g._vctx;
-  const mine = new Uint8Array(N_CELLS), town = new Uint8Array(N_CELLS), border = new Uint8Array(N_CELLS);
+  const mine = new Uint8Array(N_CELLS), mineAt = new Uint8Array(N_CELLS), town = new Uint8Array(N_CELLS), border = new Uint8Array(N_CELLS);
   const mark = (arr, c, r) => { const x = cellX(c), y = cellY(c); for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (inBounds(x + dx, y + dy)) arr[idx(x + dx, y + dy)] = 1; };
-  for (const s of g.sites || []) if (!s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res) mark(mine, s.cell, 1);
+  for (const s of g.sites || []) if (!s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res) { mark(mine, s.cell, 1); mineAt[s.cell] = 1; }
   for (const c of g.cities) mark(town, c.cell, 1);
   for (let i = 0; i < N_CELLS; i++) {
     const o = g.owner[i];
@@ -16082,7 +16090,7 @@ function villageCtx(w, g) {
   }
   const townDist = new Float32Array(N_CELLS).fill(99);
   for (let i = 0; i < N_CELLS; i++) for (const c of g.cities) { const d = dist(c.cell, i); if (d < townDist[i]) townDist[i] = d; }
-  const C = { key, mine, town, border, townDist };
+  const C = { key, mine, mineAt, town, border, townDist };
   Object.defineProperty(g, "_vctx", { enumerable: false, writable: true, configurable: true, value: C });   // not saved
   return C;
 }
@@ -16164,7 +16172,7 @@ function villagePlanFor(w, g, v, F) {
   if (modernAt(w, g, v.cell, v.pop)) return "modern";
   const x = cellX(v.cell) + 0.5, y = cellY(v.cell) + 0.5, m = moistureAt(w.seed, x, y);
   if (m < 0.34 && !F.includes("greatriver") && !F.includes("bigriver")) return "compound";
-  if (F.includes("hill") || F.includes("bend")) return "hill";
+  if (F.includes("hill")) return "hill";
   if (F.includes("river") || F.includes("bigriver") || F.includes("greatriver") || (F.includes("road") && hash2(v.cell, 3, w.seed + 811) < 0.4)) return "line";
   if (m > 0.48 || F.includes("forest")) return "grove";
   if (g.pop[v.cell] < 0.12 && !F.includes("border")) return "scatter";
@@ -16199,7 +16207,7 @@ function villageSizeWord(pop) { return pop < 0.0005 ? "hamlet" : pop < 0.0025 ? 
 function villageKindAt(w, g, i, stay) {
   const p = g.pop[i];
   const R = roadSites(w, g);
-  const mine = villageCtx(w, g).mine[i] === 1;
+  const mine = villageCtx(w, g).mineAt[i] === 1;   // the camp stands at the pit; the villages around it still farm
   if (mine && p >= PROV.villageMine * (stay ? 0.5 : 1)) return "mine";
   const jt = g.villMeta && g.villMeta.junctions ? g.villMeta.junctions[i] : undefined;
   if (marketSpot(w, g, i) && jt !== undefined && g.turn - jt >= VIL.marketDelay && p >= VIL.marketMin * (stay ? 0.7 : 1)) return "market";
@@ -16220,7 +16228,7 @@ function campPeople(g, cell) {
   let w = 0;
   for (const s of g.sites || []) {
     if (s.exhausted || !SITE_KINDS[s.kind] || !SITE_KINDS[s.kind].res) continue;
-    if (Math.abs(cellX(s.cell) - cellX(cell)) > 1 || Math.abs(cellY(s.cell) - cellY(cell)) > 1) continue;
+    if (s.cell !== cell) continue;
     w += s.lastWorkers || 0;
   }
   return w * VIL.famShare * VIL.campShare;
@@ -16357,7 +16365,7 @@ function seasonVillages(w, g, dispatch) {
     if (v.status === "bust" && kind === "farm" && v.pop < 0.002) { v.status = "village"; v.kind = "farm"; say(v, "The miners have gone, but farmers stayed on: it is a farm village now.", "neutral"); }
     // a new mine: a boom
     if (v.kind === "mine" && v.status !== "bust") {
-      const fresh = (g.sites || []).some(s => !s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res && Math.abs(cellX(s.cell) - cellX(v.cell)) <= 1 && Math.abs(cellY(s.cell) - cellY(v.cell)) <= 1 && g.turn - (s.opened || 0) <= VIL.boomSeasons && s.opened > 0);
+      const fresh = (g.sites || []).some(s => !s.exhausted && SITE_KINDS[s.kind] && SITE_KINDS[s.kind].res && s.cell === v.cell && g.turn - (s.opened || 0) <= VIL.boomSeasons && s.opened > 0);
       if (fresh && v.status !== "boom") { v.status = "boom"; say(v, "A new mine has opened: fortune seekers pour in, tents and shacks go up overnight.", "good", true); }
       else if (!fresh && v.status === "boom") { v.status = "village"; say(v, "The boom has settled: the camp is a mining village now.", "neutral"); }
     }
@@ -16590,11 +16598,14 @@ function hamletsOf(w, g, cell) {
   const HS = HAMLET_STYLE[plan];
   const total = P * HS.share * (g.owner[cell] >= 0 ? 1 : 0.6);
   const G = VIL.grid, x0 = cellX(cell), y0 = cellY(cell);
+  // only cells by the sea need each square tested for water (inland every square is land)
+  let nearSea = false;
+  for (const [dx, dy] of DIRS8) if (isSeaXY(w, x0 + dx, y0 + dy)) { nearSea = true; break; }
   const sq = [];
   for (let cy = Math.ceil(y0 / G - 0.5); (cy + 0.5) * G < y0 + 1; cy++) for (let cx = Math.ceil(x0 / G - 0.5); (cx + 0.5) * G < x0 + 1; cx++) {
     const x = (cx + 0.5) * G, y = (cy + 0.5) * G;
     if (Math.floor(x) !== x0 || Math.floor(y) !== y0) continue;
-    if (elevationAt(w.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, w.seed + 333, 4) - 0.5) <= w.seaLevel + 0.003) continue;
+    if (nearSea && elevationAt(w.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, w.seed + 333, 4) - 0.5) <= w.seaLevel + 0.003) continue;
     sq.push({ cx, cy, x, y, h: hash2(cx, cy, w.seed + 7100) });
   }
   if (!sq.length) return [];
@@ -18604,6 +18615,8 @@ const ui = {
   hoverQuote: null,
   selectedCity: null,
   selectedCell: -1,
+  selectedVillage: null,   // a village's page is open (16n)
+  hoverXY: null,           // the map point under the mouse, in cells
   resView: false,
   dispatch: null,
   confirmRestart: false,
@@ -19214,7 +19227,7 @@ function glBuild(gl, src) {
 const MAPKEY = { fail: "drawn-borders-map-fail", trying: "drawn-borders-map-trying" };
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* storage may be off */ } }
-const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn"];
+const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVillInfo", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn"];
 /* The painters this game can use, best first. The full map is three small programs drawn one over another (land and
    rivers; towns; river water and quays inside towns), because one huge program is too much for some graphics
    drivers (Windows translates every shader for DirectX, and a very long one can fail there). */
@@ -19223,6 +19236,7 @@ function glPlans() {
   const plans = [
     { name: "full map", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2")] },
     { name: "full map with lighter cities", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2\n#define CITY_LITE")] },
+    { name: "full map with simpler villages", parts: [v(full, "#define PASS 1\n#define VILLAGE_LITE"), v(full, "#define PASS 2\n#define CITY_LITE\n#define VILLAGE_LITE")] },
   ];
   if (typeof glShaderSourceSafe === "function") plans.push({ name: "the simpler map from version 26", parts: [glShaderSourceSafe()], simple: true });
   return plans;
@@ -19281,11 +19295,13 @@ function glInit() {
     GLMAP.tex.pits = mk(2, gl.NEAREST);
     GLMAP.tex.vill = mk(3, gl.NEAREST);
     GLMAP.tex.tidx = mk(4, gl.NEAREST);
+    GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
     GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
     Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple });
     glEachProg(U => {
       gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
       gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
+      if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
       if (U.uOne) gl.uniform1i(U.uOne, 1);
       if (U.uFrame) gl.uniform1i(U.uFrame, 8);
       if (U.uRiv) gl.uniform1i(U.uRiv, 9);
@@ -19327,6 +19343,7 @@ function glUploadEmpty() {
   glTex(1, GLMAP.tex.towns, 1, 2, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(8));
   glTex(2, GLMAP.tex.pits, 1, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(4));
   glTex(3, GLMAP.tex.vill, 1, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(4));
+  if (GLMAP.tex.vinfo) glTex(10, GLMAP.tex.vinfo, 1, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(4));
   glTex(4, GLMAP.tex.tidx, GRID_W, GRID_H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(N_CELLS * 4));
   glTex(5, GLMAP.tex.rv, 5, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(20));
   glTex(6, GLMAP.tex.rcell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(N_CELLS * 4));
@@ -19467,25 +19484,8 @@ function glUpdateLand() {
   pits.forEach((p, k) => { P[k * 4] = p.x; P[k * 4 + 1] = p.y; P[k * 4 + 2] = p.r; P[k * 4 + 3] = p.oil ? 2 : p.coal ? 1 : 0; });
   glTex(2, GLMAP.tex.pits, Math.max(1, pits.length), 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, P);
   GLMAP.nPits = pits.length;
-  // villages: one may stand in each 6 km square of farmland, more where more people farm
-  const VG = 0.12, VX = Math.ceil(GRID_W / VG), VY = Math.ceil(GRID_H / VG);
-  const V = new Float32Array(VX * VY * 4);
-  if (has) for (let cy = 0; cy < VY; cy++) for (let cx = 0; cx < VX; cx++) {
-    const x = (cx + 0.5) * VG, y = (cy + 0.5) * VG;
-    const c = bilinear(LANDUSE.crop, x, y);
-    if (c < 0.3) continue;
-    const hv = hash2(cx, cy, world.seed + 7100);
-    if (hv > 0.6 * c) continue;
-    if (towns.some(t => Math.hypot(x - t.x, y - t.y) < t.r * 1.15)) continue;
-    if (elevationAt(world.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, world.seed + 333, 4) - 0.5) <= world.seaLevel + 0.003) continue;
-    const o = (cy * VX + cx) * 4;
-    V[o] = 0.2 + 0.6 * hash2(cx, cy, world.seed + 7101);
-    V[o + 1] = 0.2 + 0.6 * hash2(cx, cy, world.seed + 7102);
-    V[o + 2] = (0.004 + 0.007 * hash2(cx, cy, world.seed + 7103)) * (hv < 0.04 ? 2.5 : 1);
-    V[o + 3] = 1;
-  }
-  glTex(3, GLMAP.tex.vill, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, V);
-  GLMAP.vgrid = [VX, VY];
+  // villages and hamlets: each with its own people, look and direction, from the game (14e)
+  GLMAP.vgrid = has ? glUploadVillages() : [1, 1];
 }
 function glSetWorld(w) {
   if (!GLMAP.ok) return;
@@ -20819,6 +20819,7 @@ uniform int uNPits;
 uniform float uSea, uHill, uMtn, uMoist;
 uniform int uSeed;
 uniform highp sampler2D uVillages;   // one texel per 6 km square: village position (x, y in the square), radius, 1 if there is one
+uniform highp sampler2D uVillInfo;   // per 6 km square: the village's look (+16 named, +32 ruins), direction, people (thousands), random number
 uniform ivec2 uVGrid;
 layout(location = 0) out vec4 outColor;
 #if PASS == 1
@@ -20971,6 +20972,7 @@ bool villageAt(ivec2 c, out vec2 pos, out float rad) {
 }
 float cropAt(vec2 p) { return texture(uLand, p / vec2(96.0, 64.0)).r; }
 float gFarm = 0.0;
+float gVilA = 0.0;   // how much of this pixel a village covers
 vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
   float pxm = uScale;                      // cells per pixel
   float m = moistureAt(p) + 0.07 * (vnoise(p * 2.1, uSeed + 88) - 0.5);
@@ -21089,7 +21091,8 @@ vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
   float snow = sstep(uMtn + 0.075, uMtn + 0.13, h + 0.02 * n.y) * (1.0 - 0.6 * sstep(1.0, 2.0, slope));
   if (snow > 0.01) g = mix(g, mix(SNOWSHADE, SNOW, sstep(0.55, 0.9, dot(n, normalize(vec3(-0.62, -0.72, 0.7))))), snow * 0.95);
 
-  // villages and the roads between them
+  // villages and the roads between them (the simpler map; the full map draws each village from its own look: villageLayer)
+#ifdef VILLAGE_LITE
   if (farm > 0.02 && pxm < 0.012) {
     ivec2 vc = ivec2(floor(p / VG));
     float best = 1e9; vec3 vcol = vec3(0.0); float vmix = 0.0;
@@ -21130,6 +21133,7 @@ vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
     float rv = 1.0 - sstep(rw * 0.5, rw * 0.5 + pxm, road);
     g = mix(g, vec3(0.70, 0.68, 0.63), rv * sstep(0.2, 1.2, rw / pxm + 0.4) * farm * 0.9);
   }
+#endif
   // a strip of sand where the coast is low
   float ce = e - uSea;
   if (ce < 0.006 && slope < 1.2) g = mix(g, ce < 0.002 ? WETSAND : SAND, (1.0 - ce / 0.006) * 0.75);
@@ -22270,6 +22274,9 @@ vec3 waterColor(vec2 p, float e) {
   return c;
 }
 
+#ifndef VILLAGE_LITE
+${villageGlsl()}
+#endif
 #if PASS == 1
 // pass 1: land, sea, rivers, farms, forests, mountains, mines and harbours (no towns)
 void main() {
@@ -22303,13 +22310,18 @@ void main() {
     g = mix(g, mix(vec3(0.24, 0.37, 0.17), vec3(0.34, 0.43, 0.22), vnoise(p * 300.0, uSeed + 8890)), gFPDry);
     vec4 pit = pitColor(p, uScale);
     g = mix(g, pit.rgb, pit.a);
+#ifndef VILLAGE_LITE
+    vec4 vil = villageLayer(p, uScale, gFarm);
+    g = mix(g, vil.rgb, vil.a);
+    gVilA = vil.a;
+#endif
     g = mix(g, town.rgb, town.a);
     g = mix(g, gRiv.rgb, mix(gRiv.a, gRivWater, town.a));
     vec3 sun = normalize(vec3(-0.62, -0.72, 0.7));
     float lam = dot(n, sun);
     float shade = clamp(lam / sun.z, 0.42, 1.45);
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
-    shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
+    shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.6 * gVilA) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
     outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }
@@ -23606,6 +23618,534 @@ function scheduleMapRender() {
 }
 
 /* =====================================================================
+   14e. Villages on the map
+   Every village and hamlet is drawn from what it really is: its people set its size, its look (from the engine,
+   10w) sets how it is built, and its place sets which way it runs (along its river or road, its back to the sea,
+   beside its mine). The looks come from satellite pictures Maz sent: villages among trees with red roofs in
+   Bengal, a street village along a winding stream, walled yards with round huts in the Sahel, a packed village
+   by a great river, and a modern village of curving closes. Each village is one texel in two textures on the
+   6 km grid (where it is and how big; its look, direction and random number); the painter looks at the few
+   squares around each pixel.
+   ===================================================================== */
+// square metres of village for each house (streets, gardens and yards included), by look
+const VILLAGE_AREA = { cluster: 380, grove: 700, line: 450, compound: 650, hill: 280, harbor: 420, camp: 260, market: 420, scatter: 9000, modern: 600 };
+const VDRAW = { key: null, list: [], byCell: new Map(), rivers: null, riversSeed: null };
+
+/* The radius a place of `pop` million people covers, in cells (one house for every 4.5 people). */
+function villageRadius(pop, plan) {
+  const houses = Math.max(6, (pop || 0) * 1e6 / 4.5);
+  const m = Math.sqrt(houses * (VILLAGE_AREA[plan] || 400) / Math.PI);
+  return clamp(m, 45, 0.6 * VIL.grid * 50000) / 50000;
+}
+/* River points near each cell (for street villages along the water), worked out once a world. */
+function villageRiverPoints() {
+  if (VDRAW.riversSeed === world.seed && VDRAW.rivers) return VDRAW.rivers;
+  const by = new Map();
+  if (typeof RIVNET !== "undefined" && RIVNET.rivers && RIVNET.seed === world.seed) {
+    for (const rv of RIVNET.rivers) {
+      const V = rv.V || [];
+      for (let i = 0; i < V.length - 1; i++) {
+        const a = V[i], b = V[i + 1];
+        const k = Math.floor(a.y) * GRID_W + Math.floor(a.x);
+        if (!by.has(k)) by.set(k, []);
+        by.get(k).push({ x: a.x, y: a.y, ang: Math.atan2(b.y - a.y, b.x - a.x) });
+      }
+    }
+  }
+  VDRAW.rivers = by; VDRAW.riversSeed = world.seed;
+  return by;
+}
+function landAt(x, y) { return elevationAt(world.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, world.seed + 333, 4) - 0.5) > world.seaLevel + 0.003; }
+/* Where a named village stands inside its cell, and which way it runs. */
+function villageSpot(v) {
+  const G = VIL.grid, x0 = cellX(v.cell), y0 = cellY(v.cell);
+  const h = k => hash2(v.cell, k, world.seed + 7400);
+  let tx = x0 + 0.3 + 0.4 * h(1), ty = y0 + 0.3 + 0.4 * h(2), ang = h(3) * Math.PI;
+  const plan = v.status === "ruin" ? (v.plan || "cluster") : v.plan;
+  // its road: the line to a neighbouring cell's centre
+  let roadAng = null;
+  for (const [dx, dy] of DIRS8) {
+    const X = x0 + dx, Y = y0 + dy;
+    if (inBounds(X, Y) && game.roads.has(edgeKey(v.cell, idx(X, Y)))) { roadAng = Math.atan2(dy, dx); break; }
+  }
+  if (plan === "market" || (roadAng !== null && ["line", "modern"].includes(plan))) { tx = x0 + 0.5; ty = y0 + 0.5; if (roadAng !== null) ang = roadAng; }
+  if (plan === "line") {
+    const pts = villageRiverPoints().get(v.cell) || [];
+    if (pts.length) { const p = pts[Math.floor(h(4) * pts.length)]; const off = 0.012; tx = p.x + Math.cos(p.ang + Math.PI / 2) * off; ty = p.y + Math.sin(p.ang + Math.PI / 2) * off; ang = p.ang; }
+  }
+  if (plan === "harbor") {
+    // find the sea: walk out from the middle of the cell, stand just inland, back to the land
+    let best = null;
+    for (let k = 0; k < 16; k++) {
+      const a = k / 16 * Math.PI * 2;
+      for (let s = 0.05; s < 0.9; s += 0.03) {
+        const x = x0 + 0.5 + Math.cos(a) * s, y = y0 + 0.5 + Math.sin(a) * s;
+        if (!landAt(x, y)) { if (!best || s < best.s) best = { s, a }; break; }
+      }
+    }
+    if (best) { const s = Math.max(0.03, best.s - 0.035); tx = x0 + 0.5 + Math.cos(best.a) * s; ty = y0 + 0.5 + Math.sin(best.a) * s; ang = best.a - Math.PI / 2; }
+  }
+  if (plan === "camp") {
+    const pit = (LANDUSE.pits || []).filter(p => Math.abs(p.x - (x0 + 0.5)) < 1.6 && Math.abs(p.y - (y0 + 0.5)) < 1.6).sort((a, b) => Math.hypot(a.x - x0 - 0.5, a.y - y0 - 0.5) - Math.hypot(b.x - x0 - 0.5, b.y - y0 - 0.5))[0];
+    if (pit) {
+      const a = Math.atan2(pit.y - (y0 + 0.5), pit.x - (x0 + 0.5));
+      const d = Math.hypot(pit.x - (x0 + 0.5), pit.y - (y0 + 0.5));
+      const s = clamp(d - pit.r * 0.035 - 0.05, 0, 0.42);
+      tx = x0 + 0.5 + Math.cos(a) * s; ty = y0 + 0.5 + Math.sin(a) * s; ang = a - Math.PI / 2;
+    }
+  }
+  tx = clamp(tx, x0 + 0.02, x0 + 0.98); ty = clamp(ty, y0 + 0.02, y0 + 0.98);
+  if (!landAt(tx, ty)) { tx = x0 + 0.5; ty = y0 + 0.5; }
+  return { x: tx, y: ty, cx: Math.floor(tx / G), cy: Math.floor(ty / G), ang };
+}
+/* Every place to draw (named villages and hamlets), worked out again when the world changes. */
+function villageDrawList() {
+  if (!game || !world) return [];
+  const key = `${world.seed}|${game.turn}|${(game.villages || []).length}|${game.cities.length}|${game.roads.size}|${(game.sites || []).length}|${mapVersion}`;
+  if (VDRAW.key === key) return VDRAW.list;
+  const list = [], taken = new Set();
+  const sq = (cx, cy) => cy * 100000 + cx;
+  for (const v of game.villages || []) {
+    const s = villageSpot(v);
+    const ruin = v.status === "ruin";
+    const plan = v.plan || "cluster";
+    const pop = ruin ? (v.peak || 0.001) * 0.7 : v.pop;
+    const d = { named: true, v, x: s.x, y: s.y, cx: s.cx, cy: s.cy, ang: s.ang, plan, ruin, pop, r: villageRadius(pop, plan), cell: v.cell, seed: hash2(v.id || v.cell, 5, world.seed + 7303) };
+    list.push(d);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) taken.add(sq(s.cx + dx, s.cy + dy));
+  }
+  for (let i = 0; i < N_CELLS; i++) {
+    if (world.terrain[i] === T.SEA) continue;
+    for (const hm of hamletsOf(world, game, i)) {
+      if (taken.has(sq(hm.cx, hm.cy))) continue;
+      list.push({ named: false, x: hm.x, y: hm.y, cx: hm.cx, cy: hm.cy, ang: hash2(hm.cx, hm.cy, world.seed + 7304) * Math.PI, plan: hm.plan, ruin: false, pop: hm.pop, r: villageRadius(hm.pop, hm.plan), cell: i, seed: hash2(hm.cx, hm.cy, world.seed + 7303) });
+    }
+  }
+  VDRAW.byCell = new Map();
+  for (const d of list) { if (!VDRAW.byCell.has(d.cell)) VDRAW.byCell.set(d.cell, []); VDRAW.byCell.get(d.cell).push(d); }
+  VDRAW.key = key; VDRAW.list = list;
+  return list;
+}
+/* The two village textures for the graphics card. Returns [VX, VY]. */
+function glUploadVillages() {
+  const gl = GLMAP.gl, G = VIL.grid;
+  const VX = Math.ceil(GRID_W / G), VY = Math.ceil(GRID_H / G);
+  const V = new Float32Array(VX * VY * 4), I = new Float32Array(VX * VY * 4);
+  for (const d of villageDrawList()) {
+    if (d.cx < 0 || d.cy < 0 || d.cx >= VX || d.cy >= VY) continue;
+    const o = (d.cy * VX + d.cx) * 4;
+    if (V[o + 3] > 0.5 && !d.named) continue;
+    V[o] = d.x / G - d.cx; V[o + 1] = d.y / G - d.cy; V[o + 2] = d.r; V[o + 3] = 1;
+    I[o] = VILLAGE_PLAN_ORDER.indexOf(d.plan) + (d.named ? 16 : 0) + (d.ruin ? 32 : 0);
+    I[o + 1] = d.ang; I[o + 2] = Math.min(9.99, d.pop * 1000); I[o + 3] = d.seed;
+  }
+  glTex(3, GLMAP.tex.vill, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, V);
+  if (GLMAP.tex.vinfo) glTex(10, GLMAP.tex.vinfo, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, I);
+  return [VX, VY];
+}
+
+/* The village painter (GLSL), part of the land pass. Positions in metres in the village's own frame: x along its
+   street, river or shore, y across (towards the sea for a fishing village, towards the pit for a mining camp). */
+function villageGlsl() {
+  return `
+// ---------- villages: each drawn from its own look, size and direction ----------
+vec2 gVSun = vec2(-0.62, -0.72);   // the sun's direction in the village being drawn
+// a box from lo to hi (metres): 1 roof, -1 its shadow, 0 outside
+float vBox(vec2 q, vec2 lo, vec2 hi, float h) {
+  if (all(greaterThan(q, lo)) && all(lessThan(q, hi))) return 1.0;
+  vec2 s = q + gVSun * h * 0.6;
+  if (all(greaterThan(s, lo)) && all(lessThan(s, hi))) return -1.0;
+  return 0.0;
+}
+float vRound(vec2 q, float r, float h) {
+  if (length(q) < r) return 1.0;
+  if (length(q + gVSun * h * 0.6) < r) return -1.0;
+  return 0.0;
+}
+// one house in a plot of size s (metres): f is the position in the plot (0..1); w the share of the plot it fills
+float vHouse(vec2 f, vec2 s, vec2 id, int sd, vec2 w, float h) {
+  float j1 = hash2(int(id.x), int(id.y), sd), j2 = hash2(int(id.x), int(id.y), sd + 1);
+  vec2 size = w * (0.78 + 0.3 * vec2(j1, j2));
+  vec2 c0 = vec2(0.5) + (vec2(j2, j1) - 0.5) * (vec2(1.0) - size) * 0.8;
+  return vBox(f * s, (c0 - size * 0.5) * s, (c0 + size * 0.5) * s, h);
+}
+// a tree crown (r metres) at the middle of a plot, with its shadow; 1 crown, -1 shadow
+float vTree(vec2 f, vec2 s, vec2 id, int sd, float r) {
+  vec2 c = vec2(0.3 + 0.4 * hash2(int(id.x), int(id.y), sd + 5), 0.3 + 0.4 * hash2(int(id.x), int(id.y), sd + 6)) * s;
+  float rr = r * (0.7 + 0.6 * hash2(int(id.x), int(id.y), sd + 7));
+  return vRound(f * s - c, rr, rr * 1.4);
+}
+vec3 vCrown(vec2 q, int sd) { return mix(vec3(0.10, 0.19, 0.09), vec3(0.20, 0.31, 0.14), vnoise(q / 3.0, sd + 9)) ; }
+// the ragged edge of a village: 1 inside, 0 outside (d is the distance from the middle as a share of the radius)
+float vEdge(float d, vec2 q, float R, int sd) {
+  float n = 0.28 * (vnoise(q / (R * 0.45) + 3.0, sd + 11) - 0.5) + 0.12 * (vnoise(q / (R * 0.15), sd + 12) - 0.5);
+  return 1.0 - sstep(0.82, 1.0, d + n);
+}
+// how much detail fits: 0 when a plot is under a pixel or two (the village is then its average colour), 1 when clear
+float vDet(float plot, float mpp) { return sstep(1.2, 3.0, plot / mpp); }
+vec3 vRoofWarm(float h) { return h < 0.4 ? vec3(0.71, 0.39, 0.27) : h < 0.7 ? vec3(0.63, 0.33, 0.24) : h < 0.88 ? vec3(0.76, 0.48, 0.33) : vec3(0.55, 0.53, 0.50); }
+vec3 vRoofGrey(float h) { return h < 0.35 ? vec3(0.60, 0.60, 0.60) : h < 0.6 ? vec3(0.48, 0.47, 0.45) : h < 0.82 ? vec3(0.45, 0.36, 0.30) : vec3(0.66, 0.40, 0.30); }
+
+// clustered village (a village packed by a great river): winding lanes, houses wall to wall near the middle, trees, a green and its church
+vec4 vCluster(vec2 q, float R, int sd, float mpp, bool hill, bool ruin) {
+  float d = length(q) / R;
+  float edge = vEdge(d, q, R, sd);
+  if (edge <= 0.0) return vec4(0.0);
+  float P = hill ? 11.0 : 13.0;
+  vec2 w = q + 22.0 * vec2(vnoise(q / 70.0, sd + 3) - 0.5, vnoise(q / 70.0 + 5.0, sd + 4) - 0.5);
+  // a few lanes winding through, not a grid: each runs a crooked line across the village
+  float laneD = min(abs(gnoise(w / 260.0, sd + 5)) * 260.0, abs(gnoise(w / 210.0 + 3.0, sd + 6)) * 210.0);
+  float main = abs(q.y + 9.0 * sin(q.x / 85.0 + float(sd & 7)));
+  vec3 ground = ruin ? vec3(0.42, 0.47, 0.30) : vec3(0.46, 0.45, 0.38);
+  vec3 col = ground;
+  float dens = (hill ? 0.97 : 0.88) * (1.0 - sstep(0.35, 1.0, d)) + 0.12;
+  vec2 u = w / P, id = floor(u), f = u - id;
+  float hh = hash2(int(id.x), int(id.y), sd + 20);
+  float b = vHouse(f, vec2(P), id, sd + 21, vec2(0.8, 0.72), 6.0);
+  if (hh < dens) {
+    vec3 roof = hill ? mix(vRoofGrey(hash2(int(id.x), int(id.y), sd + 22)), vec3(0.62, 0.58, 0.52), 0.5) : vRoofGrey(hash2(int(id.x), int(id.y), sd + 22));
+    if (ruin) { vec2 fp = f * P; float wall = b > 0.5 ? 1.0 - sstep(0.8, 1.6, min(min(fp.x, P - fp.x), min(fp.y, P - fp.y)) - P * 0.16) : 0.0; col = mix(col, vec3(0.36, 0.34, 0.31), wall * 0.9); }
+    else col = b > 0.5 ? roof : b < -0.5 ? col * 0.62 : col;
+  } else {
+    float t = vTree(f, vec2(P), id, sd + 23, P * 0.38);
+    if (hh < dens + (ruin ? 0.5 : 0.3)) col = t > 0.5 ? vCrown(q, sd) : t < -0.5 ? col * 0.6 : col;
+  }
+  if (!ruin) {
+    col = mix(col, vec3(0.56, 0.54, 0.50), 1.0 - sstep(1.6, 2.8, laneD));
+    col = mix(col, vec3(0.60, 0.58, 0.54), (1.0 - sstep(3.0, 4.4, main)) * (1.0 - sstep(0.85, 1.0, d)));
+    // the green and the church in the middle (a tower and a keep on a hilltop, with a wall round it)
+    float green = 1.0 - sstep(20.0, 23.0, length(q - vec2(-6.0, 4.0)));
+    col = mix(col, vec3(0.38, 0.49, 0.27), green * (1.0 - sstep(3.0, 4.4, main)));
+    float ch = vBox(q, vec2(8.0, -16.0), vec2(30.0, -6.0), 12.0);
+    col = ch > 0.5 ? vec3(0.66, 0.63, 0.58) : ch < -0.5 ? col * 0.6 : col;
+    if (hill) col = mix(col, vec3(0.50, 0.47, 0.42), (1.0 - sstep(1.5, 3.0, abs(d - 0.93) * R)) * 0.9);
+  }
+  vec3 avg = ruin ? vec3(0.44, 0.46, 0.34) : mix(vec3(0.50, 0.48, 0.44), vec3(0.24, 0.30, 0.18), 0.25);
+  return vec4(mix(avg, col, vDet(P, mpp)), edge);
+}
+// a village among trees (Bengal): little groups of red-roofed houses under a thick canopy, gardens and fields between, paths
+vec4 vGrove(vec2 q, float R, int sd, float mpp) {
+  float d = length(q) / R;
+  float edge = vEdge(d, q, R, sd);
+  if (edge <= 0.0) return vec4(0.0);
+  float blob = fbm(q / (R * 0.32) + float(sd & 15), sd + 30, 2);
+  float open = vnoise(q / 140.0, sd + 31);
+  vec3 canopy = mix(vec3(0.09, 0.18, 0.08), vec3(0.21, 0.33, 0.13), vnoise(q / 5.0, sd + 32) * 0.7 + 0.3 * vnoise(q / 1.6, sd + 33));
+  vec3 col = canopy;
+  if (open > 0.66) col = mix(vec3(0.36, 0.47, 0.25), vec3(0.45, 0.55, 0.30), vnoise(q / 30.0, sd + 34));
+  float P = 17.0;
+  vec2 wq = q + 7.0 * vec2(vnoise(q / 25.0, sd + 39) - 0.5, vnoise(q / 25.0 + 4.0, sd + 40) - 0.5);   // plots not in rows
+  vec2 u = wq / P, id = floor(u), f = u - id;
+  if (blob > 0.5) {
+    float hh = hash2(int(id.x), int(id.y), sd + 35);
+    float b = vHouse(f, vec2(P), id, sd + 36, vec2(0.5, 0.42), 5.0);
+    vec3 yard = mix(vec3(0.50, 0.50, 0.36), vec3(0.58, 0.54, 0.42), vnoise(q / 8.0, sd + 41));
+    float t = vTree(f, vec2(P), id, sd + 42, P * 0.34);
+    vec3 c2 = hh < 0.6 ? (b > 0.5 ? vRoofWarm(hash2(int(id.x), int(id.y), sd + 37)) : b < -0.5 ? yard * 0.6 : t > 0.5 ? canopy : yard) : (t < -0.5 ? yard * 0.6 : t > 0.5 ? canopy : mix(yard, canopy, 0.5));
+    col = mix(col, c2, sstep(0.5, 0.56, blob));
+  }
+  // footpaths wandering between the groups
+  float path = abs(gnoise(q / 160.0, sd + 38));
+  col = mix(col, vec3(0.72, 0.68, 0.56), (1.0 - sstep(0.010, 0.022, path)) * 0.85);
+  // a pond here and there
+  float pond = length(q - R * 0.4 * vec2(hash2(sd, 1, 40) - 0.5, hash2(sd, 2, 40) - 0.5)) - R * 0.09;
+  col = mix(col, vec3(0.20, 0.30, 0.25), 1.0 - sstep(0.0, 3.0, pond));
+  return vec4(mix(vec3(0.20, 0.27, 0.14), col, vDet(P, mpp)), edge);
+}
+// a street village (a winding stream with houses along both banks, branching out into rice fields)
+vec4 vLine(vec2 q, float R, int sd, float mpp) {
+  float L = R * 1.9, W = R * 0.36;
+  float yc = 0.12 * R * sin(q.x / (R * 0.35) + float(sd & 7)) + 0.05 * R * sin(q.x / (R * 0.11));
+  float ry = q.y - yc;
+  float along = 1.0 - sstep(0.85, 1.0, abs(q.x) / L + 0.15 * (vnoise(vec2(q.x / 60.0, 0.0), sd + 50) - 0.5));
+  // groups of houses bulge out from the line here and there, into the fields
+  float blob = fbm(vec2(q.x, ry) / (W * 1.1) + float(sd & 15), sd + 51, 2);
+  float inLane = blob > 0.56 && abs(ry) < W * 2.2 ? 1.0 : 0.0;
+  float k = 0.0, lx = 0.0;
+  float wid = W * (0.75 + 0.5 * vnoise(vec2(q.x / 90.0, 3.0), sd + 53));
+  float inside = max(1.0 - sstep(wid * 0.85, wid, abs(ry)), inLane * (1.0 - sstep(0.56, 0.6, 1.12 - blob))) * along;
+  if (inside <= 0.0) return vec4(0.0);
+  vec3 col = vec3(0.42, 0.46, 0.33);
+  float P = 15.0;
+  // plots in rows along the street; behind them trees and gardens
+  vec2 u = vec2(q.x, ry) / P, id = floor(u), f = u - id;
+  float hh = hash2(int(id.x), int(id.y), sd + 54);
+  float near = abs(ry) < wid * 0.55 || inLane > 0.5 ? 1.0 : 0.0;
+  float b = vHouse(f, vec2(P), id, sd + 55, vec2(0.66, 0.6), 5.0);
+  if (near > 0.5 && hh < 0.82) col = b > 0.5 ? (hash2(int(id.x), int(id.y), sd + 56) < 0.6 ? vRoofWarm(hash2(int(id.x), int(id.y), sd + 57)) : vRoofGrey(hash2(int(id.x), int(id.y), sd + 57))) : b < -0.5 ? col * 0.6 : col;
+  else { float t = vTree(f, vec2(P), id, sd + 58, P * 0.42); col = t > 0.5 ? vCrown(q, sd) : t < -0.5 ? col * 0.6 : col; }
+  // the street (or the stream path) itself
+  col = mix(col, vec3(0.66, 0.63, 0.55), 1.0 - sstep(2.2, 3.4, abs(ry)));
+  return vec4(mix(vec3(0.38, 0.38, 0.30), col, vDet(P, mpp)), inside);
+}
+// a village of walled yards (the Sahel): mud walls round each family's yard, round huts inside, bare sand with footpaths crossing
+vec4 vCompound(vec2 q, float R, int sd, float mpp) {
+  float d = length(q) / R;
+  float edge = vEdge(d, q, R, sd);
+  if (edge <= 0.0) return vec4(0.0);
+  vec3 sand = mix(vec3(0.66, 0.62, 0.56), vec3(0.73, 0.69, 0.63), vnoise(q / 40.0, sd + 60)) * (0.96 + 0.08 * vnoise(q / 4.0, sd + 61));
+  vec3 col = sand;
+  // footpaths: worn lines running every way
+  float p1 = abs(gnoise(q / 90.0, sd + 62)), p2 = abs(gnoise(q / 55.0 + 9.0, sd + 63));
+  col = mix(col, vec3(0.78, 0.75, 0.70), (1.0 - sstep(0.008, 0.02, min(p1, p2))) * 0.6);
+  float C = 52.0;
+  vec2 u = q / C, id = floor(u), f = u - id;
+  float hh = hash2(int(id.x), int(id.y), sd + 64);
+  float fill = 0.9 * (1.0 - sstep(0.5, 1.0, d)) + 0.25;
+  if (hh < fill) {
+    vec2 sz = vec2(0.55 + 0.35 * hash2(int(id.x), int(id.y), sd + 65), 0.5 + 0.35 * hash2(int(id.x), int(id.y), sd + 66));
+    vec2 lo = (vec2(0.5) - sz * 0.5), hi = (vec2(0.5) + sz * 0.5);
+    vec2 fp = f * C;
+    vec2 a = lo * C, b2 = hi * C;
+    bool inY = all(greaterThan(fp, a)) && all(lessThan(fp, b2));
+    float wallD = min(min(fp.x - a.x, b2.x - fp.x), min(fp.y - a.y, b2.y - fp.y));
+    if (inY) {
+      col = mix(vec3(0.60, 0.56, 0.50), vec3(0.67, 0.63, 0.57), vnoise(q / 6.0, sd + 67));
+      if (wallD < 1.4) col = vec3(0.24, 0.21, 0.18);
+      // two to four round huts and sometimes a square house, a tree in some yards
+      for (int k = 0; k < 4; k++) {
+        if (float(k) > 1.0 + 3.0 * hash2(int(id.x), int(id.y), sd + 68)) break;
+        vec2 hp = a + (b2 - a) * vec2(0.2 + 0.6 * hash2(int(id.x) * 5 + k, int(id.y), sd + 69), 0.2 + 0.6 * hash2(int(id.x), int(id.y) * 5 + k, sd + 70));
+        float hut = vRound(fp - hp, 2.8 + 1.4 * hash2(int(id.x) + k, int(id.y), sd + 71), 3.0);
+        if (hut > 0.5) col = hash2(int(id.x) + k, int(id.y), sd + 72) < 0.6 ? vec3(0.86, 0.84, 0.80) : vec3(0.58, 0.52, 0.42);
+        else if (hut < -0.5) col *= 0.7;
+      }
+      float sq = vBox(fp, a + vec2(2.0), a + vec2(10.0, 7.0), 3.5);
+      if (hash2(int(id.x), int(id.y), sd + 73) < 0.4) col = sq > 0.5 ? vec3(0.80, 0.78, 0.74) : sq < -0.5 ? col * 0.7 : col;
+      float tr = vRound(fp - (b2 - vec2(6.0)), 4.5, 6.0);
+      if (hash2(int(id.x), int(id.y), sd + 74) < 0.35) col = tr > 0.5 ? vec3(0.17, 0.23, 0.13) : tr < -0.5 ? col * 0.65 : col;
+    } else {
+      // a tree's shadow falls over the wall from outside, now and then
+      float w2 = vRound(fp - vec2(C * 0.1, C * 0.9), 4.0, 6.0);
+      if (hash2(int(id.x), int(id.y), sd + 75) < 0.2) col = w2 > 0.5 ? vec3(0.17, 0.23, 0.13) : w2 < -0.5 ? col * 0.7 : col;
+    }
+  }
+  return vec4(mix(vec3(0.58, 0.54, 0.48), col, vDet(C * 0.3, mpp)), edge);
+}
+// a fishing village: houses along the shore (x), the sea towards +y; boats on the beach, nets, a stone quay
+vec4 vHarbor(vec2 q, float R, int sd, float mpp) {
+  float L = R * 1.5, W = R * 0.7;
+  float along = 1.0 - sstep(0.8, 1.0, abs(q.x) / L + 0.25 * (vnoise(vec2(q.x / 50.0, 1.0), sd + 80) - 0.5));
+  // the back of the village is ragged; the shore curves gently
+  float back = W * (0.65 + 0.5 * vnoise(vec2(q.x / 70.0, 2.0), sd + 87)) * (1.0 - 0.6 * (abs(q.x) / L) * (abs(q.x) / L));
+  q.y -= 0.12 * W * sin(q.x / (L * 0.6));
+  float inside = along * (1.0 - sstep(back * 0.85, back, -q.y)) * (1.0 - sstep(W * 0.5, W * 0.62, q.y));
+  if (inside <= 0.0) return vec4(0.0);
+  vec3 col = vec3(0.50, 0.49, 0.42);
+  float P = 14.0;
+  vec2 u = q / P, id = floor(u), f = u - id;
+  float hh = hash2(int(id.x), int(id.y), sd + 81);
+  float b = vHouse(f, vec2(P), id, sd + 82, vec2(0.7, 0.62), 5.0);
+  if (q.y < W * 0.25 && hh < 0.85 * (1.0 - sstep(0.4, 1.0, -q.y / W))) col = b > 0.5 ? (hash2(int(id.x), int(id.y), sd + 83) < 0.55 ? vRoofWarm(hash2(int(id.x), int(id.y), sd + 84)) : vec3(0.84, 0.83, 0.80)) : b < -0.5 ? col * 0.62 : col;
+  // the shore: sand, boats pulled up in a row, nets drying
+  if (q.y > W * 0.25) {
+    col = mix(vec3(0.74, 0.69, 0.55), vec3(0.62, 0.58, 0.47), sstep(W * 0.35, W * 0.6, q.y));
+    vec2 bq = vec2(mod(q.x, 13.0) - 6.5, q.y - W * 0.42);
+    float boat = length(bq / vec2(1.8, 4.6));
+    if (boat < 1.0 && hash2(int(floor(q.x / 13.0)), sd, 85) < 0.6) col = hash2(int(floor(q.x / 13.0)), sd, 86) < 0.5 ? vec3(0.82, 0.82, 0.80) : vec3(0.28, 0.40, 0.55);
+  }
+  // the quay out into the water
+  if (abs(q.x - R * 0.2) < 5.0 && q.y > W * 0.2) col = vec3(0.60, 0.58, 0.54);
+  col = mix(col, vec3(0.62, 0.60, 0.55), 1.0 - sstep(2.0, 3.2, abs(q.y - W * 0.2)));
+  return vec4(mix(vec3(0.55, 0.52, 0.44), col, vDet(P, mpp)), inside);
+}
+// a mining camp: rows of miners' cottages and barracks on bare ground, the spoil heaps and the railway siding towards +y
+vec4 vCamp(vec2 q, float R, int sd, float mpp) {
+  float d = length(q / vec2(1.25, 0.95)) / R;
+  float edge = vEdge(d, q, R, sd);
+  if (edge <= 0.0) return vec4(0.0);
+  vec3 col = mix(vec3(0.47, 0.42, 0.35), vec3(0.55, 0.50, 0.42), vnoise(q / 30.0, sd + 90));
+  vec2 S = vec2(46.0, 19.0);
+  vec2 u = q / S, id = floor(u), f = u - id;
+  if (q.y < R * 0.35) {
+    float b = vBox(f * S, vec2(4.0, 4.0), vec2(40.0, 12.5), 4.5);
+    vec3 roof = hash2(int(id.x), int(id.y), sd + 91) < 0.6 ? vec3(0.46, 0.50, 0.55) : vec3(0.40, 0.38, 0.36);
+    if (hash2(int(id.x), int(id.y), sd + 92) < 0.88) col = b > 0.5 ? roof : b < -0.5 ? col * 0.62 : col;
+    col = mix(col, vec3(0.40, 0.37, 0.33), 1.0 - sstep(1.5, 2.6, abs(f.y * S.y - 16.0)));
+  } else {
+    // spoil heaps: dark cones with paler rims
+    vec2 hp = q - vec2(R * (0.5 * hash2(sd, 3, 93) - 0.25), R * 0.75);
+    float heap = length(hp) / (R * 0.28);
+    col = mix(col, mix(vec3(0.18, 0.17, 0.16), vec3(0.34, 0.32, 0.30), sstep(0.3, 1.0, heap) + 0.15 * vnoise(q / 4.0, sd + 94)), 1.0 - sstep(0.85, 1.0, heap));
+    vec2 hp2 = q - vec2(R * (0.55 + 0.3 * hash2(sd, 4, 93)), R * 0.62);
+    float heap2 = length(hp2) / (R * 0.18);
+    col = mix(col, vec3(0.24, 0.23, 0.21), 1.0 - sstep(0.8, 1.0, heap2));
+  }
+  // the siding: rails on their ties
+  float rl = abs(q.y - R * 0.42);
+  col = mix(col, vec3(0.30, 0.27, 0.24), (1.0 - sstep(1.6, 2.4, rl)));
+  return vec4(mix(vec3(0.44, 0.42, 0.38), col, vDet(10.0, mpp)), edge);
+}
+// a market village: two roads cross at a square with stalls; inns at its corners; houses line the roads
+vec4 vMarket(vec2 q, float R, int sd, float mpp) {
+  float rd = min(abs(q.x), abs(q.y));
+  float d = length(q) / R;
+  float cross = 1.0 - sstep(0.9, 1.0, max(d * 0.75, rd / (R * 0.32)));
+  float edge = max(vEdge(d * 1.3, q, R, sd), cross);
+  if (edge <= 0.0) return vec4(0.0);
+  vec3 col = vec3(0.45, 0.46, 0.36);
+  float P = 14.0;
+  vec2 u = q / P, id = floor(u), f = u - id;
+  float hh = hash2(int(id.x), int(id.y), sd + 100);
+  float b = vHouse(f, vec2(P), id, sd + 101, vec2(0.75, 0.65), 7.0);
+  float dens = 0.95 * (1.0 - sstep(R * 0.1, R * 0.35, rd)) * (1.0 - sstep(0.6, 1.0, d)) + 0.25 * (1.0 - sstep(0.4, 0.9, d));
+  if (hh < dens) col = b > 0.5 ? vRoofGrey(hash2(int(id.x), int(id.y), sd + 102)) : b < -0.5 ? col * 0.6 : col;
+  else { float t = vTree(f, vec2(P), id, sd + 103, P * 0.35); if (hh < dens + 0.25) col = t > 0.5 ? vCrown(q, sd) : t < -0.5 ? col * 0.6 : col; }
+  col = mix(col, vec3(0.62, 0.60, 0.56), 1.0 - sstep(3.5, 4.8, rd));
+  // the square, its stalls, and the inns at its corners
+  float sq = max(abs(q.x), abs(q.y));
+  if (sq < 24.0) {
+    col = vec3(0.66, 0.63, 0.58);
+    vec2 st = floor(q / 5.0);
+    float sh = hash2(int(st.x), int(st.y), sd + 104);
+    if (sq < 19.0 && sq > 5.0 && sh < 0.35 && length(fract(q / 5.0) - 0.5) < 0.32) col = sh < 0.12 ? vec3(0.72, 0.30, 0.25) : sh < 0.24 ? vec3(0.30, 0.42, 0.62) : vec3(0.88, 0.86, 0.82);
+  }
+  vec2 cq = abs(q) - vec2(36.0, 36.0);
+  float inn = vBox(cq, vec2(-10.0, -8.0), vec2(10.0, 8.0), 9.0);
+  col = inn > 0.5 ? vec3(0.58, 0.40, 0.32) : inn < -0.5 ? col * 0.6 : col;
+  return vec4(mix(vec3(0.50, 0.49, 0.44), col, vDet(P, mpp)), edge);
+}
+// scattered farms: farmhouses, barns and yards spread far apart, each with its trees; the fields between are left alone
+vec4 vScatter(vec2 q, float R, int sd, float mpp) {
+  float d = length(q) / R;
+  if (d > 1.05) return vec4(0.0);
+  float S = 330.0;
+  vec2 u = q / S, id = floor(u), f = u - id;
+  if (hash2(int(id.x), int(id.y), sd + 110) > 0.72) return vec4(0.0);
+  vec2 c = (vec2(0.25) + 0.5 * vec2(hash2(int(id.x), int(id.y), sd + 111), hash2(int(id.x), int(id.y), sd + 112))) * S;
+  vec2 fp = f * S - c;
+  float a = hash2(int(id.x), int(id.y), sd + 113) * 3.14159;
+  vec2 r = mat2(cos(a), -sin(a), sin(a), cos(a)) * fp;
+  float yard = max(abs(r.x) / 32.0, abs(r.y) / 24.0);
+  if (yard > 1.6) return vec4(0.0);
+  vec3 col = vec3(0.56, 0.52, 0.42);
+  float alpha = 1.0 - sstep(1.0, 1.15, yard);
+  float h1 = vBox(r, vec2(-22.0, -14.0), vec2(-6.0, -4.0), 6.0);
+  float h2 = vBox(r, vec2(2.0, -16.0), vec2(28.0, -3.0), 7.0);
+  col = h1 > 0.5 ? vRoofWarm(hash2(int(id.x), int(id.y), sd + 114)) : h2 > 0.5 ? vec3(0.50, 0.48, 0.46) : (h1 < -0.5 || h2 < -0.5) ? col * 0.62 : col;
+  float tr = vRound(r - vec2(-18.0, 16.0), 11.0, 14.0);
+  if (tr > 0.5) { col = vCrown(q, sd); alpha = 1.0; } else if (tr < -0.5) col *= 0.7;
+  if (tr != 0.0) alpha = max(alpha, 1.0 - sstep(1.2, 1.5, yard));
+  return vec4(mix(vec3(0.42, 0.42, 0.33), col, vDet(12.0, mpp)), alpha);
+}
+// a modern village: a main road with shops, a roundabout, curving streets ending in closes, houses on lawns, a terrace and some flats
+vec4 vModern(vec2 q, float R, int sd, float mpp) {
+  float d = length(q) / R;
+  float edge = vEdge(d, q, R, sd);
+  float mainRd = abs(q.y);
+  if (edge <= 0.0 && !(mainRd < 6.0 && abs(q.x) < R * 1.3)) return vec4(0.0);
+  vec3 lawn = mix(vec3(0.40, 0.52, 0.28), vec3(0.47, 0.58, 0.32), vnoise(q / 9.0, sd + 120));
+  vec3 asph = vec3(0.50, 0.50, 0.50);
+  vec3 col = lawn;
+  // curving streets round a point off the main road, with lanes running out to closes
+  vec2 c1 = vec2(-R * 0.15, (hash2(sd, 5, 121) < 0.5 ? 1.0 : -1.0) * R * 0.42);
+  vec2 rq = q - c1;
+  float th = atan(rq.y, rq.x);
+  float rr = length(rq) + 26.0 * (vnoise(vec2(th * 1.3, 0.0), sd + 127) - 0.5) + 0.12 * rq.x;   // streets bend, not perfect rings
+  float ring = floor(rr / 62.0 + 0.5);
+  float ringD = abs(rr - 62.0 * ring);
+  // each street only runs part of the way round, ending where it meets a lane
+  if (vnoise(vec2(th * 2.0, ring * 3.1), sd + 128) < 0.3) ringD = 1e9;
+  float sect = 0.9;   // radians between the lanes
+  float ka = floor(th / sect + 0.5), aD = abs(th - ka * sect) * rr;
+  bool spoke = hash2(int(ka) + 50, sd, 122) < 0.7;
+  float street = min(ringD, spoke ? aD : 1e9);
+  // houses: plots along the curves
+  float P = 17.0;
+  vec2 u = vec2(th * rr, rr) / P, id = floor(u), f = u - id;
+  float b = vHouse(f, vec2(P), id, sd + 123, vec2(0.55, 0.5), 6.0);
+  float hh = hash2(int(id.x), int(id.y), sd + 124);
+  if ((ringD > 7.0 || ringD > 1e8) && hh < 0.9 && min(ringD, spoke ? aD : 1e9) < 40.0) {
+    if (b > 0.5) {
+      vec2 fp = f - 0.5;
+      float rim = sstep(0.18, 0.24, max(abs(fp.x), abs(fp.y)));
+      col = mix(hash2(int(id.x), int(id.y), sd + 125) < 0.5 ? vec3(0.50, 0.31, 0.25) : vec3(0.42, 0.40, 0.40), vec3(0.88, 0.87, 0.84), rim * 0.6);
+    } else if (b < -0.5) col *= 0.65;
+    else if (f.y < 0.18) col = vec3(0.62, 0.61, 0.58);   // drives
+  }
+  // closes: turning circles at the ends of some lanes
+  vec2 endP = c1 + vec2(cos(ka * sect), sin(ka * sect)) * (62.0 * (1.0 + floor(2.0 * hash2(int(ka), sd, 126))) + 31.0);
+  float close = length(q - endP);
+  col = mix(col, asph, max(1.0 - sstep(3.0, 4.2, street), 1.0 - sstep(9.0, 10.2, close)) * (spoke || ringD < 4.0 ? 1.0 : 0.0));
+  col = mix(col, lawn, 1.0 - sstep(3.5, 4.5, close));
+  // the main road, its shops and car parks on one side, a terrace row on the other, and a block of flats
+  float shopS = 0.0;
+  if (q.y > 6.0 && q.y < 40.0 && abs(q.x) < R * 0.75) {
+    vec2 su = vec2(q.x / 30.0, 0.0); float sx = fract(su.x) * 30.0;
+    float shop = vBox(vec2(sx, q.y), vec2(3.0, 18.0), vec2(26.0, 34.0), 7.0);
+    col = shop > 0.5 ? vec3(0.62, 0.60, 0.58) : shop < -0.5 ? col * 0.62 : (q.y < 18.0 ? mix(vec3(0.46, 0.46, 0.47), vec3(0.9), (1.0 - sstep(0.3, 0.5, abs(fract(sx / 3.0) - 0.5) * 3.0)) * 0.6 * (1.0 - sstep(15.0, 16.0, q.y))) : col);
+    shopS = 1.0;
+  }
+  float terr = vBox(q, vec2(-R * 0.7, -24.0), vec2(-R * 0.15, -14.0), 8.0);
+  if (shopS < 0.5) col = terr > 0.5 ? (fract(q.x / 6.0) < 0.08 ? vec3(0.35, 0.25, 0.22) : vec3(0.52, 0.33, 0.27)) : terr < -0.5 ? col * 0.62 : col;
+  float flats = vBox(q, vec2(R * 0.2, -46.0), vec2(R * 0.2 + 34.0, -22.0), 18.0);
+  col = flats > 0.5 ? vec3(0.70, 0.70, 0.69) : flats < -0.5 ? col * 0.6 : col;
+  col = mix(col, vec3(0.38, 0.38, 0.39), 1.0 - sstep(5.0, 6.2, mainRd));
+  col = mix(col, vec3(0.92), (1.0 - sstep(0.25, 0.5, mainRd)) * step(0.5, fract(q.x / 8.0)));
+  // the roundabout where the village meets the main road
+  float rb = length(q - vec2(R * 0.55, 0.0));
+  col = mix(col, vec3(0.38, 0.38, 0.39), (1.0 - sstep(15.0, 16.0, rb)) * sstep(8.0, 9.0, rb));
+  col = mix(col, lawn, 1.0 - sstep(8.0, 9.0, rb));
+  float a = max(edge, (1.0 - sstep(5.0, 6.2, mainRd)) * (1.0 - sstep(R * 1.1, R * 1.3, abs(q.x))));
+  return vec4(mix(vec3(0.50, 0.52, 0.45), col, vDet(P, mpp)), a);
+}
+vec4 villagePlan(int plan, bool ruin, vec2 q, float R, int sd, float mpp) {
+  if (ruin) return vCluster(q, R, sd, mpp, false, true);
+  if (plan == 1) return vGrove(q, R, sd, mpp);
+  if (plan == 2) return vLine(q, R, sd, mpp);
+  if (plan == 3) return vCompound(q, R, sd, mpp);
+  if (plan == 4) return vCluster(q, R, sd, mpp, true, false);
+  if (plan == 5) return vHarbor(q, R, sd, mpp);
+  if (plan == 6) return vCamp(q, R, sd, mpp);
+  if (plan == 7) return vMarket(q, R, sd, mpp);
+  if (plan == 8) return vScatter(q, R, sd, mpp);
+  if (plan == 9) return vModern(q, R, sd, mpp);
+  return vCluster(q, R, sd, mpp, false, false);
+}
+// the village (if any) at this point, and the tracks between neighbouring villages
+vec4 villageLayer(vec2 p, float pxm, float farm) {
+  if (pxm > 0.012) return vec4(0.0);
+  float mpp = pxm * 50000.0;
+  ivec2 vc = ivec2(floor(p / VG));
+  float road = 1e9;
+  vec4 hit = vec4(0.0);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    ivec2 c = vc + ivec2(i, j);
+    if (c.x < 0 || c.y < 0 || c.x >= uVGrid.x || c.y >= uVGrid.y) continue;
+    vec4 v = texelFetch(uVillages, c, 0);
+    if (v.w < 0.5) continue;
+    vec2 pos = (vec2(c) + v.xy) * VG;
+    // tracks to the next villages east and south
+    if (farm > 0.02 && mpp < 40.0) for (int k = 0; k < 2; k++) {
+      ivec2 c2 = c + (k == 0 ? ivec2(1, 0) : ivec2(0, 1));
+      if (c2.x >= uVGrid.x || c2.y >= uVGrid.y) continue;
+      vec4 v2 = texelFetch(uVillages, c2, 0);
+      if (v2.w < 0.5) continue;
+      vec2 wob = 0.004 * vec2(vnoise(p * 40.0, uSeed + 7400) - 0.5, vnoise(p * 40.0, uSeed + 7401) - 0.5);
+      road = min(road, segDist(p + wob, pos, (vec2(c2) + v2.xy) * VG));
+    }
+    if (hit.a > 0.0) continue;
+    float R = v.z * 50000.0;
+    vec2 rel = (p - pos) * 50000.0;
+    if (dot(rel, rel) > 4.4 * R * R + 900.0) continue;
+    vec4 inf = texelFetch(uVillInfo, c, 0);
+    float a = inf.y;
+    mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
+    vec2 q = rot * rel;
+    gVSun = normalize(rot * vec2(-0.62, -0.72));
+    int fl = int(inf.x + 0.5);
+    vec4 r = villagePlan(fl & 15, (fl & 32) != 0, q, R, int(inf.w * 65535.0), mpp);
+    if (r.a > 0.01) hit = r;
+  }
+  float rw = 0.00016;   // about 8 m wide
+  float rv = (1.0 - sstep(rw * 0.5, rw * 0.5 + pxm, road)) * sstep(0.2, 1.2, rw / pxm + 0.4) * farm * 0.85;
+  vec3 track = vec3(0.70, 0.67, 0.60);
+  if (hit.a <= 0.01) return vec4(track, rv);
+  return vec4(mix(track, hit.rgb, hit.a), max(hit.a, rv));
+}
+`;
+}
+/* =====================================================================
    15. Founding preview (same economy rules as the game itself)
    ===================================================================== */
 function foundingPreview(cells) {
@@ -24202,6 +24742,10 @@ function selectedTabHtml() {
     const city = game.cities.find(c => c.id === ui.selectedCity);
     if (city) return cityDetailHtml(city);
   }
+  if (ui.selectedVillage && ui.selectedCell < 0) {
+    const v = villageById(game, ui.selectedVillage);
+    if (v) return villageDetailHtml(v);
+  }
   if (ui.selectedCell >= 0) {
     const i = ui.selectedCell;
     const site = siteAt(i);
@@ -24219,6 +24763,7 @@ function selectedTabHtml() {
         <div class="stat-cell"><span class="k">Deposit</span><span class="v">${dt ? "Worked out" : "None known"}</span></div>
         <div class="stat-cell"><span class="k">Road cost</span><span class="v">×${TERRAIN[t].roadCost}</span></div>
       </div>`}
+      ${t === T.SEA ? "" : cellSettlementHtml(i)}
       ${owner === -1 && t !== T.SEA ? `<p class="muted small">Unclaimed. Found a town within 2 cells of your border to claim land like this.</p>` : ""}
       ${game.occ[i] >= 0 ? `<p class="notice">Occupied by the ${escapeHtml(nameOf(game, game.occ[i]))}.</p>` : ""}
       ${t === T.SEA ? "" : landResourceHtml(i)}
@@ -24330,6 +24875,7 @@ function confirmHtml(q) {
       ${payback ? `<div class="row"><span>Pays for itself through taxes</span><span class="num">${payback < 40 ? `about ${Math.ceil(payback)} year${Math.ceil(payback) > 1 ? "s" : ""}` : "very slowly"}</span></div>` : ""}
     </div>
     <ul class="factors">${lines.map(l => `<li><span>${l}</span></li>`).join("")}</ul>
+    ${q.kind === "town" ? townSiteReportHtml(q) : ""}
     ${afford.ok ? "" : `<p class="bad">${escapeHtml(afford.reason)}</p>`}
     <div class="actions">
       <button class="btn primary" type="button" data-action="confirm-build" ${afford.ok ? "" : "disabled"}>${q.kind === "ships" ? (q.seller !== undefined ? "Buy" : "Order") : q.kind === "focus" || q.kind === "capital" || q.kind === "province" ? "Start" : "Build"} for ${fmtMoneyFine(q.cost)}</button>
@@ -25705,6 +26251,7 @@ function dispatchHtml(d) {
     ${tradeDispatchHtml(d)}
     ${citiesDispatchHtml(d)}
     ${provincesDispatchHtml(d)}
+    ${villagesDispatchHtml(d)}
     ${groupsDispatchHtml(d)}
     ${peopleDispatchHtml(d)}
     ${dipHtml}
@@ -26489,7 +27036,8 @@ function onPointerMove(e) {
     if (Math.hypot(x - last[0], y - last[1]) > 0.35) { drawingPath.push([x, y]); scheduleMapRender(); }
     return;
   }
-  const { cell } = eventCell(e);
+  const ec = eventCell(e), { cell } = ec;
+  ui.hoverXY = { x: ec.x, y: ec.y };
   if (cell !== ui.hoverCell) {
     ui.hoverCell = cell;
     const key = `${cell}|${ui.tool}|${ui.roadFrom}|${mapVersion}|${!!ui.pending}`;
@@ -26596,6 +27144,9 @@ function selectClick(press) {
   if (hw && !press.shift) { ui.tab = "agenda"; return; }
   const hs = hitSite(press.px, press.py);
   if (hs) { ui.selectedCity = null; ui.selectedCell = hs.cell; if (!press.shift) ui.tab = "selected"; return; }
+  // a village (16n): its own page; a town's square still opens the town
+  const hvd = view.cs >= 26 && !game.cities.some(c => c.cell === press.cell) ? villageNearPoint(press.px / view.cs, press.py / view.cs, view.cs) : null;
+  if (hvd && hvd.named) { selectVillage(hvd.v.id); return; }
   let city = cityNear(press.cell);
   if (city && city.cell !== press.cell && (siteAt(press.cell) || knownDepositAt(press.cell))) city = null;
   ui.selectedCity = city ? city.id : null;
@@ -26763,7 +27314,7 @@ function startOver() {
   deliberation = null;
   game = null;
   ui.phase = "draw"; ui.name = ""; ui.confirmRestart = false; ui.dispatch = null; ui.pending = null;
-  ui.selectedCity = null; ui.selectedCell = -1; ui.tool = "select"; ui.sel = [];
+  ui.selectedCity = null; ui.selectedCell = -1; ui.selectedVillage = null; ui.tool = "select"; ui.sel = [];
   newWorld(randomSeed());
   bumpMap();
 }
@@ -26916,6 +27467,7 @@ const STAT_VIEWS = [
   ["trade", "Trade", "Who sells what to whom, embargoes"],
   ["military", "Military", "Armies, wars, battles"],
   ["diplomacy", "Diplomacy", "Who likes whom, and every treaty"],
+  ["villages", "Villages", "Every village, its people, ruins, charters"],
   ["chronicle", "History", "Records and the world's events"],
 ];
 const STAT_METRICS = {
@@ -27183,7 +27735,7 @@ function statsWidth() {
 function statsHtml() {
   STAT_CHARTS.clear();
   const g = game, S = ui.stats;
-  const body = { world: statsWorldHtml, legacy: statsLegacyHtml, nation: statsNationHtml, compare: statsCompareHtml, economy: statsEconomyHtml, trade: statsTradeHtml, military: statsMilitaryHtml, diplomacy: statsDiplomacyHtml, chronicle: statsChronicleHtml }[S.view]();
+  const body = { world: statsWorldHtml, legacy: statsLegacyHtml, nation: statsNationHtml, compare: statsCompareHtml, economy: statsEconomyHtml, trade: statsTradeHtml, military: statsMilitaryHtml, diplomacy: statsDiplomacyHtml, chronicle: statsChronicleHtml, villages: statsVillagesHtml }[S.view]();
   return `<div class="st-win" role="dialog" aria-modal="true" aria-labelledby="st-title">
     <header class="st-head">
       <div class="block" style="gap:2px"><span class="eyebrow">Statistics · ${seasonLabel(g.turn)}</span><h2 id="st-title">${STAT_VIEWS.find(v => v[0] === S.view)[1]}</h2></div>
@@ -30389,7 +30941,6 @@ function provincesTabHtml() {
   const cards = st.map(s => {
     const p = s.p, open = ui.openProv === p.id;
     const share = tot.pop > 0 ? s.pop / tot.pop : 0;
-    const vill = (game.villages || []).filter(v => game.owner[v.cell] === PLAYER && game.prov[v.cell] === p.id).sort((a, b) => b.pop - a.pop);
     const neigh = provNeighbors(p);
     const info = provinceNeeds(world, game, p, econ);
     const head = `<div class="prov-head">
@@ -30417,8 +30968,7 @@ function provincesTabHtml() {
         <p class="muted small">${fmtArea(s.cells)} · made ${p.made ? seasonLabel(p.made) : "at the founding"}${s.territory ? ` · a territory: run from ${escapeHtml((game.cities.find(c => c.owner === PLAYER && c.capital) || { name: "the capital" }).name)}${s.towns.length ? ". A town has grown here: choose it as the capital to make this a full province" : " until a town grows here"}` : ""}.</p>
         ${towns ? `<span class="eyebrow">Towns and cities</span><ul class="factors">${towns}</ul>` : `<p class="small muted">No town yet.</p>`}
         ${provNeedsHtml(p, info)}
-        <span class="eyebrow">Villages · ${vill.length}</span>
-        <p class="small">${vill.length ? `${vill.slice(0, 6).map(v => `${escapeHtml(v.name)} <span class="muted">(${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)})</span>`).join(", ")}${vill.length > 6 ? ` and ${vill.length - 6} more` : ""}. Zoom in on the map to see them.` : "No villages: too few people live off the land here."}</p>
+        ${provinceVillagesHtml(p)}
         <div class="actions">${capChoice}${neigh.length ? `<label class="small">Join it to <select data-prov-join="${p.id}"><option value="" selected>…</option>${neigh.map(q => `<option value="${q.id}">${escapeHtml(q.name)}</option>`).join("")}</select></label>` : ""}
           <button class="btn small" type="button" data-action="prov-center" data-pid="${p.id}">Show on the map</button></div>
       </div></div>`;
@@ -30431,6 +30981,7 @@ function provincesTabHtml() {
     </div>
     ${ui.provDraw ? provDrawCardHtml() : ""}
     ${provNeedsReportHtml(st, econ)}
+    ${countrysideHtml()}
     <div class="prov-cards">${cards}</div>
     <p class="muted small">Province capitals (not the national capital) have a governor's offices: 1.5% more public jobs there, people who come to feel at home faster (+1.5 loyalty a season) and are prouder (+${FOCI.seat.mood} mood). Each eases governing a large country (up to ${PROV.seatEaseMax}). If the national capital falls, the government carries on from the biggest one. Upkeep: ${(FOCI.seat.upkeep * 100).toFixed(1)}% of its town's output a season. A new province costs its capital's offices (${pct(PROV.newShare)} of that town's output) and about ${PROV.newSeasons} seasons; joining or moving land takes a season.</p>`;
 }
@@ -30572,35 +31123,7 @@ function drawProvinceCapitalMark(c, city, x, y, rad) {
   c.strokeStyle = "#f0d58a"; c.lineWidth = 2;
   c.beginPath(); c.arc(x, y, rad + 2.4, 0, Math.PI * 2); c.stroke();
 }
-function drawVillages(c, cs) {
-  if (!game.villages || cs < 26) return;
-  const a = smooth01(26, 36, cs);
-  const named = cs >= 46;
-  const placed = (view.townBoxes || []).concat(view.provBoxes || []);
-  const x0 = -view.ox / cs - 1, y0 = -view.oy / cs - 1, x1 = x0 + view.vw / cs + 2, y1 = y0 + view.vh / cs + 2;
-  for (const v of game.villages) {
-    const vx = cellX(v.cell) + 0.3 + 0.4 * hash2(v.cell, 1, 31), vy = cellY(v.cell) + 0.3 + 0.4 * hash2(v.cell, 2, 31);
-    if (vx < x0 || vx > x1 || vy < y0 || vy > y1 || game.owner[v.cell] < 0) continue;
-    const x = vx * cs, y = vy * cs, r = clamp(1.2 + v.pop * 80, 1.6, 2.8);
-    c.globalAlpha = a;
-    c.fillStyle = "#efe6cf"; c.strokeStyle = "rgba(12,10,8,0.85)"; c.lineWidth = 1;
-    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); c.stroke();
-    c.globalAlpha = 1;
-    if (!named) continue;
-    const size = clamp(cs * 0.2, 9.5, 12);
-    c.font = `italic 500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
-    const tw = c.measureText(v.name).width;
-    const box = { x0: x + r + 2, x1: x + r + 4 + tw, y0: y - size * 0.6, y1: y + size * 0.6 };
-    if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) continue;
-    placed.push(box);
-    c.font = `italic 500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
-    c.textAlign = "left"; c.textBaseline = "middle"; c.lineJoin = "round";
-    c.globalAlpha = a * 0.92;
-    c.lineWidth = 2.6; c.strokeStyle = "rgba(10,9,8,0.75)"; c.strokeText(v.name, x + r + 3, y);
-    c.fillStyle = "#efe8d6"; c.fillText(v.name, x + r + 3, y);
-    c.globalAlpha = 1;
-  }
-}
+function drawVillages(c, cs) { drawVillageNames(c, cs); }   // names sized by their people, ruins and boom camps (16n)
 function drawProvincePreview(c, cs) {
   let cells = null, color = "rgba(220,184,94,0.36)";
   if (ui.provDraw) cells = ui.provDraw.cells;
@@ -30613,9 +31136,7 @@ function drawProvincePreview(c, cs) {
 function provTooltipLines(i) {
   if (!game || !game.prov) return "";
   const p = provAt(game, i);
-  const v = villageAt(game, i);
-  let out = "";
-  if (v && game.owner[i] >= 0) out += `<span class="tt-line">${escapeHtml(v.name)}: ${VILLAGE_KINDS[v.kind].toLowerCase()} of about ${fmtCount(Math.round(v.pop * 1e6 / 100) * 100)} people</span>`;
+  let out = villageTooltipLines(i);   // the village or hamlet under the mouse (16n)
   if (p) out += `<span class="tt-line">${isTerritory(game, p) ? "Territory" : "Province"}: ${escapeHtml(p.name)}</span>`;
   return out;
 }
@@ -30652,6 +31173,286 @@ function provincesDispatchHtml(d) {
 }
 Object.assign(ACTIONS, {
   "prov-fund": el => { const p = provById(game, Number(el.dataset.pid)); const k = Number(el.dataset.k); if (p && p.owner === PLAYER && PGOV.levels[k]) { p.fund = k; bumpMap(); } },
+});
+/* =====================================================================
+   16n. Villages in the panels and on the map
+   Names of villages up close (sized by their people, ruins in grey, boom camps in gold), the hover card of any
+   village or hamlet, the village page (its look, people, site, what it lives from, its land, its charter and its
+   story), who lives where in a cell, the site report when you found a town, the villages of each province, the
+   season's village news, and the Villages view of the countryside.
+   ===================================================================== */
+const VILLAGE_KIND_TEXT = {
+  farm: "Its people farm the land around it and sell at the town's market.",
+  mine: "Its people work at the mine next door; shops and inns live from the miners' pay.",
+  fish: "Its people fish off the coast and sell the catch inland.",
+  market: "Travellers and farmers come to its market; inns, smiths and shops live from them.",
+};
+const VILLAGE_STATUS = {
+  boom: { label: "Boom", tone: "good", text: "A new mine has opened: fortune seekers pour in, and it grows fast." },
+  bust: { label: "Bust", tone: "bad", text: "Its mine has closed. The miners are leaving; it will shrink until farming can feed what is left, or be abandoned." },
+  fading: { label: "Emptying", tone: "warn", text: "Too few people are left on the land around it to keep a village going." },
+  ruin: { label: "Ruins", tone: "bad", text: "Abandoned. Its roofs have fallen in and its fields are growing wild." },
+};
+const VILLAGE_PLAN_WHY = {
+  cluster: "Open farmland in a temperate land: people gather close round the church and the green.",
+  grove: "Wet, green land: houses shelter in small groups under shade and fruit trees.",
+  line: "It follows the river or the road, as the best land and the traffic do.",
+  compound: "Dry land: each family keeps its yard behind a mud wall, against the wind, the dust and wandering animals.",
+  hill: "It stands on high ground, packed tight to be easy to defend.",
+  harbor: "It lives from the sea, so it lines the shore.",
+  camp: "It was built in a hurry for the miners, beside the pit.",
+  market: "Roads meet here, so the village gathers round the market square.",
+  scatter: "Few people on wide land: each farm stands in its own fields.",
+  modern: "Close to a big town in a modern age: people who work in the town have moved here, and new streets have been built for them.",
+};
+
+/* ---------- Finding the village under the mouse ---------- */
+/* The drawn village or hamlet nearest a map point (in cells), if the point is inside it or within a few pixels. */
+function villageNearPoint(x, y, cs) {
+  if (!game || !game.villages) return null;
+  villageDrawList();
+  const cell = inBounds(Math.floor(x), Math.floor(y)) ? idx(Math.floor(x), Math.floor(y)) : -1;
+  if (cell < 0) return null;
+  let best = null, bd = Infinity;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const X = cellX(cell) + dx, Y = cellY(cell) + dy;
+    if (!inBounds(X, Y)) continue;
+    for (const d of VDRAW.byCell.get(idx(X, Y)) || []) {
+      const reach = Math.max(d.r * (d.plan === "line" || d.plan === "harbor" ? 1.9 : 1.15), 8 / cs);
+      const dd = Math.hypot(d.x - x, d.y - y);
+      if (dd < reach && dd < bd) { bd = dd; best = d; }
+    }
+  }
+  return best;
+}
+function villageAtMouse() {
+  if (!ui.hoverXY || view.cs < 26) return null;
+  return villageNearPoint(ui.hoverXY.x, ui.hoverXY.y, view.cs);
+}
+function fmtVillPeople(pop) { const n = pop * 1e6; return fmtCount(n >= 1000 ? Math.round(n / 10) * 10 : Math.round(n)); }
+
+/* Hover lines for the place under the mouse (or the cell's village). */
+function villageTooltipLines(i) {
+  if (!game || !game.villages) return "";
+  const d = villageAtMouse();
+  if (d && d.named) {
+    const v = d.v, st = VILLAGE_STATUS[v.status];
+    if (v.status === "ruin") return `<span class="tt-line">${escapeHtml(v.name)}: ruins of ${aAn(VILLAGE_PLANS[v.plan].label.toLowerCase())}, abandoned ${seasonLabel(v.ruinAt || 0)}</span>`;
+    return `<span class="tt-line"><b>${escapeHtml(v.name)}</b>: ${villageSizeWord(v.pop)} of ${fmtVillPeople(v.pop)} people · ${escapeHtml(VILLAGE_PLANS[v.plan].label.toLowerCase())}</span>${st ? `<span class="tt-${st.tone === "good" ? "good" : "bad"}">${st.label}</span>` : ""}<span class="tt-line">Click for its page</span>`;
+  }
+  if (d && !d.named) return `<span class="tt-line">A hamlet of about ${fmtVillPeople(d.pop)} people (${escapeHtml(VILLAGE_PLANS[d.plan].label.toLowerCase())})</span>`;
+  const v = villageAt(game, i);
+  if (v && v.status !== "ruin" && game.owner[i] >= 0) return `<span class="tt-line">${escapeHtml(v.name)}: ${VILLAGE_KINDS[v.kind] ? VILLAGE_KINDS[v.kind].toLowerCase() : "village"} of about ${fmtVillPeople(v.pop)} people</span>`;
+  return "";
+}
+
+/* ---------- Names on the map ---------- */
+function drawVillageNames(c, cs) {
+  if (!game.villages || cs < 26) return;
+  const list = villageDrawList().filter(d => d.named);
+  const a = smooth01(26, 36, cs);
+  const named = cs >= 46;
+  const placed = (view.townBoxes || []).concat(view.provBoxes || []);
+  const x0 = -view.ox / cs - 1, y0 = -view.oy / cs - 1, x1 = x0 + view.vw / cs + 2, y1 = y0 + view.vh / cs + 2;
+  const drawn = cs * VIL.grid > 14;   // the painter shows the village itself: no dot needed
+  for (const d of list.sort((p, q) => q.pop - p.pop)) {
+    const v = d.v;
+    if (d.x < x0 || d.x > x1 || d.y < y0 || d.y > y1) continue;
+    if (game.owner[v.cell] < 0 && v.status !== "ruin") continue;
+    const x = d.x * cs, y = d.y * cs;
+    const ruin = v.status === "ruin", boom = v.status === "boom";
+    const r = drawn ? Math.max(3, d.r * cs * 0.6) : clamp(1.2 + v.pop * 200, 1.6, 3.4);
+    c.globalAlpha = a;
+    if (!drawn) {
+      c.fillStyle = ruin ? "#9a958a" : boom ? "#f0d58a" : "#efe6cf"; c.strokeStyle = "rgba(12,10,8,0.85)"; c.lineWidth = 1;
+      c.beginPath();
+      if (v.kind === "market" && !ruin) c.rect(x - r, y - r, r * 2, r * 2); else c.arc(x, y, r, 0, Math.PI * 2);
+      c.fill(); c.stroke();
+    }
+    c.globalAlpha = 1;
+    if (!named) continue;
+    const big = v.pop >= 0.005;
+    const size = clamp(cs * (big ? 0.22 : 0.19), 9.5, big ? 13.5 : 12) * (ruin ? 0.92 : 1);
+    const label = ruin ? `${v.name} (ruins)` : drawn && cs > 400 ? `${v.name} · ${fmtVillPeople(v.pop)}` : v.name;
+    c.font = `italic ${big ? 600 : 500} ${size}px "IBM Plex Sans", system-ui, sans-serif`;
+    const tw = c.measureText(label).width;
+    const lx = drawn ? x - tw / 2 : x + r + 3, ly = drawn ? y - r - size * 0.9 : y;
+    const box = { x0: lx - 1, x1: lx + tw + 1, y0: ly - size * 0.6, y1: ly + size * 0.6 };
+    if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) continue;
+    placed.push(box);
+    c.textAlign = "left"; c.textBaseline = "middle"; c.lineJoin = "round";
+    c.globalAlpha = a * (ruin ? 0.7 : 0.94);
+    c.lineWidth = 2.6; c.strokeStyle = "rgba(10,9,8,0.75)"; c.strokeText(label, lx, ly);
+    c.fillStyle = ruin ? "#b9b4a8" : boom ? "#f0d58a" : ui.selectedVillage === v.id ? "#f0d58a" : "#efe8d6"; c.fillText(label, lx, ly);
+    c.globalAlpha = 1;
+  }
+}
+
+/* ---------- The village page ---------- */
+function villageTrendSvg(v) {
+  const h = (v.hist || []).slice(-40);
+  if (h.length < 2) return "";
+  const W = 220, H = 34, lo = Math.min(...h) * 0.97, hi = Math.max(...h) * 1.03, span = Math.max(1, hi - lo);
+  const pts = h.map((x, k) => `${(k / (h.length - 1) * W).toFixed(1)},${(H - (x - lo) / span * H).toFixed(1)}`).join(" ");
+  const first = h[0], last = h[h.length - 1];
+  const yrs = Math.max(1, Math.round((h.length - 1) / 4));
+  return `<div class="cf-trend"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>
+    <span class="muted small">${h.length - 1} season${h.length > 2 ? "s" : ""} (${yrs} year${yrs > 1 ? "s" : ""}): ${fmtCount(first)} → ${fmtCount(last)} people (${last >= first ? "+" : "−"}${pct(Math.abs(last / Math.max(1, first) - 1))})</span></div>`;
+}
+function siteLinesHtml(rep) {
+  return `<ul class="factors">${rep.lines.map(l => `<li><span><b class="tone-${l.tone}">${escapeHtml(l.label)}</b>: ${escapeHtml(l.text)}${l.fx.length ? `<span class="sub">${escapeHtml(l.fx.join(" · "))}</span>` : ""}</span></li>`).join("") || `<li><span class="muted">Nothing special: open country.</span></li>`}</ul>`;
+}
+function villageDetailHtml(v) {
+  const own = game.owner[v.cell];
+  const n = own >= 0 ? game.nations[own] : null;
+  const p = provAt(game, v.cell);
+  const ruin = v.status === "ruin";
+  const st = VILLAGE_STATUS[v.status];
+  const econ = own >= 0 ? economies()[own] : null;
+  const T = ruin || own < 0 ? null : villageTarget(world, game, v, econ);
+  const rep = siteReport(world, game, v.cell, own >= 0 ? own : undefined);
+  const town = own >= 0 ? nearestCity(game, v.cell, own) : null;
+  const h = v.hist || [];
+  const yearAgo = h.length >= 5 ? h[h.length - 5] : null;
+  const head = `<div class="block">
+      <span class="eyebrow" ${n ? `style="color:${n.color}"` : ""}>${n ? escapeHtml(n.name) : "Wild land"}${p ? ` · ${escapeHtml(p.name)}` : ""}</span>
+      <h2 class="side-title">${escapeHtml(v.name)}</h2>
+      <p class="muted small">${ruin ? `Ruins of ${aAn(VILLAGE_PLANS[v.plan].label.toLowerCase())}` : `${villageSizeWord(v.pop).replace(/^./, s => s.toUpperCase())} · ${escapeHtml(VILLAGE_PLANS[v.plan].label)} · ${escapeHtml(VILLAGE_KINDS[v.kind] || "Village")}`} · ${v.born > 0 ? `grew up in ${seasonLabel(v.born)}` : `about ${Math.round(villageAge(world, game, v))} years old`}</p>
+    </div>`;
+  const status = st ? `<p class="notice ${st.tone === "good" ? "info" : ""}">${escapeHtml(st.text)}${ruin && v.ruinAt !== undefined ? ` Abandoned in ${seasonLabel(v.ruinAt)}; at its height ${fmtVillPeople(v.peak || 0)} people lived here.` : ""}</p>` : "";
+  const occ = game.occ && game.occ[v.cell] >= 0 ? `<p class="notice">Occupied by the ${escapeHtml(nameOf(game, game.occ[v.cell]))}.</p>` : "";
+  const figs = ruin ? "" : `<div class="stats-grid">
+      <div class="stat-cell"><span class="k">People</span><span class="v">${fmtVillPeople(v.pop)}</span></div>
+      <div class="stat-cell"><span class="k">A year ago</span><span class="v">${yearAgo ? fmtCount(yearAgo) : "—"}</span></div>
+      <div class="stat-cell" title="The size its site and fortunes allow now; it moves a little toward it every season"><span class="k">Heading for</span><span class="v tone-${T && T.target > v.pop * 1.01 ? "good" : T && T.target < v.pop * 0.99 ? "bad" : "neutral"}">${T ? fmtVillPeople(T.target) : "—"}</span></div>
+      <div class="stat-cell"><span class="k">Most ever</span><span class="v">${fmtVillPeople(v.peak || v.pop)}</span></div>
+    </div>`;
+  const why = T && T.why.length ? `<span class="eyebrow">Why it is growing or shrinking</span><ul class="factors">${T.why.map(x => `<li><span>${escapeHtml(x.label)}</span><span class="num ${x.v === null ? "" : x.v >= 0 ? "tone-good" : "tone-bad"}">${x.v === null ? "" : signedPct(x.v, 0)}</span></li>`).join("")}</ul>` : "";
+  const look = `<div class="block"><span class="eyebrow">How it looks</span>
+      <p class="small"><b>${escapeHtml(VILLAGE_PLANS[v.plan].label)}.</b> ${escapeHtml(VILLAGE_PLANS[v.plan].text)}</p>
+      <p class="muted small">Why: ${escapeHtml((VILLAGE_PLAN_WHY[v.plan] || "").replace(/^./, c => c.toLowerCase()))}</p></div>`;
+  const live = ruin ? "" : `<div class="block"><span class="eyebrow">What its people live from</span><p class="small">${escapeHtml(VILLAGE_KIND_TEXT[v.kind] || VILLAGE_KIND_TEXT.farm)}${town ? ` Its town is ${escapeHtml(town.name)}, ${Math.round(dist(town.cell, v.cell) * 50)} km away.` : ""}</p></div>`;
+  const site = `<div class="block"><span class="eyebrow">Its site · ${rep.score}, ${escapeHtml(rep.word)}</span>${siteLinesHtml(rep)}</div>`;
+  const cs = cellSettlement(world, game, v.cell);
+  const land = `<div class="block"><span class="eyebrow">Who lives on its land</span>
+      <p class="small">Of the ${fmtPeople(cs.P)} people of this ${fmtArea(1)}: ${fmtVillPeople(cs.inVillage)} in ${escapeHtml(v.name)}, ${fmtPeople(cs.inHamlets)} in ${cs.hamlets.length} hamlet${cs.hamlets.length === 1 ? "" : "s"}, and ${fmtPeople(cs.onFarms)} on farms and in farmsteads.${town ? ` All of them count among the people of ${escapeHtml(town.name)}'s district.` : ""}</p></div>`;
+  let charter = "";
+  if (!ruin && own === PLAYER) {
+    const ch = charterCheck(world, game, v);
+    const asked = v.charter && v.charter.refused ? ` It asked in ${seasonLabel(v.charter.refused)} and was told to wait; it may ask again in ${seasonLabel(v.charter.refused + VIL.charterAgain)}.` : "";
+    charter = `<div class="block"><span class="eyebrow">A town charter</span>
+      <p class="small">${ch.ok ? `${escapeHtml(v.name)} is big enough and well placed to ask for a town charter; it will ask when the time comes (one village at a time, every ${VIL.charterCool / 4} years at most).` : `To ask for a town charter it needs ${fmtCount(VIL.charterPop * 1e6)} people, a site of ${VIL.charterScore} or better, a road, and no town within ${BUILD.townMinSpacing} cells.`}${asked}</p>
+      ${ch.ok ? "" : `<ul class="factors">${ch.why.map(x => `<li><span class="muted">${escapeHtml(x)}</span></li>`).join("")}</ul>`}</div>`;
+  }
+  const story = `<details class="block cf-hist" open><summary>The story of ${escapeHtml(v.name)}</summary>
+      ${villageTrendSvg(v)}
+      ${(v.log || []).length ? `<ul class="news">${v.log.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span><span class="num muted small">${seasonLabel(x.t)}</span><br>${escapeHtml(x.text)}</span></li>`).join("")}</ul>` : ""}
+    </details>`;
+  const actions = `<div class="actions"><button class="btn small" type="button" data-action="village-look" data-vid="${v.id}">See it up close</button>${town ? `<button class="btn small" type="button" data-city-pick="${town.id}">${escapeHtml(town.name)}</button>` : ""}${n && own !== PLAYER && n.alive ? `<button class="btn small" type="button" data-action="nation-view" data-nid="${own}">About the ${escapeHtml(n.name)}</button>` : ""}</div>`;
+  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${story}${actions}`;
+}
+/* Who lives where in a cell, for the land's own page. */
+function cellSettlementHtml(i) {
+  if (!game || !isLand(world, i) || game.cities.some(c => c.cell === i)) return "";
+  const cs = cellSettlement(world, game, i);
+  if (cs.P < 0.005) return "";
+  const v = villageAt(game, i);
+  const rep = siteReport(world, game, i, game.owner[i] >= 0 ? game.owner[i] : undefined);
+  return `<div class="block"><span class="eyebrow">Who lives here</span>
+    <p class="small">${fmtPeople(cs.P)} people: ${cs.village ? `${fmtVillPeople(cs.inVillage)} in the village of <button class="linkbtn" type="button" data-action="village-pick" data-vid="${cs.village.id}">${escapeHtml(cs.village.name)}</button>, ` : ""}${fmtPeople(cs.inHamlets)} in ${cs.hamlets.length} hamlet${cs.hamlets.length === 1 ? "" : "s"} (${escapeHtml(VILLAGE_PLANS[cs.plan].label.toLowerCase())}), and ${fmtPeople(cs.onFarms)} on farms.${v && v.status === "ruin" ? ` The ruins of ${escapeHtml(v.name)} stand here.` : ""}</p></div>
+    <div class="block"><span class="eyebrow">The site · ${rep.score}, ${escapeHtml(rep.word)}</span>${siteLinesHtml(rep)}</div>`;
+}
+/* The site report on the card for a new town. */
+function townSiteReportHtml(q) {
+  const rep = siteReport(world, game, q.site, PLAYER);
+  return `<div class="block"><span class="eyebrow">Its site · ${rep.score}, ${escapeHtml(rep.word)}</span>
+    <p class="small">A town here would grow ${rep.townGrow >= 0 ? "+" : ""}${(rep.townGrow * 400).toFixed(2)}% a year faster from its site${rep.def > 0 ? `, and its defenders fight ${pct(rep.def)} harder` : ""}.</p>
+    ${siteLinesHtml(rep)}
+    ${rep.notes.length ? `<p class="muted small">${rep.notes.map(escapeHtml).join(" ")}</p>` : ""}</div>`;
+}
+
+/* ---------- The villages of a province, and of the nation ---------- */
+function provinceVillagesHtml(p) {
+  const vs = (game.villages || []).filter(v => game.owner[v.cell] === PLAYER && game.prov[v.cell] === p.id);
+  const live = vs.filter(v => v.status !== "ruin").sort((a, b) => b.pop - a.pop);
+  const ruins = vs.length - live.length;
+  if (!vs.length) return `<span class="eyebrow">Villages</span><p class="small muted">No villages yet: too few people live on its land.</p>`;
+  const people = live.reduce((s, v) => s + v.pop, 0);
+  const kinds = Object.entries(live.reduce((m, v) => (m[v.kind] = (m[v.kind] || 0) + 1, m), {})).map(([k, c]) => `${c} ${(VILLAGE_KINDS[k] || k).toLowerCase()}${c > 1 ? "s" : ""}`).join(", ");
+  return `<span class="eyebrow">Villages · ${live.length}${ruins ? ` · ${ruins} in ruins` : ""}</span>
+    <p class="small">${fmtPeople(people)} people live in its villages (${escapeHtml(kinds)}).</p>
+    <ul class="factors">${live.slice(0, 8).map(v => `<li><span><button class="linkbtn" type="button" data-action="village-pick" data-vid="${v.id}">${escapeHtml(v.name)}</button> <span class="muted small">${escapeHtml(VILLAGE_PLANS[v.plan].label.toLowerCase())}${VILLAGE_STATUS[v.status] ? ` · ${VILLAGE_STATUS[v.status].label.toLowerCase()}` : ""}</span></span><span class="num">${fmtVillPeople(v.pop)}</span></li>`).join("")}</ul>
+    ${live.length > 8 ? `<p class="muted small">And ${live.length - 8} more. Zoom in on the map to see them.</p>` : ""}`;
+}
+function countrysideHtml() {
+  const s = villageStats(world, game, PLAYER);
+  if (!s.count && !s.ruins) return "";
+  const ready = s.ready.filter(r => r.check.ok);
+  return `<div class="block"><span class="eyebrow">The countryside</span>
+    <p class="small">${s.count} village${s.count === 1 ? "" : "s"} with ${fmtPeople(s.people)} people · ${s.growing} growing, ${s.shrinking} shrinking${s.markets.length ? ` · ${s.markets.length} market village${s.markets.length > 1 ? "s" : ""}` : ""}${s.booms.length ? ` · <span class="tone-good">${s.booms.length} boom camp${s.booms.length > 1 ? "s" : ""}</span>` : ""}${s.ruins ? ` · ${s.ruins} in ruins` : ""}${s.chartered.length ? ` · ${s.chartered.length} granted a town charter` : ""}.</p>
+    ${ready.length ? `<p class="small">Ready to ask for a town charter: ${ready.slice(0, 4).map(r => `<button class="linkbtn" type="button" data-action="village-pick" data-vid="${r.v.id}">${escapeHtml(r.v.name)}</button>`).join(", ")}.</p>` : ""}</div>`;
+}
+/* The season report's village news. */
+function villagesDispatchHtml(d) {
+  const list = (d.villages || []).slice(0, 8);
+  if (!list.length) return "";
+  return `<div class="block"><span class="eyebrow">Villages</span><ul class="news">${list.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span>${escapeHtml(x.text)}</span></li>`).join("")}</ul>${(d.villages || []).length > 8 ? `<p class="muted small">And ${(d.villages || []).length - 8} more.</p>` : ""}</div>`;
+}
+
+/* ---------- Clicks ---------- */
+function lookAtVillage(v, mpp) {
+  const s = villageSpot(v);
+  const z = clamp(50000 / (mpp || 4) / view.base, ZOOM.min, ZOOM.max);
+  view.zoom = z; view.cs = view.base * z;
+  view.ox = view.vw / 2 - s.x * view.cs; view.oy = view.vh / 2 - s.y * view.cs;
+  clampCamera(); updateZoomBox(); scheduleMapRender();
+}
+function selectVillage(id) { ui.selectedVillage = id; ui.selectedCity = null; ui.selectedCell = -1; ui.tab = "selected"; }
+Object.assign(ACTIONS, {
+  "village-pick": el => { const v = villageById(game, Number(el.dataset.vid)); if (!v) return; selectVillage(v.id); centerOnCell(v.cell, Math.max(view.zoom, 3)); },
+  "village-look": el => { const v = villageById(game, Number(el.dataset.vid)); if (!v) return; lookAtVillage(v, Math.max(1.5, villageRadius(v.pop, v.plan) * 50000 / 160)); },
+});
+
+/* ---------- Statistics: the Villages view ---------- */
+function statsVillagesHtml() {
+  const g = game, nid = PLAYER;
+  const s = villageStats(world, g, nid);
+  // who lives where, over all of the nation's land outside the towns' own squares
+  let P = 0, inV = 0, inH = 0, nH = 0;
+  for (let i = 0; i < N_CELLS; i++) {
+    if (g.owner[i] !== nid) continue;
+    const cs = cellSettlement(world, g, i);
+    if (cs.town) continue;
+    P += cs.P; inV += cs.inVillage; inH += cs.inHamlets; nH += cs.hamlets.length;
+  }
+  const farms = Math.max(0, P - inV - inH);
+  const share = x => (P > 0 ? x / P : 0);
+  const bar = [["In villages", inV, "var(--gold)"], ["In hamlets", inH, "#8fae6b"], ["On farms", farms, "#6b7f9e"]];
+  const live = g.villages.filter(v => g.owner[v.cell] === nid && v.status !== "ruin").sort((a, b) => b.pop - a.pop);
+  const growth = v => { const h = v.hist || []; const a = h.length >= 5 ? h[h.length - 5] : null; return a ? v.pop * 1e6 / a - 1 : null; };
+  const looks = VILLAGE_PLAN_ORDER.filter(k => s.byPlan[k]).map(k => `<li><span>${escapeHtml(VILLAGE_PLANS[k].label)}</span><b class="num">${s.byPlan[k]}</b></li>`).join("");
+  const table = `<div class="st-tablewrap"><table class="st-table compact"><thead><tr><th class="l">Village</th><th class="l">Province</th><th>People</th><th>A year</th><th class="l">Look</th><th class="l">Lives from</th><th>Site</th><th class="l">Now</th></tr></thead>
+    <tbody>${live.slice(0, 80).map(v => {
+      const gr = growth(v), p = provAt(g, v.cell), st = VILLAGE_STATUS[v.status];
+      return `<tr><td class="l"><button class="linkbtn" type="button" data-action="village-stat" data-vid="${v.id}">${escapeHtml(v.name)}</button></td><td class="l">${p ? escapeHtml(p.name) : "—"}</td><td>${fmtVillPeople(v.pop)}</td><td class="${gr === null ? "" : gr > 0.005 ? "tone-good" : gr < -0.005 ? "tone-bad" : ""}">${gr === null ? "—" : signedPct(gr, 1)}</td><td class="l">${escapeHtml(VILLAGE_PLANS[v.plan].label)}</td><td class="l">${escapeHtml((VILLAGE_KINDS[v.kind] || "").replace(" village", "").toLowerCase())}</td><td>${siteScore(siteFeatures(world, g, v.cell, nid))}</td><td class="l ${st ? `tone-${st.tone}` : ""}">${st ? st.label : ""}</td></tr>`;
+    }).join("")}</tbody></table></div>${live.length > 80 ? `<p class="muted small">The 80 biggest of ${live.length}.</p>` : ""}`;
+  const M = villMeta(g);
+  const ruins = g.villages.filter(v => g.owner[v.cell] === nid && v.status === "ruin").sort((a, b) => (b.ruinAt || 0) - (a.ruinAt || 0));
+  const lost = `<ul class="news">${ruins.slice(0, 10).map(v => `<li><span class="dot" style="background:var(--bad)"></span><span><b>${escapeHtml(v.name)}</b> · abandoned ${seasonLabel(v.ruinAt || 0)} · ${fmtVillPeople(v.peak || 0)} people at its height</span></li>`).join("")}${s.chartered.map(c => `<li><span class="dot" style="background:var(--good)"></span><span><b>${escapeHtml(c.name)}</b> · became a town ${seasonLabel(c.turn)}, with ${fmtVillPeople(c.pop)} people</span></li>`).join("")}</ul>`;
+  const world_ = liveNations(g).map(n => { const t = villageStats(world, g, n.id); return { n, t }; }).sort((a, b) => b.t.people - a.t.people);
+  const worldTable = `<div class="st-tablewrap"><table class="st-table compact"><thead><tr><th class="l">Nation</th><th>Villages</th><th>People in them</th><th>Biggest</th><th>Ruins</th><th>Charters</th></tr></thead><tbody>${world_.map(({ n, t }) => `<tr><td class="l"><i class="sw" style="background:${n.color}"></i> ${escapeHtml(n.name)}</td><td>${t.count}</td><td>${fmtPeople(t.people)}</td><td>${t.biggest[0] ? `${escapeHtml(t.biggest[0].name)} (${fmtVillPeople(t.biggest[0].pop)})` : "—"}</td><td>${t.ruins}</td><td>${t.chartered.length}</td></tr>`).join("")}</tbody></table></div>`;
+  void M;
+  return `<div class="st-grid">
+    ${card("Who lives where", `<div class="st-share">${bar.map(([l, v, c]) => `<div class="st-share-row"><span>${l}</span><span class="st-share-bar"><i style="width:${(share(v) * 100).toFixed(1)}%;background:${c}"></i></span><b class="num">${fmtPeople(v)} · ${pct(share(v))}</b></div>`).join("")}</div>
+      <p class="muted small">Your land outside the towns' own squares: ${fmtPeople(P)} people. ${s.count} villages and ${fmtCount(nH)} hamlets. Everyone here also counts among the people of the nearest town's district.</p>`, { note: "the countryside" })}
+    ${card("Looks", `<ul class="st-pills">${looks}</ul><p class="muted small">Chosen by each village's climate, its site, what it lives from and the age: walled yards in dry lands, villages under trees in wet ones, street villages along rivers and roads, modern streets near big cities.</p>`)}
+    ${card("Growing and shrinking", `<p class="small">${s.growing} growing, ${s.shrinking} shrinking over the last year · ${s.markets.length} market village${s.markets.length === 1 ? "" : "s"} · ${s.booms.length} boom camp${s.booms.length === 1 ? "" : "s"}</p>${lost}`)}
+    ${card("Every village", table, { wide: true, note: "biggest first" })}
+    ${card("The world's villages", worldTable, { wide: true })}
+  </div>`;
+}
+Object.assign(ACTIONS, {
+  "village-stat": el => { const v = villageById(game, Number(el.dataset.vid)); if (!v) return; ui.stats = null; selectVillage(v.id); centerOnCell(v.cell, Math.max(view.zoom, 3)); },
 });
 /* =====================================================================
    16j. Interest groups in the panels: who holds power, what they feel and why, what they demand

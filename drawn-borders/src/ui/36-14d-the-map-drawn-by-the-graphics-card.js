@@ -29,7 +29,7 @@ function glBuild(gl, src) {
 const MAPKEY = { fail: "drawn-borders-map-fail", trying: "drawn-borders-map-trying" };
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* storage may be off */ } }
-const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn"];
+const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVillInfo", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn"];
 /* The painters this game can use, best first. The full map is three small programs drawn one over another (land and
    rivers; towns; river water and quays inside towns), because one huge program is too much for some graphics
    drivers (Windows translates every shader for DirectX, and a very long one can fail there). */
@@ -38,6 +38,7 @@ function glPlans() {
   const plans = [
     { name: "full map", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2")] },
     { name: "full map with lighter cities", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2\n#define CITY_LITE")] },
+    { name: "full map with simpler villages", parts: [v(full, "#define PASS 1\n#define VILLAGE_LITE"), v(full, "#define PASS 2\n#define CITY_LITE\n#define VILLAGE_LITE")] },
   ];
   if (typeof glShaderSourceSafe === "function") plans.push({ name: "the simpler map from version 26", parts: [glShaderSourceSafe()], simple: true });
   return plans;
@@ -96,11 +97,13 @@ function glInit() {
     GLMAP.tex.pits = mk(2, gl.NEAREST);
     GLMAP.tex.vill = mk(3, gl.NEAREST);
     GLMAP.tex.tidx = mk(4, gl.NEAREST);
+    GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
     GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
     Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple });
     glEachProg(U => {
       gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
       gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
+      if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
       if (U.uOne) gl.uniform1i(U.uOne, 1);
       if (U.uFrame) gl.uniform1i(U.uFrame, 8);
       if (U.uRiv) gl.uniform1i(U.uRiv, 9);
@@ -142,6 +145,7 @@ function glUploadEmpty() {
   glTex(1, GLMAP.tex.towns, 1, 2, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(8));
   glTex(2, GLMAP.tex.pits, 1, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(4));
   glTex(3, GLMAP.tex.vill, 1, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(4));
+  if (GLMAP.tex.vinfo) glTex(10, GLMAP.tex.vinfo, 1, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(4));
   glTex(4, GLMAP.tex.tidx, GRID_W, GRID_H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(N_CELLS * 4));
   glTex(5, GLMAP.tex.rv, 5, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(20));
   glTex(6, GLMAP.tex.rcell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(N_CELLS * 4));
@@ -282,25 +286,8 @@ function glUpdateLand() {
   pits.forEach((p, k) => { P[k * 4] = p.x; P[k * 4 + 1] = p.y; P[k * 4 + 2] = p.r; P[k * 4 + 3] = p.oil ? 2 : p.coal ? 1 : 0; });
   glTex(2, GLMAP.tex.pits, Math.max(1, pits.length), 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, P);
   GLMAP.nPits = pits.length;
-  // villages: one may stand in each 6 km square of farmland, more where more people farm
-  const VG = 0.12, VX = Math.ceil(GRID_W / VG), VY = Math.ceil(GRID_H / VG);
-  const V = new Float32Array(VX * VY * 4);
-  if (has) for (let cy = 0; cy < VY; cy++) for (let cx = 0; cx < VX; cx++) {
-    const x = (cx + 0.5) * VG, y = (cy + 0.5) * VG;
-    const c = bilinear(LANDUSE.crop, x, y);
-    if (c < 0.3) continue;
-    const hv = hash2(cx, cy, world.seed + 7100);
-    if (hv > 0.6 * c) continue;
-    if (towns.some(t => Math.hypot(x - t.x, y - t.y) < t.r * 1.15)) continue;
-    if (elevationAt(world.seed, x, y) + 0.03 * (fbm(x * 1.9, y * 1.9, world.seed + 333, 4) - 0.5) <= world.seaLevel + 0.003) continue;
-    const o = (cy * VX + cx) * 4;
-    V[o] = 0.2 + 0.6 * hash2(cx, cy, world.seed + 7101);
-    V[o + 1] = 0.2 + 0.6 * hash2(cx, cy, world.seed + 7102);
-    V[o + 2] = (0.004 + 0.007 * hash2(cx, cy, world.seed + 7103)) * (hv < 0.04 ? 2.5 : 1);
-    V[o + 3] = 1;
-  }
-  glTex(3, GLMAP.tex.vill, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, V);
-  GLMAP.vgrid = [VX, VY];
+  // villages and hamlets: each with its own people, look and direction, from the game (14e)
+  GLMAP.vgrid = has ? glUploadVillages() : [1, 1];
 }
 function glSetWorld(w) {
   if (!GLMAP.ok) return;
@@ -1634,6 +1621,7 @@ uniform int uNPits;
 uniform float uSea, uHill, uMtn, uMoist;
 uniform int uSeed;
 uniform highp sampler2D uVillages;   // one texel per 6 km square: village position (x, y in the square), radius, 1 if there is one
+uniform highp sampler2D uVillInfo;   // per 6 km square: the village's look (+16 named, +32 ruins), direction, people (thousands), random number
 uniform ivec2 uVGrid;
 layout(location = 0) out vec4 outColor;
 #if PASS == 1
@@ -1786,6 +1774,7 @@ bool villageAt(ivec2 c, out vec2 pos, out float rad) {
 }
 float cropAt(vec2 p) { return texture(uLand, p / vec2(96.0, 64.0)).r; }
 float gFarm = 0.0;
+float gVilA = 0.0;   // how much of this pixel a village covers
 vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
   float pxm = uScale;                      // cells per pixel
   float m = moistureAt(p) + 0.07 * (vnoise(p * 2.1, uSeed + 88) - 0.5);
@@ -1904,7 +1893,8 @@ vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
   float snow = sstep(uMtn + 0.075, uMtn + 0.13, h + 0.02 * n.y) * (1.0 - 0.6 * sstep(1.0, 2.0, slope));
   if (snow > 0.01) g = mix(g, mix(SNOWSHADE, SNOW, sstep(0.55, 0.9, dot(n, normalize(vec3(-0.62, -0.72, 0.7))))), snow * 0.95);
 
-  // villages and the roads between them
+  // villages and the roads between them (the simpler map; the full map draws each village from its own look: villageLayer)
+#ifdef VILLAGE_LITE
   if (farm > 0.02 && pxm < 0.012) {
     ivec2 vc = ivec2(floor(p / VG));
     float best = 1e9; vec3 vcol = vec3(0.0); float vmix = 0.0;
@@ -1945,6 +1935,7 @@ vec3 landColor(vec2 p, float e, float h, vec3 n, float slope) {
     float rv = 1.0 - sstep(rw * 0.5, rw * 0.5 + pxm, road);
     g = mix(g, vec3(0.70, 0.68, 0.63), rv * sstep(0.2, 1.2, rw / pxm + 0.4) * farm * 0.9);
   }
+#endif
   // a strip of sand where the coast is low
   float ce = e - uSea;
   if (ce < 0.006 && slope < 1.2) g = mix(g, ce < 0.002 ? WETSAND : SAND, (1.0 - ce / 0.006) * 0.75);
@@ -3085,6 +3076,9 @@ vec3 waterColor(vec2 p, float e) {
   return c;
 }
 
+#ifndef VILLAGE_LITE
+${villageGlsl()}
+#endif
 #if PASS == 1
 // pass 1: land, sea, rivers, farms, forests, mountains, mines and harbours (no towns)
 void main() {
@@ -3118,13 +3112,18 @@ void main() {
     g = mix(g, mix(vec3(0.24, 0.37, 0.17), vec3(0.34, 0.43, 0.22), vnoise(p * 300.0, uSeed + 8890)), gFPDry);
     vec4 pit = pitColor(p, uScale);
     g = mix(g, pit.rgb, pit.a);
+#ifndef VILLAGE_LITE
+    vec4 vil = villageLayer(p, uScale, gFarm);
+    g = mix(g, vil.rgb, vil.a);
+    gVilA = vil.a;
+#endif
     g = mix(g, town.rgb, town.a);
     g = mix(g, gRiv.rgb, mix(gRiv.a, gRivWater, town.a));
     vec3 sun = normalize(vec3(-0.62, -0.72, 0.7));
     float lam = dot(n, sun);
     float shade = clamp(lam / sun.z, 0.42, 1.45);
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
-    shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
+    shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.6 * gVilA) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
     outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }

@@ -85,10 +85,11 @@ for (let wi = 0; wi < worlds; wi++) {
     }
 
     // a boom: a new mine next to a village; then the mine is worked out: a bust, and people hold on in the town
-    const v = game.villages.find(x => game.owner[x.cell] === E.PLAYER && x.status === "village" && x.kind === "farm") || game.villages.find(x => x.status === "village");
+    const far = x => game.cities.every(c => E.dist(c.cell, x.cell) >= 3);
+    const v = game.villages.find(x => game.owner[x.cell] === E.PLAYER && x.status === "village" && x.kind === "farm" && far(x)) || game.villages.find(x => x.status === "village" && x.kind === "farm" && far(x)) || game.villages.find(x => x.status === "village");
     check(v, "no village to test a boom with");
     const x = E.cellX(v.cell), y = E.cellY(v.cell);
-    const mcell = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => E.idx(x + dx, y + dy)).find(c => E.isLand(world, c) && !game.cities.some(t => t.cell === c)) ?? v.cell;
+    const mcell = v.cell;   // the camp stands at the pit itself
     const site = { id: game.nextId++, cell: mcell, kind: "mine", level: 2, pace: "normal", paused: false, opened: game.turn, extracted: 0, name: "Test pit", lastWorkers: 0.1 };
     game.sites.push(site);
     world.depTotal[mcell] = Math.max(world.depTotal[mcell] || 0, 10); game.depLeft[mcell] = Math.max(game.depLeft[mcell] || 0, 10);
@@ -98,7 +99,13 @@ for (let wi = 0; wi < worlds; wi++) {
     const popBoom = vb.pop;
     for (let s = 0; s < 3; s++) { site.lastWorkers = 0.1; E.runSeason(world, game, {}); }
     const vb2 = game.villages.find(z => z.id === v.id);
-    const popGrown = vb2.pop;
+    let ruinSeen = false, farmSeen = false, becameTown = false, popGrown = popBoom;
+    if (!vb2) {
+      // the boom camp grew big enough for its nation to grant it a town charter: a boomtown became a town
+      becameTown = game.cities.some(c => c.name === v.name && c.fromVillage);
+      check(becameTown, `${v.name} disappeared during its boom`);
+    } else {
+    popGrown = vb2.pop;
     check(popGrown > popBoom, `the boom camp did not grow (${popBoom} -> ${popGrown})`);
     site.exhausted = true; site.exhaustedAt = game.turn; game.depLeft[mcell] = 0;
     E.runSeason(world, game, {});
@@ -106,7 +113,6 @@ for (let wi = 0; wi < worlds; wi++) {
     check(vx && (vx.status === "bust" || vx.status === "village" || vx.status === "ruin"), `no bust at ${v.name}: ${vx && vx.status}`);
     const town = E.nearestCity(game, mcell, game.owner[mcell]);
     if (town && E.dist(town.cell, mcell) <= 3) check(E.cityStay(game, town) > 0, `${town.name} did not hold on after its mine closed`);
-    let ruinSeen = false, farmSeen = false;
     for (let s = 0; s < 30; s++) {
       E.runSeason(world, game, {});
       const z = game.villages.find(q => q.id === v.id);
@@ -115,14 +121,30 @@ for (let wi = 0; wi < worlds; wi++) {
       if (z.status === "village" && z.kind !== "mine") { farmSeen = true; break; }
     }
     check(ruinSeen || farmSeen, `${v.name} neither emptied nor became a farm village after the bust`);
+    }
     invariants(world, game, "after the bust");
+
+    // ruins: a village whose land is abandoned is left in ruins; when people return, it is resettled
+    const rv = game.villages.find(z => z.status === "village" && game.owner[z.cell] >= 0 && game.cities.every(c => E.dist(c.cell, z.cell) >= 2.5));
+    let ruinsTested = false;
+    if (rv) {
+      const keep = game.owner[rv.cell];
+      game.owner[rv.cell] = -1;
+      E.runSeason(world, game, {});
+      const r1 = game.villages.find(z => z.id === rv.id);
+      check(r1 && r1.status === "ruin" && r1.pop === 0, `${rv.name} was not left in ruins (${r1 && r1.status})`);
+      game.owner[rv.cell] = keep;
+      let back = false;
+      for (let s = 0; s < 12 && !back; s++) { E.runSeason(world, game, {}); const r2 = game.villages.find(z => z.id === rv.id); back = !!(r2 && r2.status !== "ruin"); }
+      check(back || game.owner[rv.cell] !== keep, `${rv.name} was never resettled`);
+      ruinsTested = true;
+    }
 
     // a charter: a big village on a road, far from towns
     const M = E.villMeta(game);
     let cand = game.villages.filter(z => game.owner[z.cell] === E.PLAYER && z.status === "village" && game.cities.every(c => E.dist(c.cell, z.cell) >= 4));
     let charterTested = false;
-    if (cand.length) {
-      const cv = cand[0];
+    for (const cv of cand) {
       const cx = E.cellX(cv.cell), cy = E.cellY(cv.cell);
       const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => E.idx(cx + dx, cy + dy)).find(c => E.isLand(world, c));
       game.roads.add(E.edgeKey(cv.cell, nb));
@@ -130,21 +152,25 @@ for (let wi = 0; wi < worlds; wi++) {
       M.lastCharter[E.PLAYER] = -99;
       game.decisions = game.decisions.filter(d => d.key !== "townCharter");
       const chk = E.charterCheck(world, game, cv);
-      if (chk.ok) {
+      if (!chk.ok) continue;
+      {
         E.runSeason(world, game, {});
         const d = game.decisions.find(q => q.key === "townCharter");
-        check(d, `${cv.name} did not ask for a charter`);
-        check(d.options.length >= 2 && d.body.includes(cv.name), "the charter question is malformed");
+        if (!d && !E.charterCheck(world, game, game.villages.find(z => z.id === cv.id) || cv).ok) continue;   // war or a new town got in the way this season
+        check(d, `${cv.name} did not ask for a charter (turn ${game.turn})`);
+        const asker = game.villages.find(z => z.id === d.villageId);
+        check(asker && d.options.length >= 2 && d.body.includes(asker.name), "the charter question is malformed");
         const n0 = game.cities.length;
         game.nations[E.PLAYER].treasury += 50;
         E.decide(world, game, d, "a", false);
-        const t = game.cities.find(c => c.name === cv.name);
-        check(t && game.cities.length === n0 + 1 && !game.villages.some(z => z.id === cv.id), `${cv.name} did not become a town`);
+        const t = game.cities.find(c => c.name === asker.name);
+        check(t && game.cities.length === n0 + 1 && !game.villages.some(z => z.id === asker.id), `${asker.name} did not become a town`);
         check(t.fromVillage && t.hist.length >= 2, "the new town does not remember its village");
         E.runSeason(world, game, {});
         invariants(world, game, "after the charter");
         charterTested = true;
       }
+      break;
     }
 
     // an old save: villages from version 38 (no ids, looks, stories), no village book, towns without sites
@@ -162,7 +188,7 @@ for (let wi = 0; wi < worlds; wi++) {
     const saved = JSON.stringify(game);
     check(!saved.includes('"_vroad"') && !saved.includes('"_vctx"'), "working copies leaked into the save");
     console.log(`world ${seed}: ok · villages ${before} → ${game.villages.filter(z => z.status !== "ruin").length} (${game.villages.filter(z => z.status === "ruin").length} ruins) · markets ${markets} · `
-      + `boom ${v.name} ${Math.round(popBoom * 1e6)} → ${Math.round(popGrown * 1e6)} then ${ruinSeen ? "ruins" : "a farm village"} · charter ${charterTested ? "granted" : "not testable here"} · ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+      + `boom ${v.name} ${Math.round(popBoom * 1e6)} → ${Math.round(popGrown * 1e6)} then ${becameTown ? "a town (charter)" : ruinSeen ? "ruins" : "a farm village"} · ruins ${ruinsTested ? "and resettling" : "not testable"} · charter ${charterTested ? "granted" : "not testable here"} · ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   } catch (e) {
     failed++;
     console.error(`world ${seed}: FAILED\n${e.stack}`);

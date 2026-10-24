@@ -559,6 +559,10 @@ function selectedTabHtml() {
     const city = game.cities.find(c => c.id === ui.selectedCity);
     if (city) return cityDetailHtml(city);
   }
+  if (ui.selectedVillage && ui.selectedCell < 0) {
+    const v = villageById(game, ui.selectedVillage);
+    if (v) return villageDetailHtml(v);
+  }
   if (ui.selectedCell >= 0) {
     const i = ui.selectedCell;
     const site = siteAt(i);
@@ -576,6 +580,7 @@ function selectedTabHtml() {
         <div class="stat-cell"><span class="k">Deposit</span><span class="v">${dt ? "Worked out" : "None known"}</span></div>
         <div class="stat-cell"><span class="k">Road cost</span><span class="v">×${TERRAIN[t].roadCost}</span></div>
       </div>`}
+      ${t === T.SEA ? "" : cellSettlementHtml(i)}
       ${owner === -1 && t !== T.SEA ? `<p class="muted small">Unclaimed. Found a town within 2 cells of your border to claim land like this.</p>` : ""}
       ${game.occ[i] >= 0 ? `<p class="notice">Occupied by the ${escapeHtml(nameOf(game, game.occ[i]))}.</p>` : ""}
       ${t === T.SEA ? "" : landResourceHtml(i)}
@@ -687,6 +692,7 @@ function confirmHtml(q) {
       ${payback ? `<div class="row"><span>Pays for itself through taxes</span><span class="num">${payback < 40 ? `about ${Math.ceil(payback)} year${Math.ceil(payback) > 1 ? "s" : ""}` : "very slowly"}</span></div>` : ""}
     </div>
     <ul class="factors">${lines.map(l => `<li><span>${l}</span></li>`).join("")}</ul>
+    ${q.kind === "town" ? townSiteReportHtml(q) : ""}
     ${afford.ok ? "" : `<p class="bad">${escapeHtml(afford.reason)}</p>`}
     <div class="actions">
       <button class="btn primary" type="button" data-action="confirm-build" ${afford.ok ? "" : "disabled"}>${q.kind === "ships" ? (q.seller !== undefined ? "Buy" : "Order") : q.kind === "focus" || q.kind === "capital" || q.kind === "province" ? "Start" : "Build"} for ${fmtMoneyFine(q.cost)}</button>
