@@ -206,6 +206,21 @@ function townSiteReportHtml(q) {
     ${rep.notes.length ? `<p class="muted small">${rep.notes.map(escapeHtml).join(" ")}</p>` : ""}</div>`;
 }
 
+/* ---------- The villages of a town's district (on the town's page) ---------- */
+function townVillagesHtml(city, r) {
+  if (!r || !game.villages) return "";
+  const cells = new Set(r.cells);
+  const vs = game.villages.filter(v => cells.has(v.cell));
+  const live = vs.filter(v => v.status !== "ruin").sort((a, b) => b.pop - a.pop);
+  if (!vs.length) return "";
+  let inH = 0, nH = 0;
+  for (const c of r.cells) { if (c === city.cell) continue; const hs = hamletsOf(world, game, c); nH += hs.length; for (const h of hs) inH += h.pop; }
+  const inV = live.reduce((s, v) => s + v.pop, 0);
+  return `<div class="block"><span class="eyebrow">Its countryside · ${live.length} village${live.length === 1 ? "" : "s"}</span>
+    <p class="small">${fmtPeople(inV)} people live in its villages and ${fmtPeople(inH)} in ${fmtCount(nH)} hamlets; the rest of its ${fmtPop(r.pop)} live in the town and on the farms.${vs.length > live.length ? ` ${vs.length - live.length} village${vs.length - live.length > 1 ? "s lie" : " lies"} in ruins.` : ""}</p>
+    <ul class="factors">${live.slice(0, 6).map(v => `<li><span><button class="linkbtn" type="button" data-action="village-pick" data-vid="${v.id}">${escapeHtml(v.name)}</button> <span class="muted small">${escapeHtml(VILLAGE_PLANS[v.plan].label.toLowerCase())}${VILLAGE_STATUS[v.status] ? ` · ${VILLAGE_STATUS[v.status].label.toLowerCase()}` : ""}</span></span><span class="num">${fmtVillPeople(v.pop)}</span></li>`).join("")}</ul></div>`;
+}
+
 /* ---------- The villages of a province, and of the nation ---------- */
 function provinceVillagesHtml(p) {
   const vs = (game.villages || []).filter(v => game.owner[v.cell] === PLAYER && game.prov[v.cell] === p.id);

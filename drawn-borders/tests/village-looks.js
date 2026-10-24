@@ -20,6 +20,7 @@ vm.runInContext(fs.readFileSync(path.join(SRC, "ui/36b-14e-villages-on-the-map.j
 const plans = ["cluster", "grove", "line", "compound", "hill", "harbor", "camp", "market", "scatter", "modern"];
 const panels = plans.map((p, k) => ({ name: p, plan: k, ruin: 0, look: p, pop: p === "scatter" ? pop * 0.5 : p === "camp" ? pop * 1.5 : pop }))
   .concat([{ name: "ruins", plan: 0, ruin: 1, look: "cluster", pop: pop * 0.7 }, { name: "hamlet", plan: 0, ruin: 0, look: "cluster", pop: 0.0012 }]);
+panels[0].name += " + school"; panels[2].name += " + bridge, dykes"; panels[3].name += " + wells";
 const COLS = 4, ROWS = 3, PW = 360, PH = 300;
 for (const p of panels) {
   p.R = ctx.VR(p.pop, p.look) * 50000;
@@ -41,6 +42,7 @@ void main() {
   vec3 col = mix(vec3(0.37, 0.45, 0.27), vec3(0.45, 0.50, 0.30), vnoise(q / 90.0, 5)) * (0.95 + 0.1 * vnoise(q / 7.0, 6));
   if (uP[k] == 3) col = mix(vec3(0.70, 0.64, 0.52), vec3(0.62, 0.58, 0.46), vnoise(q / 120.0, 7));
   vec4 v = villagePlan(uP[k], uRu[k] == 1, q, uR[k], 1234 + k * 977, uM[k]);
+  v = vWorks(v, uP[k], k == 2 ? 2 + 4 : k == 3 ? 1 : k == 0 ? 8 : 0, q, uR[k], uM[k]);   // works on some panels: a bridge and dykes, wells, a school
   col = mix(col, v.rgb, v.a);
   if (min(mod(px.x, ${PW}.0), mod(px.y, ${PH}.0)) < 2.0) col = vec3(0.1);
   outColor = vec4(col, 1.0);

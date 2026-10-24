@@ -63,6 +63,7 @@ function historyEntry(n, econ, turn, g) {
   e.unemp = sr(econ.unemployment || 0, 3);
   if (econ.people) { const D = demoOf(n), ed = eduOf(n); e.ls = sr(econ.people.ls, 1); e.tfr = sr(D.tfr, 2); e.e0 = sr(D.e0, 1); e.old = sr(D.old, 3); e.kids = sr(D.kids, 3); e.edS = sr(ed.s, 3); e.edE = sr(ed.e, 3); e.lam = sr(econ.people.lam, 3); }
   e.resM = sr(monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop), 1);
+  if (g.villages) { let vc = 0, vp = 0; for (const v of g.villages) if (v.status !== "ruin" && g.owner[v.cell] === n.id) { vc++; vp += v.pop; } e.vil = vc; e.vpop = sr(vp, 4); }   // villages (10w)
   return e;
 }
 

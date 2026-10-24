@@ -19,6 +19,7 @@ const ui = {
   selectedCity: null,
   selectedCell: -1,
   selectedVillage: null,   // a village's page is open (16n)
+  provColor: "own",        // what the Provinces panel colours the map by (16m)
   hoverXY: null,           // the map point under the mouse, in cells
   resView: false,
   dispatch: null,

@@ -41,9 +41,11 @@ const STAT_METRICS = {
   ships:     { label: "Warships", get: h => (h.ships === undefined ? null : h.ships), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, sum: true },
   fr:        { label: "Freighters", get: h => (h.fr === undefined ? null : h.fr), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, sum: true },
   seaMt:     { label: "Sea trade (Mt a year)", get: h => (h.seaMt === undefined ? null : h.seaMt), fmt: v => `${fmtNum(v)} Mt`, axis: v => `${fmtNum(v)}`, sum: true },
+  vil:       { label: "Villages", get: h => (h.vil === undefined ? null : h.vil), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, sum: true },
+  vpop:      { label: "People in villages", get: h => (h.vpop === undefined ? null : h.vpop), fmt: v => fmtPeople(v), axis: v => `${fmtNum(v * 1000)}k`, sum: true },
   prestige:  { label: "Prestige", get: h => (h.prestige === undefined ? null : h.prestige), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, zero: true },
 };
-const COMPARE_METRICS = ["gdp", "gdppc", "pop", "area", "towns", "soldiers", "power", "tanks", "planes", "ships", "fr", "stability", "treasury", "techs", "exp", "imp", "bal", "fin", "skill", "food", "unemp", "resM", "prestige", "opP"];
+const COMPARE_METRICS = ["gdp", "gdppc", "pop", "area", "towns", "soldiers", "power", "tanks", "planes", "ships", "fr", "stability", "treasury", "techs", "exp", "imp", "bal", "fin", "skill", "food", "unemp", "resM", "vil", "vpop", "prestige", "opP"];
 const STAT_CHARTS = new Map();
 let statChartSeq = 0;
 

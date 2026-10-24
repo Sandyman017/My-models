@@ -172,6 +172,7 @@ function provincesTabHtml() {
       ${busy.length ? `<p class="notice info">Under way: ${busy.map(b => `${escapeHtml(b.label)} (${b.seasons - b.progress} season${b.seasons - b.progress > 1 ? "s" : ""} left)`).join("; ")}.</p>` : ""}
     </div>
     ${ui.provDraw ? provDrawCardHtml() : ""}
+    ${provColorHtml()}
     ${provNeedsReportHtml(st, econ)}
     ${countrysideHtml()}
     <div class="prov-cards">${cards}</div>
@@ -227,6 +228,8 @@ function onProvinceInput(e) {
     provChange({ t: "capital", pid: Number(t.dataset.provCap), cityId: Number(t.value) });
     if (ui.phase === "play") ui.tab = "provinces";
     saveGame(); renderAll();
+  } else if (t.dataset.provColor !== undefined && e.type === "change") {
+    ui.provColor = t.value; PROVCOL.key = null; view.staticKey = ""; bumpMap(); renderAll();
   } else if (t.dataset.provJoin !== undefined && e.type === "change" && t.value) {
     provChange({ t: "join", from: Number(t.dataset.provJoin), into: Number(t.value) });
     saveGame(); renderAll();
@@ -271,7 +274,7 @@ function drawProvinceLines(o, cs) {
   const sh = buildShapes();
   if (!sh.provs || !sh.provs.length) return;
   const px = v => v / cs;
-  if (provShowTints()) for (const { p, path } of sh.provFill) { o.fillStyle = rgba(provTint(p), ui.openProv === p.id ? 0.42 : 0.26); o.fill(path, "evenodd"); }
+  if (provShowTints()) for (const { p, path } of sh.provFill) { const col = provColorFor(p); o.fillStyle = col ? rgba(col, ui.openProv === p.id ? 0.62 : 0.5) : rgba(provTint(p), ui.openProv === p.id ? 0.42 : 0.26); o.fill(path, "evenodd"); }
   o.setLineDash([px(clamp(cs * 0.3, 3, 9)), px(clamp(cs * 0.2, 2, 6))]);
   for (const { p, path } of sh.provs) {
     o.strokeStyle = "rgba(10,10,10,0.35)"; o.lineWidth = px(clamp(cs * 0.09, 1.6, 3)); o.stroke(path);
@@ -366,3 +369,55 @@ function provincesDispatchHtml(d) {
 Object.assign(ACTIONS, {
   "prov-fund": el => { const p = provById(game, Number(el.dataset.pid)); const k = Number(el.dataset.k); if (p && p.owner === PLAYER && PGOV.levels[k]) { p.fund = k; bumpMap(); } },
 });
+
+/* ---------- A map of the provinces by any number (provinces part 3, with the villages of v39) ---------- */
+const PROV_COLOR_BY = {
+  own:     { label: "their own colours" },
+  pop:     { label: "people", get: s => s.pop, fmt: v => fmtPop(v) },
+  growth:  { label: "growth over a year", get: s => s.growth, fmt: v => signedPct(v, 1), diverging: true },
+  perK:    { label: "output per person", get: s => s.perK, fmt: v => `$${v.toFixed(1)}k` },
+  dens:    { label: "people per km²", get: s => s.pop * 1e6 / Math.max(1, s.cells * KM2_PER_CELL), fmt: v => `${Math.round(v)}` },
+  vpop:    { label: "people in villages", get: s => s.vpop, fmt: v => fmtPeople(v) },
+  vgrow:   { label: "villages growing − shrinking", get: s => s.vgrow, fmt: v => signed(Math.round(v)), diverging: true },
+  mood:    { label: "mood of its towns", get: s => s.mood, fmt: v => `${Math.round(v)}` },
+};
+const PROVCOL = { key: null, vals: new Map(), lo: 0, hi: 1 };
+/* The chosen number for each of your provinces (worked out again each season or when the choice changes). */
+function provColorValues() {
+  const k = ui.provColor || "own";
+  const key = `${k}|${game.turn}|${mapVersion}`;
+  if (PROVCOL.key === key) return PROVCOL;
+  PROVCOL.key = key; PROVCOL.vals = new Map();
+  const D = PROV_COLOR_BY[k];
+  if (!D || !D.get) return PROVCOL;
+  const st = provinceStats(world, game, PLAYER, economies()[PLAYER]);
+  for (const s of st) {
+    const vs = (game.villages || []).filter(v => v.status !== "ruin" && game.owner[v.cell] === PLAYER && game.prov[v.cell] === s.p.id);
+    s.vpop = vs.reduce((a, v) => a + v.pop, 0);
+    s.vgrow = vs.reduce((a, v) => { const h = v.hist || [], o = h.length >= 5 ? h[h.length - 5] : null; return a + (o ? (v.pop * 1e6 > o * 1.01 ? 1 : v.pop * 1e6 < o * 0.99 ? -1 : 0) : 0); }, 0);
+    s.mood = s.towns.length ? s.towns.reduce((a, t) => a + (t.mood ?? CITY.moodBase), 0) / s.towns.length : null;
+    const v = D.get(s);
+    if (v !== null && v !== undefined && Number.isFinite(v)) PROVCOL.vals.set(s.p.id, v);
+  }
+  const vals = [...PROVCOL.vals.values()];
+  PROVCOL.lo = vals.length ? Math.min(...vals) : 0; PROVCOL.hi = vals.length ? Math.max(...vals) : 1;
+  if (D.diverging) { const m = Math.max(Math.abs(PROVCOL.lo), Math.abs(PROVCOL.hi), 1e-9); PROVCOL.lo = -m; PROVCOL.hi = m; }
+  return PROVCOL;
+}
+/* Low numbers blue, middle pale, high gold (for growth: shrinking red, growing green). */
+function provColorFor(p) {
+  if (!ui.provColor || ui.provColor === "own" || p.owner !== PLAYER) return null;
+  const C = provColorValues();
+  if (!C.vals.has(p.id)) return "#6b6b6b";
+  const t = C.hi > C.lo ? (C.vals.get(p.id) - C.lo) / (C.hi - C.lo) : 0.5;
+  const stops = PROV_COLOR_BY[ui.provColor].diverging ? [[176, 64, 52], [222, 214, 190], [76, 150, 84]] : [[52, 84, 130], [190, 196, 186], [224, 176, 79]];
+  const a = t < 0.5 ? stops[0] : stops[1], b = t < 0.5 ? stops[1] : stops[2], u = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+  const c = a.map((x, i) => Math.round(x + (b[i] - x) * u));
+  return `#${c.map(x => x.toString(16).padStart(2, "0")).join("")}`;
+}
+function provColorHtml() {
+  const k = ui.provColor || "own", D = PROV_COLOR_BY[k];
+  const C = D.get ? provColorValues() : null;
+  const legend = C && C.vals.size ? `<div class="prov-legend small"><span>${escapeHtml(D.fmt(C.lo))}</span><i style="background:linear-gradient(90deg, ${D.diverging ? "#b04034, #ded6be, #4c9654" : "#345482, #bec4ba, #e0b04f"})"></i><span>${escapeHtml(D.fmt(C.hi))}</span></div>` : "";
+  return `<div class="block"><label class="small">Colour the map by <select data-prov-color>${Object.entries(PROV_COLOR_BY).map(([key, x]) => `<option value="${key}" ${key === k ? "selected" : ""}>${escapeHtml(x.label)}</option>`).join("")}</select></label>${legend}</div>`;
+}

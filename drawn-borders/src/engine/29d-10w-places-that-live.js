@@ -82,7 +82,8 @@ const SITE_FEATURES = {
   mine:       { label: "A mine nearby",               grow: 0,     townGrow: 0,       def: 0,    text: "Work for miners, and shops and inns for them." },
   border:     { label: "Near a border",               grow: -0.08, townGrow: 0,       def: 0,    text: "Trade with neighbours, but the first place armies reach." },
 };
-let VILLAGE_ECON = null;   // each nation's economy at the end of the season (set by runSeason, so nothing is worked out twice)
+let VILLAGE_ECON = null;
+let VILLAGE_CTX_BUMP = 0;   // raised when a village's works change what villageCtx keeps   // each nation's economy at the end of the season (set by runSeason, so nothing is worked out twice)
 
 /* ---------- The site of a place ---------- */
 /* What never changes about a cell's site (worked out once for each world). */
@@ -166,7 +167,8 @@ function roadSites(w, g) {
 /* What the villages look up again and again in a season, worked out once: cells next to a working mine, next to a
    town, near a foreign border, and the town district of every cell. Not saved; rebuilt when the world changes. */
 function villageCtx(w, g) {
-  const key = `${g.turn}|${g.ver || 0}|${(g.sites || []).length}|${g.cities.length}|${g.roads.size}`;
+  // rebuilt when the season, the mines, the towns, the roads or the villages' market charters change
+  const key = `${g.turn}|${(g.sites || []).length}|${g.cities.length}|${g.roads.size}|${VILLAGE_CTX_BUMP}`;
   if (g._vctx && g._vctx.key === key) return g._vctx;
   const mine = new Uint8Array(N_CELLS), mineAt = new Uint8Array(N_CELLS), town = new Uint8Array(N_CELLS), border = new Uint8Array(N_CELLS);
   const mark = (arr, c, r) => { const x = cellX(c), y = cellY(c); for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (inBounds(x + dx, y + dy)) arr[idx(x + dx, y + dy)] = 1; };
@@ -183,8 +185,16 @@ function villageCtx(w, g) {
     }
   }
   const townDist = new Float32Array(N_CELLS).fill(99);
-  for (let i = 0; i < N_CELLS; i++) for (const c of g.cities) { const d = dist(c.cell, i); if (d < townDist[i]) townDist[i] = d; }
-  const C = { key, mine, mineAt, town, border, townDist };
+  for (const c of g.cities) {
+    const cx = cellX(c.cell), cy = cellY(c.cell);
+    for (let y = Math.max(0, cy - 4); y <= Math.min(GRID_H - 1, cy + 4); y++) for (let x = Math.max(0, cx - 4); x <= Math.min(GRID_W - 1, cx + 4); x++) {
+      const i = idx(x, y), d = Math.hypot(x - cx, y - cy);
+      if (d < townDist[i]) townDist[i] = d;
+    }
+  }
+  const charter = new Uint8Array(N_CELLS);   // villages with a market charter
+  for (const v of g.villages || []) if (v.works && v.works.market !== undefined && v.status !== "ruin") charter[v.cell] = 1;
+  const C = { key, mine, mineAt, town, border, townDist, charter };
   Object.defineProperty(g, "_vctx", { enumerable: false, writable: true, configurable: true, value: C });   // not saved
   return C;
 }
@@ -313,10 +323,10 @@ function villageKindAt(w, g, i, stay) {
 /* Where a market grows by itself, as in history: where roads meet, where a road crosses a river, and at the stop a day's
    journey along the road from the nearest town. */
 function marketSpot(w, g, i) {
-  const R = roadSites(w, g);
-  if ((g.villages || []).some(v => v.cell === i && v.works && v.works.market !== undefined && v.status !== "ruin")) return true;   // a market charter
+  const R = roadSites(w, g), C = villageCtx(w, g);
+  if (C.charter[i]) return true;   // a market charter
   if (!R.deg[i]) return false;
-  return R.deg[i] >= 3 || R.bridge.has(i) || (R.deg[i] >= 2 && villageCtx(w, g).townDist[i] >= 2.5);
+  return R.deg[i] >= 3 || R.bridge.has(i) || (R.deg[i] >= 2 && C.townDist[i] >= 2.5);
 }
 /* The people living at the mines next to a camp: a share of their workers and families. */
 function campPeople(g, cell) {
@@ -343,10 +353,15 @@ function villageTarget(w, g, v, econ) {
     if (Math.abs(m) > 0.02) why.push({ label: m > 0 ? `${town.name} is doing well` : `${town.name} is unhappy`, v: m });
     mult *= 1 + m;
   }
-  // the young leave farm villages for the cities as eras pass; villages near big towns fill with people who work there
+  // the province's money: its governor spends some of it on the villages' lanes, markets and wells
+  const prov = typeof provAt === "function" ? provAt(g, v.cell) : null;
+  const fund = prov ? (prov.fund ?? 2) : 0;
+  if (prov && prov.gov && fund !== 2) { const u = 0.03 * (fund - 2); mult *= 1 + u; why.push({ label: fund > 2 ? `${prov.name} spends generously on its villages` : `${prov.name} has little money for its villages`, v: u }); }
+  // the young leave farm villages for the cities as eras pass (a village school keeps some of them); villages near big
+  // towns fill with people who work there
   const era = g.era || 0;
   if (v.plan === "modern") { const u = 0.08 * era; mult *= 1 + u; if (u > 0) why.push({ label: "People who work in the town live here", v: u }); }
-  else if (v.kind === "farm" && era > 0) { const u = -0.06 * era; mult *= 1 + u; why.push({ label: "The young leave for the cities", v: u }); }
+  else if (v.kind === "farm" && era > 0) { const u = -0.06 * era * ((v.works || {}).school !== undefined ? 0.5 : 1); mult *= 1 + u; why.push({ label: (v.works || {}).school !== undefined ? "The young leave for the cities (the school keeps some)" : "The young leave for the cities", v: u }); }
   // hunger and war
   const r = econ && econ.regions ? regionAtCell(econ, v.cell) : null;
   if (r && r.foodRatio < ECON.famineLine) { mult *= 0.7; why.push({ label: "Hunger: families leave", v: -0.3 }); }
@@ -799,8 +814,9 @@ const VILLAGE_WORKS = {
   bridge:  { label: "Build a bridge at the ford", done: "A bridge", costShare: 0.3, text: "A stone bridge where people now wade across: travellers cross here in every season, and pay." },
   dyke:    { label: "Build dykes along the river", done: "Dykes", costShare: 0.3, text: "Earth banks keep the river out of the houses and fields when it floods." },
   rebuild: { label: "Send settlers to rebuild it", done: "Rebuilt", costShare: 0.4, text: "Families are given tools, seed and a year's food to rebuild the abandoned village." },
+  school:  { label: "Build a village school", done: "A village school", costShare: 0.2, text: "Children learn to read and count at home: fewer young people leave for the cities, and those who stay farm better." },
 };
-const VILLAGE_WORK_ORDER = ["market", "water", "bridge", "dyke", "rebuild"];
+const VILLAGE_WORK_ORDER = ["market", "water", "bridge", "dyke", "school", "rebuild"];
 function villageWorkCost(g, nid, key) {
   const towns = g.cities.filter(c => c.owner === nid).length;
   return Math.round(BUILD.townBaseB * (1 + 0.06 * towns) * VILLAGE_WORKS[key].costShare * 0.5 * 10) / 10;
@@ -831,6 +847,11 @@ function villageWorkCheck(w, g, nid, v, key) {
     if (!R.deg[v.cell]) return fail("A bridge needs a road to carry.");
   }
   if (key === "dyke" && !(F.includes("floodplain") || F.includes("bigriver") || F.includes("greatriver"))) return fail("The river here does not flood the village.");
+  if (key === "school") {
+    if (v.kind !== "farm") return fail("Only farm villages lose their young to the cities.");
+    if ((g.era || 0) < 1) return fail("Not yet: the young start leaving for the cities in the Age of Electricity.");
+    if (v.pop < 0.0015) return fail("Too small for a school of its own.");
+  }
   return { ok: true, key, cost: villageWorkCost(g, nid, key) };
 }
 /* Pay for a work and do it (players through the village page, rivals once a year). */
@@ -850,6 +871,7 @@ function orderVillageWork(w, g, nid, vid, key) {
 function applyVillageWork(w, g, v, key) {
   v.works = v.works || {};
   v.works[key] = g.turn;
+  VILLAGE_CTX_BUMP++;
   const M = villMeta(g);
   if (key === "market") { v.kind = "market"; M.junctions[v.cell] = Math.min(M.junctions[v.cell] ?? g.turn, g.turn - VIL.marketDelay); villageLog(g, v, "Was granted a market charter: a weekly market and a yearly fair.", "good"); }
   else if (key === "rebuild") { v.status = "village"; v.kind = villageKindAt(w, g, v.cell, true) || "farm"; v.pop = Math.max(VIL.ruinPop * 2, (v.peak || 0.001) * 0.15); v.since = g.turn; v.ruinAt = undefined; villageLog(g, v, "Settlers sent by the government are rebuilding the village.", "good"); }
@@ -1019,6 +1041,125 @@ const VILLAGE_DECISIONS = {
     },
   },
 };
+Object.assign(VILLAGE_DECISIONS, {
+  villageYoung: {
+    cat: "People", icon: "people", tone: "bad",
+    find: c => {
+      if ((c.g.era || 0) < 1) return null;
+      const list = myVillages(c, v => v.kind === "farm" && !(v.works || {}).school && v.pop >= 0.003 && (v.hist || []).length >= 5 && v.pop * 1e6 < v.hist[v.hist.length - 5]);
+      if (!list.length) return null;
+      return { v: list.sort((a, b) => b.pop - a.pop)[0], w: 0.6 };
+    },
+    make: (c, f) => {
+      const v = f.v, town = nearestCity(c.g, v.cell, c.nid);
+      return {
+        title: `The young are leaving ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `Every spring more young people leave ${v.name} for the factories and offices of ${town ? town.name : "the cities"}. The old farm the land alone; the dance hall has closed. The village council asks for a school, so the children see a future at home.`,
+        options: [
+          { id: "a", tag: "kind", label: "Build a village school", effects: [{ t: "money", v: -villageWorkCost(c.g, c.nid, "school") }, villageEffect(v, 0, { works: "school" }), { t: "group", key: "v_farmersaschoolfo", v: { farmers: 3 }, label: `A school for ${v.name}`, seasons: 8 }] },
+          { id: "b", tag: "thrift", label: "Young people should go where the work is", effects: [villageEffect(v, -0.03), ...(town ? [popEffect(c, town.id, 0.0005)] : [])] },
+        ], def: "b",
+      };
+    },
+  },
+  villageShrine: {
+    cat: "Faith", icon: "scroll", tone: "good",
+    find: c => {
+      const list = myVillages(c, v => villageAge(c.w, c.g, v) >= 300 && v.pop >= 0.002 && !(v.log || []).some(x => /pilgrim/.test(x.text)));
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: 0.35 };
+    },
+    make: (c, f) => {
+      const v = f.v;
+      return {
+        title: `Pilgrims come to ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `The old shrine of ${v.name}, ${Math.round(villageAge(c.w, c.g, v))} years old, is said to heal the sick. This year thousands of pilgrims came on foot; the priests ask the government to repair the shrine and the road to it.`,
+        options: [
+          { id: "a", tag: "kind", label: "Repair the shrine and the pilgrims' road", effects: [{ t: "money", v: villageCostOf(c, 0.0006) }, villageEffect(v, 0.04, { log: "Its old shrine was repaired: pilgrims come every year." }), { t: "group", key: "v_faiththeshrine", v: { faith: 4 }, label: `The shrine at ${v.name}`, seasons: 8 }] },
+          { id: "b", tag: "thrift", label: "Let the priests manage it", effects: [villageEffect(v, 0.01, { log: "Pilgrims came to its old shrine." })] },
+        ], def: "b",
+      };
+    },
+  },
+  villageStorm: {
+    cat: "Disaster", icon: "wave", tone: "bad",
+    find: c => {
+      const list = myVillages(c, v => v.kind === "fish" && v.pop >= 0.001);
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: c.g.turn % 4 === 3 ? 0.7 : 0.25 };
+    },
+    make: (c, f) => {
+      const v = f.v;
+      return {
+        title: `Boats lost off ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `An autumn storm caught the fishing boats of ${v.name} far out at sea. Eleven boats did not come home. The widows wait on the quay; without the boats, the village has no way to earn its bread this winter.`,
+        options: [
+          { id: "a", tag: "kind", label: "A fund for the widows and new boats", effects: [{ t: "money", v: villageCostOf(c, 0.0008) }, villageEffect(v, -0.01, { log: "Lost boats in a great storm; the government paid for new ones." })] },
+          { id: "b", tag: "thrift", label: "Bread for the winter only", effects: [{ t: "money", v: villageCostOf(c, 0.0002) }, villageEffect(v, -0.04)] },
+          { id: "c", tag: "force", label: "The sea gives and takes", effects: [villageEffect(v, -0.09)] },
+        ], def: "b",
+      };
+    },
+  },
+  villageBandits: {
+    cat: "Order", icon: "fist", tone: "bad",
+    find: c => {
+      const list = myVillages(c, v => (v.kind === "market" || villageSiteFeatures(c.w, c.g, v).includes("halfway")) && (villageCtx(c.w, c.g).border[v.cell] || c.n.stability < 50));
+      if (!list.length) return null;
+      return { v: list[0], w: 0.45 };
+    },
+    make: (c, f) => {
+      const v = f.v, town = nearestCity(c.g, v.cell, c.nid);
+      return {
+        title: `Bandits on the road at ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `Armed men stop the carts on the road near ${v.name} and take what they please. Traders now go around, and the market of ${v.name} is half empty.`,
+        options: [
+          { id: "a", tag: "force", label: "Send soldiers to clear the road", effects: [{ t: "money", v: villageCostOf(c, 0.0004) }, villageEffect(v, 0, { log: "Soldiers cleared the road of bandits." }), { t: "group", key: "v_armyclearingth", v: { army: 2 }, label: "Clearing the roads", seasons: 4 }] },
+          { id: "b", tag: "thrift", label: "Let the traders hire guards", effects: [villageEffect(v, -0.03)] },
+          ...(town ? [{ id: "c", tag: "kind", label: `A police post in ${v.name}`, effects: [{ t: "money", v: villageCostOf(c, 0.0007) }, villageEffect(v, 0.01, { log: "A police post was opened in the village." }), { t: "cityMod", cityId: town.id, key: "road_police", label: "Safe roads", mood: 2, seasons: 6 }] }] : []),
+        ], def: "b",
+      };
+    },
+  },
+  villageCommons: {
+    cat: "Land", icon: "food", tone: "neutral",
+    find: c => {
+      const list = myVillages(c, v => v.kind === "farm" && ["cluster", "line", "hill"].includes(v.plan) && v.pop >= 0.003 && !(v.log || []).some(x => /common/.test(x.text)));
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: 0.35 };
+    },
+    make: (c, f) => {
+      const v = f.v, town = nearestCity(c.g, v.cell, c.nid);
+      return {
+        title: `A landlord wants to fence the commons of ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `For centuries the families of ${v.name} have grazed their cows and gathered firewood on the common land. The landlord wants to fence it and farm it with hired men: more grain, he says, and fewer mouths. The villagers say they will starve.`,
+        options: [
+          { id: "a", tag: "bold", label: "Allow the fences", effects: [villageEffect(v, -0.08, { log: "The common land was fenced; many families left for the towns." }), ...(town ? [{ t: "cityMod", cityId: town.id, key: "enclosure", label: "Fenced commons: more grain", out: 0.01, seasons: 12 }] : []), { t: "group", key: "v_farmerscommonsfen", v: { farmers: -4 }, label: "Commons fenced", seasons: 8 }, { t: "group", key: "v_businesscommonsfen", v: { business: 2 }, label: "Commons fenced", seasons: 8 }] },
+          { id: "b", tag: "kind", label: "The commons belong to the village", effects: [villageEffect(v, 0, { log: "Its common land was saved from the fences." }), { t: "group", key: "v_farmerscommonspro", v: { farmers: 3 }, label: "Commons protected", seasons: 8 }, { t: "group", key: "v_businesscommonspro", v: { business: -2 }, label: "Commons protected", seasons: 8 }] },
+        ], def: "b",
+      };
+    },
+  },
+  villageCraft: {
+    cat: "Economy", icon: "coin", tone: "good",
+    find: c => {
+      const list = myVillages(c, v => villageAge(c.w, c.g, v) >= 150 && v.pop >= 0.003 && (c.g.era || 0) <= 4 && !(v.log || []).some(x => /craft/.test(x.text)));
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: 0.3 };
+    },
+    make: (c, f) => {
+      const v = f.v, craft = ["lace", "pottery", "cheese", "knives", "carpets", "baskets", "wine", "woollen cloth"][Math.floor(hash2(v.id, 3, 91) * 8)];
+      return {
+        title: `The ${craft} of ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `The ${craft} made in ${v.name} has become famous: merchants from the cities buy all the village can make. The craftsmen ask for a guild and a mark so that nobody else can sell "${v.name} ${craft}".`,
+        options: [
+          { id: "a", tag: "kind", label: "Grant the guild and its mark", effects: [villageEffect(v, 0.04, { log: `Its ${craft} has a protected mark: a village craft known far away.` }), { t: "group", key: "v_businessthecraft", v: { business: 1 }, label: `The ${craft} of ${v.name}`, seasons: 6 }] },
+          { id: "b", tag: "thrift", label: "Tax it like any other trade", effects: [{ t: "money", v: Math.max(0.05, Math.round(c.Y * 0.0004 * 100) / 100) }, villageEffect(v, 0.01, { log: `Its ${craft} became famous; the state taxed the trade.` })] },
+        ], def: "a",
+      };
+    },
+  },
+});
 Object.assign(DECISIONS, VILLAGE_DECISIONS);
 /* The "village" effect of a decision: people lost or gained, a work done, a line in its story. */
 function applyVillageEffect(w, g, nid, e) {

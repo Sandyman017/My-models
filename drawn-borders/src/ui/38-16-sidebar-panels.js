@@ -545,6 +545,7 @@ function cityDetailHtml(city) {
     ${townWorkHtml(city, r)}
     ${townIndustryHtml(city, r)}
     ${portSectionHtml(city)}
+    ${townVillagesHtml(city, r)}
     <div class="block">
       <span class="eyebrow">Connections</span>
       <p class="small">${others.length ? `Joined ${econ.bySea && econ.bySea.has(city.id) ? "by road and sea" : econ.byRiver && econ.byRiver.has(city.id) ? "by road and river barges" : "by road"} to ${others.map(escapeHtml).join(", ")}.` : "Not joined to any other town by road."}${net.capital ? (econ.bySea && econ.bySea.has(city.id) ? ` <span class="tone-good">Freighters join it to the capital's market.</span>` : "") : ` <span class="tone-warn">Cut off from the capital.</span>`}</p>

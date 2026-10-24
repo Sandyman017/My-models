@@ -91,7 +91,9 @@ function villageDrawList() {
     const ruin = v.status === "ruin";
     const plan = v.plan || "cluster";
     const pop = ruin ? (v.peak || 0.001) * 0.7 : v.pop;
-    const d = { named: true, v, x: s.x, y: s.y, cx: s.cx, cy: s.cy, ang: s.ang, plan, ruin, pop, r: villageRadius(pop, plan), cell: v.cell, seed: hash2(v.id || v.cell, 5, world.seed + 7303) };
+    const W = v.works || {};
+    const works = (W.water !== undefined ? 1 : 0) + (W.bridge !== undefined ? 2 : 0) + (W.dyke !== undefined ? 4 : 0) + (W.school !== undefined ? 8 : 0);
+    const d = { named: true, v, x: s.x, y: s.y, cx: s.cx, cy: s.cy, ang: s.ang, plan, ruin, pop, works: ruin ? 0 : works, r: villageRadius(pop, plan), cell: v.cell, seed: hash2(v.id || v.cell, 5, world.seed + 7303) };
     list.push(d);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) taken.add(sq(s.cx + dx, s.cy + dy));
   }
@@ -118,7 +120,7 @@ function glUploadVillages() {
     if (V[o + 3] > 0.5 && !d.named) continue;
     V[o] = d.x / G - d.cx; V[o + 1] = d.y / G - d.cy; V[o + 2] = d.r; V[o + 3] = 1;
     I[o] = VILLAGE_PLAN_ORDER.indexOf(d.plan) + (d.named ? 16 : 0) + (d.ruin ? 32 : 0);
-    I[o + 1] = d.ang; I[o + 2] = Math.min(9.99, d.pop * 1000); I[o + 3] = d.seed;
+    I[o + 1] = d.ang; I[o + 2] = d.works || 0; I[o + 3] = d.seed;
   }
   glTex(3, GLMAP.tex.vill, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, V);
   if (GLMAP.tex.vinfo) glTex(10, GLMAP.tex.vinfo, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, I);
@@ -470,6 +472,36 @@ vec4 vModern(vec2 q, float R, int sd, float mpp) {
   float a = max(edge, (1.0 - sstep(5.0, 6.2, mainRd)) * (1.0 - sstep(R * 1.1, R * 1.3, abs(q.x))));
   return vec4(mix(vec3(0.50, 0.52, 0.45), col, vDet(P, mpp)), a);
 }
+// what its government built there: a stone cistern (wells), a bridge over the stream, an earth bank against floods,
+// a school with its yard (works: 1 water, 2 bridge, 4 dykes, 8 school)
+vec4 vWorks(vec4 r, int plan, int works, vec2 q, float R, float mpp) {
+  if (works == 0 || mpp > 6.0) return r;
+  vec3 col = r.rgb; float a = r.a;
+  bool line = plan == 2;
+  if ((works & 1) != 0) {
+    vec2 cq = q - (line ? vec2(R * 0.3, R * 0.2) : vec2(R * 0.22, -R * 0.18));
+    float t = vRound(cq, 7.0, 2.0);
+    if (t > 0.5) { col = length(cq) < 4.5 ? vec3(0.16, 0.24, 0.27) : vec3(0.70, 0.68, 0.63); a = max(a, 1.0); }
+    else if (t < -0.5) col *= 0.7;
+  }
+  if ((works & 2) != 0 && line) {
+    float yc = 0.12 * R * sin(q.x / (R * 0.35)) + 0.05 * R * sin(q.x / (R * 0.11));
+    if (abs(q.x) < 5.0 && abs(q.y - yc) < 11.0) { col = abs(q.x) < 3.6 ? vec3(0.64, 0.61, 0.56) : vec3(0.42, 0.40, 0.37); a = 1.0; }
+  }
+  if ((works & 4) != 0) {
+    float d = line ? abs(q.y) / (R * 0.36) : length(q) / R;
+    float band = line ? 1.0 - sstep(0.06, 0.12, abs(d - 1.15)) : 1.0 - sstep(0.03, 0.06, abs(d - 1.1));
+    if (band > 0.01) { col = mix(col, mix(vec3(0.30, 0.40, 0.22), vec3(0.45, 0.52, 0.32), sstep(0.3, 0.7, band)), band); a = max(a, band); }
+  }
+  if ((works & 8) != 0) {
+    vec2 sq = q - vec2(-R * 0.3, R * 0.22);
+    float yard = max(abs(sq.x - 4.0) / 24.0, abs(sq.y + 2.0) / 16.0);
+    if (yard < 1.0) { col = vec3(0.62, 0.58, 0.50); a = 1.0; }
+    float b = vBox(sq, vec2(-16.0, -6.0), vec2(10.0, 6.0), 8.0);
+    if (b > 0.5) col = vec3(0.50, 0.53, 0.57); else if (b < -0.5) col *= 0.65;
+  }
+  return vec4(col, a);
+}
 vec4 villagePlan(int plan, bool ruin, vec2 q, float R, int sd, float mpp) {
   if (ruin) return vCluster(q, R, sd, mpp, false, true);
   if (plan == 1) return vGrove(q, R, sd, mpp);
@@ -516,6 +548,7 @@ vec4 villageLayer(vec2 p, float pxm, float farm) {
     gVSun = normalize(rot * vec2(-0.62, -0.72));
     int fl = int(inf.x + 0.5);
     vec4 r = villagePlan(fl & 15, (fl & 32) != 0, q, R, int(inf.w * 65535.0), mpp);
+    r = vWorks(r, fl & 15, int(inf.z + 0.5), q, R, mpp);
     if (r.a > 0.01) hit = r;
   }
   float rw = 0.00016;   // about 8 m wide

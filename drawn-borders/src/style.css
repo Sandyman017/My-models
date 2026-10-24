@@ -1076,3 +1076,5 @@ button.trade-row:hover { border-color: var(--c); }
 .st-share-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
 .st-share-bar { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .st-share-bar i { display: block; height: 100%; border-radius: 5px; }
+.prov-legend { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 6px; }
+.prov-legend i { height: 9px; border-radius: 5px; display: block; }

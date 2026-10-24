@@ -61,6 +61,8 @@ const { chromium } = require("playwright");
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(out, "trade-panel.png") });
   for (let k = 0; k < 30 && (await page.evaluate(() => !!ui.play)); k++) await page.waitForTimeout(1000);   // the season still playing out on the map
+  await page.evaluate(() => { const b = document.querySelector('[data-action="dec-later"]'); if (b) b.click(); });   // a decision card left open would take the key
+  await page.waitForTimeout(300);
   await page.keyboard.press("i");
   await page.waitForTimeout(800);
   await page.evaluate(() => { const b = document.querySelector('[data-action="st-view"][data-view="trade"]'); if (b) b.click(); });

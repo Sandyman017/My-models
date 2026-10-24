@@ -1083,6 +1083,8 @@ button.trade-row:hover { border-color: var(--c); }
 .st-share-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
 .st-share-bar { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .st-share-bar i { display: block; height: 100%; border-radius: 5px; }
+.prov-legend { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 6px; }
+.prov-legend i { height: 9px; border-radius: 5px; display: block; }
 </style>
 
 <div class="app">
@@ -3842,6 +3844,7 @@ function historyEntry(n, econ, turn, g) {
   e.unemp = sr(econ.unemployment || 0, 3);
   if (econ.people) { const D = demoOf(n), ed = eduOf(n); e.ls = sr(econ.people.ls, 1); e.tfr = sr(D.tfr, 2); e.e0 = sr(D.e0, 1); e.old = sr(D.old, 3); e.kids = sr(D.kids, 3); e.edS = sr(ed.s, 3); e.edE = sr(ed.e, 3); e.lam = sr(econ.people.lam, 3); }
   e.resM = sr(monthsOfFood((n.granary && n.granary.stock) || 0, econ.pop), 1);
+  if (g.villages) { let vc = 0, vp = 0; for (const v of g.villages) if (v.status !== "ruin" && g.owner[v.cell] === n.id) { vc++; vp += v.pop; } e.vil = vc; e.vpop = sr(vp, 4); }   // villages (10w)
   return e;
 }
 
@@ -16004,7 +16007,8 @@ const SITE_FEATURES = {
   mine:       { label: "A mine nearby",               grow: 0,     townGrow: 0,       def: 0,    text: "Work for miners, and shops and inns for them." },
   border:     { label: "Near a border",               grow: -0.08, townGrow: 0,       def: 0,    text: "Trade with neighbours, but the first place armies reach." },
 };
-let VILLAGE_ECON = null;   // each nation's economy at the end of the season (set by runSeason, so nothing is worked out twice)
+let VILLAGE_ECON = null;
+let VILLAGE_CTX_BUMP = 0;   // raised when a village's works change what villageCtx keeps   // each nation's economy at the end of the season (set by runSeason, so nothing is worked out twice)
 
 /* ---------- The site of a place ---------- */
 /* What never changes about a cell's site (worked out once for each world). */
@@ -16088,7 +16092,8 @@ function roadSites(w, g) {
 /* What the villages look up again and again in a season, worked out once: cells next to a working mine, next to a
    town, near a foreign border, and the town district of every cell. Not saved; rebuilt when the world changes. */
 function villageCtx(w, g) {
-  const key = `${g.turn}|${g.ver || 0}|${(g.sites || []).length}|${g.cities.length}|${g.roads.size}`;
+  // rebuilt when the season, the mines, the towns, the roads or the villages' market charters change
+  const key = `${g.turn}|${(g.sites || []).length}|${g.cities.length}|${g.roads.size}|${VILLAGE_CTX_BUMP}`;
   if (g._vctx && g._vctx.key === key) return g._vctx;
   const mine = new Uint8Array(N_CELLS), mineAt = new Uint8Array(N_CELLS), town = new Uint8Array(N_CELLS), border = new Uint8Array(N_CELLS);
   const mark = (arr, c, r) => { const x = cellX(c), y = cellY(c); for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (inBounds(x + dx, y + dy)) arr[idx(x + dx, y + dy)] = 1; };
@@ -16105,8 +16110,16 @@ function villageCtx(w, g) {
     }
   }
   const townDist = new Float32Array(N_CELLS).fill(99);
-  for (let i = 0; i < N_CELLS; i++) for (const c of g.cities) { const d = dist(c.cell, i); if (d < townDist[i]) townDist[i] = d; }
-  const C = { key, mine, mineAt, town, border, townDist };
+  for (const c of g.cities) {
+    const cx = cellX(c.cell), cy = cellY(c.cell);
+    for (let y = Math.max(0, cy - 4); y <= Math.min(GRID_H - 1, cy + 4); y++) for (let x = Math.max(0, cx - 4); x <= Math.min(GRID_W - 1, cx + 4); x++) {
+      const i = idx(x, y), d = Math.hypot(x - cx, y - cy);
+      if (d < townDist[i]) townDist[i] = d;
+    }
+  }
+  const charter = new Uint8Array(N_CELLS);   // villages with a market charter
+  for (const v of g.villages || []) if (v.works && v.works.market !== undefined && v.status !== "ruin") charter[v.cell] = 1;
+  const C = { key, mine, mineAt, town, border, townDist, charter };
   Object.defineProperty(g, "_vctx", { enumerable: false, writable: true, configurable: true, value: C });   // not saved
   return C;
 }
@@ -16235,10 +16248,10 @@ function villageKindAt(w, g, i, stay) {
 /* Where a market grows by itself, as in history: where roads meet, where a road crosses a river, and at the stop a day's
    journey along the road from the nearest town. */
 function marketSpot(w, g, i) {
-  const R = roadSites(w, g);
-  if ((g.villages || []).some(v => v.cell === i && v.works && v.works.market !== undefined && v.status !== "ruin")) return true;   // a market charter
+  const R = roadSites(w, g), C = villageCtx(w, g);
+  if (C.charter[i]) return true;   // a market charter
   if (!R.deg[i]) return false;
-  return R.deg[i] >= 3 || R.bridge.has(i) || (R.deg[i] >= 2 && villageCtx(w, g).townDist[i] >= 2.5);
+  return R.deg[i] >= 3 || R.bridge.has(i) || (R.deg[i] >= 2 && C.townDist[i] >= 2.5);
 }
 /* The people living at the mines next to a camp: a share of their workers and families. */
 function campPeople(g, cell) {
@@ -16265,10 +16278,15 @@ function villageTarget(w, g, v, econ) {
     if (Math.abs(m) > 0.02) why.push({ label: m > 0 ? `${town.name} is doing well` : `${town.name} is unhappy`, v: m });
     mult *= 1 + m;
   }
-  // the young leave farm villages for the cities as eras pass; villages near big towns fill with people who work there
+  // the province's money: its governor spends some of it on the villages' lanes, markets and wells
+  const prov = typeof provAt === "function" ? provAt(g, v.cell) : null;
+  const fund = prov ? (prov.fund ?? 2) : 0;
+  if (prov && prov.gov && fund !== 2) { const u = 0.03 * (fund - 2); mult *= 1 + u; why.push({ label: fund > 2 ? `${prov.name} spends generously on its villages` : `${prov.name} has little money for its villages`, v: u }); }
+  // the young leave farm villages for the cities as eras pass (a village school keeps some of them); villages near big
+  // towns fill with people who work there
   const era = g.era || 0;
   if (v.plan === "modern") { const u = 0.08 * era; mult *= 1 + u; if (u > 0) why.push({ label: "People who work in the town live here", v: u }); }
-  else if (v.kind === "farm" && era > 0) { const u = -0.06 * era; mult *= 1 + u; why.push({ label: "The young leave for the cities", v: u }); }
+  else if (v.kind === "farm" && era > 0) { const u = -0.06 * era * ((v.works || {}).school !== undefined ? 0.5 : 1); mult *= 1 + u; why.push({ label: (v.works || {}).school !== undefined ? "The young leave for the cities (the school keeps some)" : "The young leave for the cities", v: u }); }
   // hunger and war
   const r = econ && econ.regions ? regionAtCell(econ, v.cell) : null;
   if (r && r.foodRatio < ECON.famineLine) { mult *= 0.7; why.push({ label: "Hunger: families leave", v: -0.3 }); }
@@ -16721,8 +16739,9 @@ const VILLAGE_WORKS = {
   bridge:  { label: "Build a bridge at the ford", done: "A bridge", costShare: 0.3, text: "A stone bridge where people now wade across: travellers cross here in every season, and pay." },
   dyke:    { label: "Build dykes along the river", done: "Dykes", costShare: 0.3, text: "Earth banks keep the river out of the houses and fields when it floods." },
   rebuild: { label: "Send settlers to rebuild it", done: "Rebuilt", costShare: 0.4, text: "Families are given tools, seed and a year's food to rebuild the abandoned village." },
+  school:  { label: "Build a village school", done: "A village school", costShare: 0.2, text: "Children learn to read and count at home: fewer young people leave for the cities, and those who stay farm better." },
 };
-const VILLAGE_WORK_ORDER = ["market", "water", "bridge", "dyke", "rebuild"];
+const VILLAGE_WORK_ORDER = ["market", "water", "bridge", "dyke", "school", "rebuild"];
 function villageWorkCost(g, nid, key) {
   const towns = g.cities.filter(c => c.owner === nid).length;
   return Math.round(BUILD.townBaseB * (1 + 0.06 * towns) * VILLAGE_WORKS[key].costShare * 0.5 * 10) / 10;
@@ -16753,6 +16772,11 @@ function villageWorkCheck(w, g, nid, v, key) {
     if (!R.deg[v.cell]) return fail("A bridge needs a road to carry.");
   }
   if (key === "dyke" && !(F.includes("floodplain") || F.includes("bigriver") || F.includes("greatriver"))) return fail("The river here does not flood the village.");
+  if (key === "school") {
+    if (v.kind !== "farm") return fail("Only farm villages lose their young to the cities.");
+    if ((g.era || 0) < 1) return fail("Not yet: the young start leaving for the cities in the Age of Electricity.");
+    if (v.pop < 0.0015) return fail("Too small for a school of its own.");
+  }
   return { ok: true, key, cost: villageWorkCost(g, nid, key) };
 }
 /* Pay for a work and do it (players through the village page, rivals once a year). */
@@ -16772,6 +16796,7 @@ function orderVillageWork(w, g, nid, vid, key) {
 function applyVillageWork(w, g, v, key) {
   v.works = v.works || {};
   v.works[key] = g.turn;
+  VILLAGE_CTX_BUMP++;
   const M = villMeta(g);
   if (key === "market") { v.kind = "market"; M.junctions[v.cell] = Math.min(M.junctions[v.cell] ?? g.turn, g.turn - VIL.marketDelay); villageLog(g, v, "Was granted a market charter: a weekly market and a yearly fair.", "good"); }
   else if (key === "rebuild") { v.status = "village"; v.kind = villageKindAt(w, g, v.cell, true) || "farm"; v.pop = Math.max(VIL.ruinPop * 2, (v.peak || 0.001) * 0.15); v.since = g.turn; v.ruinAt = undefined; villageLog(g, v, "Settlers sent by the government are rebuilding the village.", "good"); }
@@ -16941,6 +16966,125 @@ const VILLAGE_DECISIONS = {
     },
   },
 };
+Object.assign(VILLAGE_DECISIONS, {
+  villageYoung: {
+    cat: "People", icon: "people", tone: "bad",
+    find: c => {
+      if ((c.g.era || 0) < 1) return null;
+      const list = myVillages(c, v => v.kind === "farm" && !(v.works || {}).school && v.pop >= 0.003 && (v.hist || []).length >= 5 && v.pop * 1e6 < v.hist[v.hist.length - 5]);
+      if (!list.length) return null;
+      return { v: list.sort((a, b) => b.pop - a.pop)[0], w: 0.6 };
+    },
+    make: (c, f) => {
+      const v = f.v, town = nearestCity(c.g, v.cell, c.nid);
+      return {
+        title: `The young are leaving ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `Every spring more young people leave ${v.name} for the factories and offices of ${town ? town.name : "the cities"}. The old farm the land alone; the dance hall has closed. The village council asks for a school, so the children see a future at home.`,
+        options: [
+          { id: "a", tag: "kind", label: "Build a village school", effects: [{ t: "money", v: -villageWorkCost(c.g, c.nid, "school") }, villageEffect(v, 0, { works: "school" }), { t: "group", key: "v_farmersaschoolfo", v: { farmers: 3 }, label: `A school for ${v.name}`, seasons: 8 }] },
+          { id: "b", tag: "thrift", label: "Young people should go where the work is", effects: [villageEffect(v, -0.03), ...(town ? [popEffect(c, town.id, 0.0005)] : [])] },
+        ], def: "b",
+      };
+    },
+  },
+  villageShrine: {
+    cat: "Faith", icon: "scroll", tone: "good",
+    find: c => {
+      const list = myVillages(c, v => villageAge(c.w, c.g, v) >= 300 && v.pop >= 0.002 && !(v.log || []).some(x => /pilgrim/.test(x.text)));
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: 0.35 };
+    },
+    make: (c, f) => {
+      const v = f.v;
+      return {
+        title: `Pilgrims come to ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `The old shrine of ${v.name}, ${Math.round(villageAge(c.w, c.g, v))} years old, is said to heal the sick. This year thousands of pilgrims came on foot; the priests ask the government to repair the shrine and the road to it.`,
+        options: [
+          { id: "a", tag: "kind", label: "Repair the shrine and the pilgrims' road", effects: [{ t: "money", v: villageCostOf(c, 0.0006) }, villageEffect(v, 0.04, { log: "Its old shrine was repaired: pilgrims come every year." }), { t: "group", key: "v_faiththeshrine", v: { faith: 4 }, label: `The shrine at ${v.name}`, seasons: 8 }] },
+          { id: "b", tag: "thrift", label: "Let the priests manage it", effects: [villageEffect(v, 0.01, { log: "Pilgrims came to its old shrine." })] },
+        ], def: "b",
+      };
+    },
+  },
+  villageStorm: {
+    cat: "Disaster", icon: "wave", tone: "bad",
+    find: c => {
+      const list = myVillages(c, v => v.kind === "fish" && v.pop >= 0.001);
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: c.g.turn % 4 === 3 ? 0.7 : 0.25 };
+    },
+    make: (c, f) => {
+      const v = f.v;
+      return {
+        title: `Boats lost off ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `An autumn storm caught the fishing boats of ${v.name} far out at sea. Eleven boats did not come home. The widows wait on the quay; without the boats, the village has no way to earn its bread this winter.`,
+        options: [
+          { id: "a", tag: "kind", label: "A fund for the widows and new boats", effects: [{ t: "money", v: villageCostOf(c, 0.0008) }, villageEffect(v, -0.01, { log: "Lost boats in a great storm; the government paid for new ones." })] },
+          { id: "b", tag: "thrift", label: "Bread for the winter only", effects: [{ t: "money", v: villageCostOf(c, 0.0002) }, villageEffect(v, -0.04)] },
+          { id: "c", tag: "force", label: "The sea gives and takes", effects: [villageEffect(v, -0.09)] },
+        ], def: "b",
+      };
+    },
+  },
+  villageBandits: {
+    cat: "Order", icon: "fist", tone: "bad",
+    find: c => {
+      const list = myVillages(c, v => (v.kind === "market" || villageSiteFeatures(c.w, c.g, v).includes("halfway")) && (villageCtx(c.w, c.g).border[v.cell] || c.n.stability < 50));
+      if (!list.length) return null;
+      return { v: list[0], w: 0.45 };
+    },
+    make: (c, f) => {
+      const v = f.v, town = nearestCity(c.g, v.cell, c.nid);
+      return {
+        title: `Bandits on the road at ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `Armed men stop the carts on the road near ${v.name} and take what they please. Traders now go around, and the market of ${v.name} is half empty.`,
+        options: [
+          { id: "a", tag: "force", label: "Send soldiers to clear the road", effects: [{ t: "money", v: villageCostOf(c, 0.0004) }, villageEffect(v, 0, { log: "Soldiers cleared the road of bandits." }), { t: "group", key: "v_armyclearingth", v: { army: 2 }, label: "Clearing the roads", seasons: 4 }] },
+          { id: "b", tag: "thrift", label: "Let the traders hire guards", effects: [villageEffect(v, -0.03)] },
+          ...(town ? [{ id: "c", tag: "kind", label: `A police post in ${v.name}`, effects: [{ t: "money", v: villageCostOf(c, 0.0007) }, villageEffect(v, 0.01, { log: "A police post was opened in the village." }), { t: "cityMod", cityId: town.id, key: "road_police", label: "Safe roads", mood: 2, seasons: 6 }] }] : []),
+        ], def: "b",
+      };
+    },
+  },
+  villageCommons: {
+    cat: "Land", icon: "food", tone: "neutral",
+    find: c => {
+      const list = myVillages(c, v => v.kind === "farm" && ["cluster", "line", "hill"].includes(v.plan) && v.pop >= 0.003 && !(v.log || []).some(x => /common/.test(x.text)));
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: 0.35 };
+    },
+    make: (c, f) => {
+      const v = f.v, town = nearestCity(c.g, v.cell, c.nid);
+      return {
+        title: `A landlord wants to fence the commons of ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `For centuries the families of ${v.name} have grazed their cows and gathered firewood on the common land. The landlord wants to fence it and farm it with hired men: more grain, he says, and fewer mouths. The villagers say they will starve.`,
+        options: [
+          { id: "a", tag: "bold", label: "Allow the fences", effects: [villageEffect(v, -0.08, { log: "The common land was fenced; many families left for the towns." }), ...(town ? [{ t: "cityMod", cityId: town.id, key: "enclosure", label: "Fenced commons: more grain", out: 0.01, seasons: 12 }] : []), { t: "group", key: "v_farmerscommonsfen", v: { farmers: -4 }, label: "Commons fenced", seasons: 8 }, { t: "group", key: "v_businesscommonsfen", v: { business: 2 }, label: "Commons fenced", seasons: 8 }] },
+          { id: "b", tag: "kind", label: "The commons belong to the village", effects: [villageEffect(v, 0, { log: "Its common land was saved from the fences." }), { t: "group", key: "v_farmerscommonspro", v: { farmers: 3 }, label: "Commons protected", seasons: 8 }, { t: "group", key: "v_businesscommonspro", v: { business: -2 }, label: "Commons protected", seasons: 8 }] },
+        ], def: "b",
+      };
+    },
+  },
+  villageCraft: {
+    cat: "Economy", icon: "coin", tone: "good",
+    find: c => {
+      const list = myVillages(c, v => villageAge(c.w, c.g, v) >= 150 && v.pop >= 0.003 && (c.g.era || 0) <= 4 && !(v.log || []).some(x => /craft/.test(x.text)));
+      if (!list.length) return null;
+      return { v: list[Math.floor(c.rng() * list.length)], w: 0.3 };
+    },
+    make: (c, f) => {
+      const v = f.v, craft = ["lace", "pottery", "cheese", "knives", "carpets", "baskets", "wine", "woollen cloth"][Math.floor(hash2(v.id, 3, 91) * 8)];
+      return {
+        title: `The ${craft} of ${v.name}`, cell: v.cell, villageId: v.id,
+        body: `The ${craft} made in ${v.name} has become famous: merchants from the cities buy all the village can make. The craftsmen ask for a guild and a mark so that nobody else can sell "${v.name} ${craft}".`,
+        options: [
+          { id: "a", tag: "kind", label: "Grant the guild and its mark", effects: [villageEffect(v, 0.04, { log: `Its ${craft} has a protected mark: a village craft known far away.` }), { t: "group", key: "v_businessthecraft", v: { business: 1 }, label: `The ${craft} of ${v.name}`, seasons: 6 }] },
+          { id: "b", tag: "thrift", label: "Tax it like any other trade", effects: [{ t: "money", v: Math.max(0.05, Math.round(c.Y * 0.0004 * 100) / 100) }, villageEffect(v, 0.01, { log: `Its ${craft} became famous; the state taxed the trade.` })] },
+        ], def: "a",
+      };
+    },
+  },
+});
 Object.assign(DECISIONS, VILLAGE_DECISIONS);
 /* The "village" effect of a decision: people lost or gained, a work done, a line in its story. */
 function applyVillageEffect(w, g, nid, e) {
@@ -18909,6 +19053,7 @@ const ui = {
   selectedCity: null,
   selectedCell: -1,
   selectedVillage: null,   // a village's page is open (16n)
+  provColor: "own",        // what the Provinces panel colours the map by (16m)
   hoverXY: null,           // the map point under the mouse, in cells
   resView: false,
   dispatch: null,
@@ -24003,7 +24148,9 @@ function villageDrawList() {
     const ruin = v.status === "ruin";
     const plan = v.plan || "cluster";
     const pop = ruin ? (v.peak || 0.001) * 0.7 : v.pop;
-    const d = { named: true, v, x: s.x, y: s.y, cx: s.cx, cy: s.cy, ang: s.ang, plan, ruin, pop, r: villageRadius(pop, plan), cell: v.cell, seed: hash2(v.id || v.cell, 5, world.seed + 7303) };
+    const W = v.works || {};
+    const works = (W.water !== undefined ? 1 : 0) + (W.bridge !== undefined ? 2 : 0) + (W.dyke !== undefined ? 4 : 0) + (W.school !== undefined ? 8 : 0);
+    const d = { named: true, v, x: s.x, y: s.y, cx: s.cx, cy: s.cy, ang: s.ang, plan, ruin, pop, works: ruin ? 0 : works, r: villageRadius(pop, plan), cell: v.cell, seed: hash2(v.id || v.cell, 5, world.seed + 7303) };
     list.push(d);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) taken.add(sq(s.cx + dx, s.cy + dy));
   }
@@ -24030,7 +24177,7 @@ function glUploadVillages() {
     if (V[o + 3] > 0.5 && !d.named) continue;
     V[o] = d.x / G - d.cx; V[o + 1] = d.y / G - d.cy; V[o + 2] = d.r; V[o + 3] = 1;
     I[o] = VILLAGE_PLAN_ORDER.indexOf(d.plan) + (d.named ? 16 : 0) + (d.ruin ? 32 : 0);
-    I[o + 1] = d.ang; I[o + 2] = Math.min(9.99, d.pop * 1000); I[o + 3] = d.seed;
+    I[o + 1] = d.ang; I[o + 2] = d.works || 0; I[o + 3] = d.seed;
   }
   glTex(3, GLMAP.tex.vill, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, V);
   if (GLMAP.tex.vinfo) glTex(10, GLMAP.tex.vinfo, VX, VY, gl.RGBA32F, gl.RGBA, gl.FLOAT, I);
@@ -24382,6 +24529,36 @@ vec4 vModern(vec2 q, float R, int sd, float mpp) {
   float a = max(edge, (1.0 - sstep(5.0, 6.2, mainRd)) * (1.0 - sstep(R * 1.1, R * 1.3, abs(q.x))));
   return vec4(mix(vec3(0.50, 0.52, 0.45), col, vDet(P, mpp)), a);
 }
+// what its government built there: a stone cistern (wells), a bridge over the stream, an earth bank against floods,
+// a school with its yard (works: 1 water, 2 bridge, 4 dykes, 8 school)
+vec4 vWorks(vec4 r, int plan, int works, vec2 q, float R, float mpp) {
+  if (works == 0 || mpp > 6.0) return r;
+  vec3 col = r.rgb; float a = r.a;
+  bool line = plan == 2;
+  if ((works & 1) != 0) {
+    vec2 cq = q - (line ? vec2(R * 0.3, R * 0.2) : vec2(R * 0.22, -R * 0.18));
+    float t = vRound(cq, 7.0, 2.0);
+    if (t > 0.5) { col = length(cq) < 4.5 ? vec3(0.16, 0.24, 0.27) : vec3(0.70, 0.68, 0.63); a = max(a, 1.0); }
+    else if (t < -0.5) col *= 0.7;
+  }
+  if ((works & 2) != 0 && line) {
+    float yc = 0.12 * R * sin(q.x / (R * 0.35)) + 0.05 * R * sin(q.x / (R * 0.11));
+    if (abs(q.x) < 5.0 && abs(q.y - yc) < 11.0) { col = abs(q.x) < 3.6 ? vec3(0.64, 0.61, 0.56) : vec3(0.42, 0.40, 0.37); a = 1.0; }
+  }
+  if ((works & 4) != 0) {
+    float d = line ? abs(q.y) / (R * 0.36) : length(q) / R;
+    float band = line ? 1.0 - sstep(0.06, 0.12, abs(d - 1.15)) : 1.0 - sstep(0.03, 0.06, abs(d - 1.1));
+    if (band > 0.01) { col = mix(col, mix(vec3(0.30, 0.40, 0.22), vec3(0.45, 0.52, 0.32), sstep(0.3, 0.7, band)), band); a = max(a, band); }
+  }
+  if ((works & 8) != 0) {
+    vec2 sq = q - vec2(-R * 0.3, R * 0.22);
+    float yard = max(abs(sq.x - 4.0) / 24.0, abs(sq.y + 2.0) / 16.0);
+    if (yard < 1.0) { col = vec3(0.62, 0.58, 0.50); a = 1.0; }
+    float b = vBox(sq, vec2(-16.0, -6.0), vec2(10.0, 6.0), 8.0);
+    if (b > 0.5) col = vec3(0.50, 0.53, 0.57); else if (b < -0.5) col *= 0.65;
+  }
+  return vec4(col, a);
+}
 vec4 villagePlan(int plan, bool ruin, vec2 q, float R, int sd, float mpp) {
   if (ruin) return vCluster(q, R, sd, mpp, false, true);
   if (plan == 1) return vGrove(q, R, sd, mpp);
@@ -24428,6 +24605,7 @@ vec4 villageLayer(vec2 p, float pxm, float farm) {
     gVSun = normalize(rot * vec2(-0.62, -0.72));
     int fl = int(inf.x + 0.5);
     vec4 r = villagePlan(fl & 15, (fl & 32) != 0, q, R, int(inf.w * 65535.0), mpp);
+    r = vWorks(r, fl & 15, int(inf.z + 0.5), q, R, mpp);
     if (r.a > 0.01) hit = r;
   }
   float rw = 0.00016;   // about 8 m wide
@@ -25021,6 +25199,7 @@ function cityDetailHtml(city) {
     ${townWorkHtml(city, r)}
     ${townIndustryHtml(city, r)}
     ${portSectionHtml(city)}
+    ${townVillagesHtml(city, r)}
     <div class="block">
       <span class="eyebrow">Connections</span>
       <p class="small">${others.length ? `Joined ${econ.bySea && econ.bySea.has(city.id) ? "by road and sea" : econ.byRiver && econ.byRiver.has(city.id) ? "by road and river barges" : "by road"} to ${others.map(escapeHtml).join(", ")}.` : "Not joined to any other town by road."}${net.capital ? (econ.bySea && econ.bySea.has(city.id) ? ` <span class="tone-good">Freighters join it to the capital's market.</span>` : "") : ` <span class="tone-warn">Cut off from the capital.</span>`}</p>
@@ -27792,9 +27971,11 @@ const STAT_METRICS = {
   ships:     { label: "Warships", get: h => (h.ships === undefined ? null : h.ships), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, sum: true },
   fr:        { label: "Freighters", get: h => (h.fr === undefined ? null : h.fr), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, sum: true },
   seaMt:     { label: "Sea trade (Mt a year)", get: h => (h.seaMt === undefined ? null : h.seaMt), fmt: v => `${fmtNum(v)} Mt`, axis: v => `${fmtNum(v)}`, sum: true },
+  vil:       { label: "Villages", get: h => (h.vil === undefined ? null : h.vil), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, sum: true },
+  vpop:      { label: "People in villages", get: h => (h.vpop === undefined ? null : h.vpop), fmt: v => fmtPeople(v), axis: v => `${fmtNum(v * 1000)}k`, sum: true },
   prestige:  { label: "Prestige", get: h => (h.prestige === undefined ? null : h.prestige), fmt: v => `${Math.round(v)}`, axis: v => `${Math.round(v)}`, zero: true },
 };
-const COMPARE_METRICS = ["gdp", "gdppc", "pop", "area", "towns", "soldiers", "power", "tanks", "planes", "ships", "fr", "stability", "treasury", "techs", "exp", "imp", "bal", "fin", "skill", "food", "unemp", "resM", "prestige", "opP"];
+const COMPARE_METRICS = ["gdp", "gdppc", "pop", "area", "towns", "soldiers", "power", "tanks", "planes", "ships", "fr", "stability", "treasury", "techs", "exp", "imp", "bal", "fin", "skill", "food", "unemp", "resM", "vil", "vpop", "prestige", "opP"];
 const STAT_CHARTS = new Map();
 let statChartSeq = 0;
 
@@ -31274,6 +31455,7 @@ function provincesTabHtml() {
       ${busy.length ? `<p class="notice info">Under way: ${busy.map(b => `${escapeHtml(b.label)} (${b.seasons - b.progress} season${b.seasons - b.progress > 1 ? "s" : ""} left)`).join("; ")}.</p>` : ""}
     </div>
     ${ui.provDraw ? provDrawCardHtml() : ""}
+    ${provColorHtml()}
     ${provNeedsReportHtml(st, econ)}
     ${countrysideHtml()}
     <div class="prov-cards">${cards}</div>
@@ -31329,6 +31511,8 @@ function onProvinceInput(e) {
     provChange({ t: "capital", pid: Number(t.dataset.provCap), cityId: Number(t.value) });
     if (ui.phase === "play") ui.tab = "provinces";
     saveGame(); renderAll();
+  } else if (t.dataset.provColor !== undefined && e.type === "change") {
+    ui.provColor = t.value; PROVCOL.key = null; view.staticKey = ""; bumpMap(); renderAll();
   } else if (t.dataset.provJoin !== undefined && e.type === "change" && t.value) {
     provChange({ t: "join", from: Number(t.dataset.provJoin), into: Number(t.value) });
     saveGame(); renderAll();
@@ -31373,7 +31557,7 @@ function drawProvinceLines(o, cs) {
   const sh = buildShapes();
   if (!sh.provs || !sh.provs.length) return;
   const px = v => v / cs;
-  if (provShowTints()) for (const { p, path } of sh.provFill) { o.fillStyle = rgba(provTint(p), ui.openProv === p.id ? 0.42 : 0.26); o.fill(path, "evenodd"); }
+  if (provShowTints()) for (const { p, path } of sh.provFill) { const col = provColorFor(p); o.fillStyle = col ? rgba(col, ui.openProv === p.id ? 0.62 : 0.5) : rgba(provTint(p), ui.openProv === p.id ? 0.42 : 0.26); o.fill(path, "evenodd"); }
   o.setLineDash([px(clamp(cs * 0.3, 3, 9)), px(clamp(cs * 0.2, 2, 6))]);
   for (const { p, path } of sh.provs) {
     o.strokeStyle = "rgba(10,10,10,0.35)"; o.lineWidth = px(clamp(cs * 0.09, 1.6, 3)); o.stroke(path);
@@ -31468,6 +31652,58 @@ function provincesDispatchHtml(d) {
 Object.assign(ACTIONS, {
   "prov-fund": el => { const p = provById(game, Number(el.dataset.pid)); const k = Number(el.dataset.k); if (p && p.owner === PLAYER && PGOV.levels[k]) { p.fund = k; bumpMap(); } },
 });
+
+/* ---------- A map of the provinces by any number (provinces part 3, with the villages of v39) ---------- */
+const PROV_COLOR_BY = {
+  own:     { label: "their own colours" },
+  pop:     { label: "people", get: s => s.pop, fmt: v => fmtPop(v) },
+  growth:  { label: "growth over a year", get: s => s.growth, fmt: v => signedPct(v, 1), diverging: true },
+  perK:    { label: "output per person", get: s => s.perK, fmt: v => `$${v.toFixed(1)}k` },
+  dens:    { label: "people per km²", get: s => s.pop * 1e6 / Math.max(1, s.cells * KM2_PER_CELL), fmt: v => `${Math.round(v)}` },
+  vpop:    { label: "people in villages", get: s => s.vpop, fmt: v => fmtPeople(v) },
+  vgrow:   { label: "villages growing − shrinking", get: s => s.vgrow, fmt: v => signed(Math.round(v)), diverging: true },
+  mood:    { label: "mood of its towns", get: s => s.mood, fmt: v => `${Math.round(v)}` },
+};
+const PROVCOL = { key: null, vals: new Map(), lo: 0, hi: 1 };
+/* The chosen number for each of your provinces (worked out again each season or when the choice changes). */
+function provColorValues() {
+  const k = ui.provColor || "own";
+  const key = `${k}|${game.turn}|${mapVersion}`;
+  if (PROVCOL.key === key) return PROVCOL;
+  PROVCOL.key = key; PROVCOL.vals = new Map();
+  const D = PROV_COLOR_BY[k];
+  if (!D || !D.get) return PROVCOL;
+  const st = provinceStats(world, game, PLAYER, economies()[PLAYER]);
+  for (const s of st) {
+    const vs = (game.villages || []).filter(v => v.status !== "ruin" && game.owner[v.cell] === PLAYER && game.prov[v.cell] === s.p.id);
+    s.vpop = vs.reduce((a, v) => a + v.pop, 0);
+    s.vgrow = vs.reduce((a, v) => { const h = v.hist || [], o = h.length >= 5 ? h[h.length - 5] : null; return a + (o ? (v.pop * 1e6 > o * 1.01 ? 1 : v.pop * 1e6 < o * 0.99 ? -1 : 0) : 0); }, 0);
+    s.mood = s.towns.length ? s.towns.reduce((a, t) => a + (t.mood ?? CITY.moodBase), 0) / s.towns.length : null;
+    const v = D.get(s);
+    if (v !== null && v !== undefined && Number.isFinite(v)) PROVCOL.vals.set(s.p.id, v);
+  }
+  const vals = [...PROVCOL.vals.values()];
+  PROVCOL.lo = vals.length ? Math.min(...vals) : 0; PROVCOL.hi = vals.length ? Math.max(...vals) : 1;
+  if (D.diverging) { const m = Math.max(Math.abs(PROVCOL.lo), Math.abs(PROVCOL.hi), 1e-9); PROVCOL.lo = -m; PROVCOL.hi = m; }
+  return PROVCOL;
+}
+/* Low numbers blue, middle pale, high gold (for growth: shrinking red, growing green). */
+function provColorFor(p) {
+  if (!ui.provColor || ui.provColor === "own" || p.owner !== PLAYER) return null;
+  const C = provColorValues();
+  if (!C.vals.has(p.id)) return "#6b6b6b";
+  const t = C.hi > C.lo ? (C.vals.get(p.id) - C.lo) / (C.hi - C.lo) : 0.5;
+  const stops = PROV_COLOR_BY[ui.provColor].diverging ? [[176, 64, 52], [222, 214, 190], [76, 150, 84]] : [[52, 84, 130], [190, 196, 186], [224, 176, 79]];
+  const a = t < 0.5 ? stops[0] : stops[1], b = t < 0.5 ? stops[1] : stops[2], u = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+  const c = a.map((x, i) => Math.round(x + (b[i] - x) * u));
+  return `#${c.map(x => x.toString(16).padStart(2, "0")).join("")}`;
+}
+function provColorHtml() {
+  const k = ui.provColor || "own", D = PROV_COLOR_BY[k];
+  const C = D.get ? provColorValues() : null;
+  const legend = C && C.vals.size ? `<div class="prov-legend small"><span>${escapeHtml(D.fmt(C.lo))}</span><i style="background:linear-gradient(90deg, ${D.diverging ? "#b04034, #ded6be, #4c9654" : "#345482, #bec4ba, #e0b04f"})"></i><span>${escapeHtml(D.fmt(C.hi))}</span></div>` : "";
+  return `<div class="block"><label class="small">Colour the map by <select data-prov-color>${Object.entries(PROV_COLOR_BY).map(([key, x]) => `<option value="${key}" ${key === k ? "selected" : ""}>${escapeHtml(x.label)}</option>`).join("")}</select></label>${legend}</div>`;
+}
 /* =====================================================================
    16n. Villages in the panels and on the map
    Names of villages up close (sized by their people, ruins in grey, boom camps in gold), the hover card of any
@@ -31674,6 +31910,21 @@ function townSiteReportHtml(q) {
     <p class="small">A town here would grow ${rep.townGrow >= 0 ? "+" : ""}${(rep.townGrow * 400).toFixed(2)}% a year faster from its site${rep.def > 0 ? `, and its defenders fight ${pct(rep.def)} harder` : ""}.</p>
     ${siteLinesHtml(rep)}
     ${rep.notes.length ? `<p class="muted small">${rep.notes.map(escapeHtml).join(" ")}</p>` : ""}</div>`;
+}
+
+/* ---------- The villages of a town's district (on the town's page) ---------- */
+function townVillagesHtml(city, r) {
+  if (!r || !game.villages) return "";
+  const cells = new Set(r.cells);
+  const vs = game.villages.filter(v => cells.has(v.cell));
+  const live = vs.filter(v => v.status !== "ruin").sort((a, b) => b.pop - a.pop);
+  if (!vs.length) return "";
+  let inH = 0, nH = 0;
+  for (const c of r.cells) { if (c === city.cell) continue; const hs = hamletsOf(world, game, c); nH += hs.length; for (const h of hs) inH += h.pop; }
+  const inV = live.reduce((s, v) => s + v.pop, 0);
+  return `<div class="block"><span class="eyebrow">Its countryside · ${live.length} village${live.length === 1 ? "" : "s"}</span>
+    <p class="small">${fmtPeople(inV)} people live in its villages and ${fmtPeople(inH)} in ${fmtCount(nH)} hamlets; the rest of its ${fmtPop(r.pop)} live in the town and on the farms.${vs.length > live.length ? ` ${vs.length - live.length} village${vs.length - live.length > 1 ? "s lie" : " lies"} in ruins.` : ""}</p>
+    <ul class="factors">${live.slice(0, 6).map(v => `<li><span><button class="linkbtn" type="button" data-action="village-pick" data-vid="${v.id}">${escapeHtml(v.name)}</button> <span class="muted small">${escapeHtml(VILLAGE_PLANS[v.plan].label.toLowerCase())}${VILLAGE_STATUS[v.status] ? ` · ${VILLAGE_STATUS[v.status].label.toLowerCase()}` : ""}</span></span><span class="num">${fmtVillPeople(v.pop)}</span></li>`).join("")}</ul></div>`;
 }
 
 /* ---------- The villages of a province, and of the nation ---------- */
