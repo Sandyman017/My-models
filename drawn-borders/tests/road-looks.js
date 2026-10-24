@@ -47,7 +47,7 @@ const panels = [
 ];
 const frag = `#version 300 es
 precision highp float; precision highp int;
-uniform float uM[8]; uniform vec2 uC[8];
+uniform float uM[8]; uniform vec2 uC[8]; uniform int uOne;
 out vec4 outColor;
 ${noise}
 const float M = 1.0 / 50000.0;
@@ -82,7 +82,7 @@ ${tex(0, X.vtW, X.vtH, "RGBA32F", "RGBA", JSON.stringify(Array.from(X.V)))}
 ${tex(1, 96, 64, "RGBA32F", "RGBA", JSON.stringify(Array.from(X.cells)))}
 ${tex(2, X.lW, X.lH, "R32F", "RED", JSON.stringify(Array.from(X.L)))}
 gl.uniform1i(gl.getUniformLocation(pr, "uRoadV"), 0); gl.uniform1i(gl.getUniformLocation(pr, "uRoadCell"), 1); gl.uniform1i(gl.getUniformLocation(pr, "uRoadList"), 2);
-gl.uniform1i(gl.getUniformLocation(pr, "uRoadOn"), 1);
+gl.uniform1i(gl.getUniformLocation(pr, "uRoadOn"), 1); gl.uniform1i(gl.getUniformLocation(pr, "uOne"), 1);
 const P = ${JSON.stringify(panels)};
 gl.uniform1fv(gl.getUniformLocation(pr, "uM"), P.map(p => p.mpp)); gl.uniform2fv(gl.getUniformLocation(pr, "uC"), P.flatMap(p => [p.cx, p.cy]));
 gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.finish(); document.title = "DONE";

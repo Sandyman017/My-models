@@ -251,7 +251,7 @@ function roadTextures(chains) {
 }
 /* Send the roads to the graphics card when they change. */
 function glUploadRoads() {
-  if (!GLMAP.ok || GLMAP.simple || !game) return;
+  if (!GLMAP.ok || GLMAP.simple || GLMAP.noRoads || !game) return;
   const R = roadNet();
   if (GLMAP.roadKey === R.key) return;
   GLMAP.roadKey = R.key;
@@ -298,38 +298,42 @@ vec4 roadAt(vec2 p, float pxm, float water) {
   if (cnt == 0) return vec4(0.0);
   float pxmM = pxm / M;
   float wobOn = 1.0 - sstep(60.0, 200.0, pxmM);   // the bends are only worth working out close up
-  float best = 1e9, bAcross = 0.0, bS = 0.0, bGrade = 0.0, bYellow = 0.0;
-  for (int i = 0; i < 160; i++) {
+  // find the nearest stretch: cheap work only in the loop (Windows turns a shader into DirectX and copies a loop out
+  // once for every turn unless its count comes from a uniform, so uOne keeps it a loop); the bends are worked out
+  // once, for the stretch found
+  float best = 1e9; int bv = -1; float bt = 0.0, btr = 0.0;
+  for (int i = 0; i < 160 * uOne; i++) {
     if (i >= cnt) break;
     int li = off + i;
     int v = int(texelFetch(uRoadList, ivec2(li & 2047, li >> 11), 0).r + 0.5);
     vec4 A = rdT(v, 0), B = rdT(v + 1, 0);
     vec2 ab = B.xy - A.xy;
-    float L2 = max(dot(ab, ab), 1e-12);
-    float tr = dot(p - A.xy, ab) / L2, t = clamp(tr, 0.0, 1.0);
-    vec2 q = A.xy + ab * t;
-    float d0 = length(p - q);
+    float tr = dot(p - A.xy, ab) / max(dot(ab, ab), 1e-12), t = clamp(tr, 0.0, 1.0);
+    float d0 = length(p - A.xy - ab * t);
     if (d0 > 0.012 + 3.0 * pxm) continue;
-    vec4 I = rdT(v, 1), J = rdT(v + 1, 1);
-    float grade = I.x;
-    float hw = (grade > 2.5 ? 19.0 : grade > 1.5 ? 5.0 : grade > 0.5 ? 3.6 : 2.6) * M;
-    vec2 dir = ab / sqrt(L2), nrm = vec2(-dir.y, dir.x);
-    float sm = mix(A.z, B.z, t) / M;
-    float n = dot(p - q, nrm), along = dot(p - q, dir);
-    float w0 = 0.0, dw = 0.0;
-    if (wobOn > 0.0) {
-      // no bends at a cell's centre, where the road meets towns, villages and other roads
-      float env = wobOn * sstep(0.004, 0.03, length(fract(q) - 0.5));
-      float hill = mix(I.y, J.y, t);
-      w0 = rdWob(sm, hill, I.w) * env;
-      dw = (rdWob(sm + 4.0, hill, I.w) - rdWob(sm - 4.0, hill, I.w)) * env / 8.0;
-      w0 *= M;
-    }
-    float across = (n - w0) / sqrt(1.0 + dw * dw);
-    if (tr < 0.0 || tr > 1.0) across = sign(n - w0 + 1e-9) * length(vec2(along, n - w0));
-    float score = abs(across) - max(hw, 0.6 * pxm) - grade * 0.5 * M;   // where roads meet, the bigger road is on top
-    if (score < best) { best = score; bAcross = across; bS = sm; bGrade = grade; bYellow = I.z; }
+    float grade = rdT(v, 1).x;
+    float score = d0 - (grade > 2.5 ? 19.0 : grade > 1.5 ? 5.0 : grade > 0.5 ? 3.6 : 2.6) * M - grade * 0.5 * M;   // where roads meet, the bigger road is on top
+    if (score < best) { best = score; bv = v; bt = t; btr = tr; }
   }
+  if (bv < 0) return vec4(0.0);
+  vec4 A = rdT(bv, 0), B = rdT(bv + 1, 0), I = rdT(bv, 1), J = rdT(bv + 1, 1);
+  vec2 ab = B.xy - A.xy;
+  vec2 dir = normalize(ab), nrm = vec2(-dir.y, dir.x);
+  vec2 q = A.xy + ab * bt;
+  float bS = mix(A.z, B.z, bt) / M, bGrade = I.x, bYellow = I.z;
+  float n = dot(p - q, nrm), along = dot(p - q, dir);
+  float w0 = 0.0, dw = 0.0;
+  if (wobOn > 0.0) {
+    // no bends at a cell's centre, where the road meets towns, villages and other roads
+    float env = wobOn * sstep(0.004, 0.03, length(fract(q) - 0.5));
+    float hill = mix(I.y, J.y, bt);
+    w0 = rdWob(bS, hill, I.w) * env;
+    dw = (rdWob(bS + 4.0, hill, I.w) - rdWob(bS - 4.0, hill, I.w)) * env / 8.0;
+    w0 *= M;
+  }
+  float bAcross = (n - w0) / sqrt(1.0 + dw * dw);
+  if (btr < 0.0 || btr > 1.0) bAcross = sign(n - w0 + 1e-9) * length(vec2(along, n - w0));
+  best = abs(bAcross) - max((bGrade > 2.5 ? 19.0 : bGrade > 1.5 ? 5.0 : bGrade > 0.5 ? 3.6 : 2.6) * M, 0.6 * pxm);
   if (best > 2.0 * pxm) return vec4(0.0);
   int G = int(bGrade + 0.5);
   float a = abs(bAcross) / M;         // metres from the centre line

@@ -19715,6 +19715,8 @@ function glPlans() {
   const full = glShaderSource(), v = (src, defs) => src.replace("#version 300 es", "#version 300 es\n" + defs);
   const plans = [
     { name: "full map", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2")] },
+    // if painting the roads into the land is ever too much for a computer, the full map with the roads drawn on top
+    { name: "full map with roads drawn on top", parts: [v(full, "#define PASS 1\n#define NO_ROADS"), v(full, "#define PASS 2")], noRoads: true },
     { name: "full map with lighter cities", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2\n#define CITY_LITE")] },
     { name: "full map with simpler villages", parts: [v(full, "#define PASS 1\n#define VILLAGE_LITE"), v(full, "#define PASS 2\n#define CITY_LITE\n#define VILLAGE_LITE")] },
   ];
@@ -19778,7 +19780,7 @@ function glInit() {
     GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
     GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
     GLMAP.tex.roadV = mk(11, gl.NEAREST); GLMAP.tex.roadCell = mk(12, gl.NEAREST); GLMAP.tex.roadList = mk(13, gl.NEAREST);   // roads (14f)
-    Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple });
+    Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple, noRoads: !!chosen.plan.noRoads });
     glEachProg(U => {
       gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
       gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
@@ -22768,7 +22770,9 @@ vec3 waterColor(vec2 p, float e) {
 #ifndef VILLAGE_LITE
 ${villageGlsl()}
 #endif
+#if PASS == 1 && !defined(NO_ROADS)
 ${roadGlsl()}
+#endif
 #if PASS == 1
 // pass 1: land, sea, rivers, farms, forests, mountains, mines and harbours (no towns)
 void main() {
@@ -22815,9 +22819,11 @@ void main() {
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
     shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.6 * gVilA) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
+#ifndef NO_ROADS
     // roads over everything in the land, on bridges where they cross rivers (14f)
     vec4 road = roadAt(p, uScale, gRivWater);
     col = mix(col, road.rgb * (0.9 + 0.1 * shade), road.a);
+#endif
     outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }
   outColor = vec4(clamp(satLook(col), 0.0, 1.0), 1.0);
@@ -23188,7 +23194,7 @@ function strokeEdges(c, edges, cs) {
    them into the land (14f); here only those it does not have yet. */
 function drawRoads(c, cs) {
   const sh = buildShapes();
-  const painted = GLMAP.ok && !GLMAP.simple && GLMAP.roadEdges;
+  const painted = GLMAP.ok && !GLMAP.simple && !GLMAP.noRoads && GLMAP.roadEdges;
   const rkey = `${sh.key}|${roadNet().key}|${painted ? GLMAP.roadKey : "-"}`;
   if (sh.roadsKey !== rkey) {
     sh.roadsKey = rkey;
@@ -24927,7 +24933,7 @@ function roadTextures(chains) {
 }
 /* Send the roads to the graphics card when they change. */
 function glUploadRoads() {
-  if (!GLMAP.ok || GLMAP.simple || !game) return;
+  if (!GLMAP.ok || GLMAP.simple || GLMAP.noRoads || !game) return;
   const R = roadNet();
   if (GLMAP.roadKey === R.key) return;
   GLMAP.roadKey = R.key;
@@ -24974,38 +24980,42 @@ vec4 roadAt(vec2 p, float pxm, float water) {
   if (cnt == 0) return vec4(0.0);
   float pxmM = pxm / M;
   float wobOn = 1.0 - sstep(60.0, 200.0, pxmM);   // the bends are only worth working out close up
-  float best = 1e9, bAcross = 0.0, bS = 0.0, bGrade = 0.0, bYellow = 0.0;
-  for (int i = 0; i < 160; i++) {
+  // find the nearest stretch: cheap work only in the loop (Windows turns a shader into DirectX and copies a loop out
+  // once for every turn unless its count comes from a uniform, so uOne keeps it a loop); the bends are worked out
+  // once, for the stretch found
+  float best = 1e9; int bv = -1; float bt = 0.0, btr = 0.0;
+  for (int i = 0; i < 160 * uOne; i++) {
     if (i >= cnt) break;
     int li = off + i;
     int v = int(texelFetch(uRoadList, ivec2(li & 2047, li >> 11), 0).r + 0.5);
     vec4 A = rdT(v, 0), B = rdT(v + 1, 0);
     vec2 ab = B.xy - A.xy;
-    float L2 = max(dot(ab, ab), 1e-12);
-    float tr = dot(p - A.xy, ab) / L2, t = clamp(tr, 0.0, 1.0);
-    vec2 q = A.xy + ab * t;
-    float d0 = length(p - q);
+    float tr = dot(p - A.xy, ab) / max(dot(ab, ab), 1e-12), t = clamp(tr, 0.0, 1.0);
+    float d0 = length(p - A.xy - ab * t);
     if (d0 > 0.012 + 3.0 * pxm) continue;
-    vec4 I = rdT(v, 1), J = rdT(v + 1, 1);
-    float grade = I.x;
-    float hw = (grade > 2.5 ? 19.0 : grade > 1.5 ? 5.0 : grade > 0.5 ? 3.6 : 2.6) * M;
-    vec2 dir = ab / sqrt(L2), nrm = vec2(-dir.y, dir.x);
-    float sm = mix(A.z, B.z, t) / M;
-    float n = dot(p - q, nrm), along = dot(p - q, dir);
-    float w0 = 0.0, dw = 0.0;
-    if (wobOn > 0.0) {
-      // no bends at a cell's centre, where the road meets towns, villages and other roads
-      float env = wobOn * sstep(0.004, 0.03, length(fract(q) - 0.5));
-      float hill = mix(I.y, J.y, t);
-      w0 = rdWob(sm, hill, I.w) * env;
-      dw = (rdWob(sm + 4.0, hill, I.w) - rdWob(sm - 4.0, hill, I.w)) * env / 8.0;
-      w0 *= M;
-    }
-    float across = (n - w0) / sqrt(1.0 + dw * dw);
-    if (tr < 0.0 || tr > 1.0) across = sign(n - w0 + 1e-9) * length(vec2(along, n - w0));
-    float score = abs(across) - max(hw, 0.6 * pxm) - grade * 0.5 * M;   // where roads meet, the bigger road is on top
-    if (score < best) { best = score; bAcross = across; bS = sm; bGrade = grade; bYellow = I.z; }
+    float grade = rdT(v, 1).x;
+    float score = d0 - (grade > 2.5 ? 19.0 : grade > 1.5 ? 5.0 : grade > 0.5 ? 3.6 : 2.6) * M - grade * 0.5 * M;   // where roads meet, the bigger road is on top
+    if (score < best) { best = score; bv = v; bt = t; btr = tr; }
   }
+  if (bv < 0) return vec4(0.0);
+  vec4 A = rdT(bv, 0), B = rdT(bv + 1, 0), I = rdT(bv, 1), J = rdT(bv + 1, 1);
+  vec2 ab = B.xy - A.xy;
+  vec2 dir = normalize(ab), nrm = vec2(-dir.y, dir.x);
+  vec2 q = A.xy + ab * bt;
+  float bS = mix(A.z, B.z, bt) / M, bGrade = I.x, bYellow = I.z;
+  float n = dot(p - q, nrm), along = dot(p - q, dir);
+  float w0 = 0.0, dw = 0.0;
+  if (wobOn > 0.0) {
+    // no bends at a cell's centre, where the road meets towns, villages and other roads
+    float env = wobOn * sstep(0.004, 0.03, length(fract(q) - 0.5));
+    float hill = mix(I.y, J.y, bt);
+    w0 = rdWob(bS, hill, I.w) * env;
+    dw = (rdWob(bS + 4.0, hill, I.w) - rdWob(bS - 4.0, hill, I.w)) * env / 8.0;
+    w0 *= M;
+  }
+  float bAcross = (n - w0) / sqrt(1.0 + dw * dw);
+  if (btr < 0.0 || btr > 1.0) bAcross = sign(n - w0 + 1e-9) * length(vec2(along, n - w0));
+  best = abs(bAcross) - max((bGrade > 2.5 ? 19.0 : bGrade > 1.5 ? 5.0 : bGrade > 0.5 ? 3.6 : 2.6) * M, 0.6 * pxm);
   if (best > 2.0 * pxm) return vec4(0.0);
   int G = int(bGrade + 0.5);
   float a = abs(bAcross) / M;         // metres from the centre line
@@ -33925,7 +33935,7 @@ function restore(saved) {
 Object.assign(ICONS, { save: giSvg("delapouite/save"), cloud: giSvg("delapouite/cloud-upload") });
 const SAVE_FORMAT = "drawn-borders-save";
 const SAVE_VERSION = 6;                         // version 5 saves (before version 18 of the game) load as they are
-const GAME_BUILD = 39;
+const GAME_BUILD = 39.1;
 const LOCAL_KEYS = { auto: SAVE_KEY, earlier: "drawn-borders/save-earlier-raw", rescued: "drawn-borders/save-rescued", slots: "drawn-borders/slots", slot: "drawn-borders/slot/" };
 const SAVE_LIMITS = { named: 10, earlier: 3, chunk: 200000 };
 const SAVES = {

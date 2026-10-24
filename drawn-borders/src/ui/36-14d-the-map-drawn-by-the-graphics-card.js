@@ -37,6 +37,8 @@ function glPlans() {
   const full = glShaderSource(), v = (src, defs) => src.replace("#version 300 es", "#version 300 es\n" + defs);
   const plans = [
     { name: "full map", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2")] },
+    // if painting the roads into the land is ever too much for a computer, the full map with the roads drawn on top
+    { name: "full map with roads drawn on top", parts: [v(full, "#define PASS 1\n#define NO_ROADS"), v(full, "#define PASS 2")], noRoads: true },
     { name: "full map with lighter cities", parts: [v(full, "#define PASS 1"), v(full, "#define PASS 2\n#define CITY_LITE")] },
     { name: "full map with simpler villages", parts: [v(full, "#define PASS 1\n#define VILLAGE_LITE"), v(full, "#define PASS 2\n#define CITY_LITE\n#define VILLAGE_LITE")] },
   ];
@@ -100,7 +102,7 @@ function glInit() {
     GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
     GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
     GLMAP.tex.roadV = mk(11, gl.NEAREST); GLMAP.tex.roadCell = mk(12, gl.NEAREST); GLMAP.tex.roadList = mk(13, gl.NEAREST);   // roads (14f)
-    Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple });
+    Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple, noRoads: !!chosen.plan.noRoads });
     glEachProg(U => {
       gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
       gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
@@ -3090,7 +3092,9 @@ vec3 waterColor(vec2 p, float e) {
 #ifndef VILLAGE_LITE
 ${villageGlsl()}
 #endif
+#if PASS == 1 && !defined(NO_ROADS)
 ${roadGlsl()}
+#endif
 #if PASS == 1
 // pass 1: land, sea, rivers, farms, forests, mountains, mines and harbours (no towns)
 void main() {
@@ -3137,9 +3141,11 @@ void main() {
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
     shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.6 * gVilA) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
+#ifndef NO_ROADS
     // roads over everything in the land, on bridges where they cross rivers (14f)
     vec4 road = roadAt(p, uScale, gRivWater);
     col = mix(col, road.rgb * (0.9 + 0.1 * shade), road.a);
+#endif
     outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }
   outColor = vec4(clamp(satLook(col), 0.0, 1.0), 1.0);
@@ -3510,7 +3516,7 @@ function strokeEdges(c, edges, cs) {
    them into the land (14f); here only those it does not have yet. */
 function drawRoads(c, cs) {
   const sh = buildShapes();
-  const painted = GLMAP.ok && !GLMAP.simple && GLMAP.roadEdges;
+  const painted = GLMAP.ok && !GLMAP.simple && !GLMAP.noRoads && GLMAP.roadEdges;
   const rkey = `${sh.key}|${roadNet().key}|${painted ? GLMAP.roadKey : "-"}`;
   if (sh.roadsKey !== rkey) {
     sh.roadsKey = rkey;
