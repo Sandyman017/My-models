@@ -614,6 +614,7 @@ function confirmHtml(q) {
   if (q.dFood > 0.01) lines.push(`Food for <span class="tone-good">${q.dFood.toFixed(2)}M</span> more people, so towns can grow`);
   if (q.famineRelief > 0.01) lines.push(`Ends the food shortage for <span class="tone-good">${q.famineRelief.toFixed(2)}M</span> people`);
   if (q.kind === "road" && q.trade !== undefined) lines.push(`A trade road to the ${escapeHtml(nameOf(game, q.trade))}: goods can flow between you, opening imports, exports and a bigger market for both.${q.partnerCost > 0.05 ? ` They build the ${fmtMoney(q.partnerCost)} stretch inside their land.` : ""}`);
+  else if (q.kind === "road" && q.access && villageAt(game, q.toCell) && villageAt(game, q.toCell).status !== "ruin") lines.push(`Reaches the village of ${escapeHtml(villageAt(game, q.toCell).name)}: on a road it grows faster (+12%), traders reach it, and one day it can ask for a town charter.`);
   else if (q.kind === "road" && q.access) lines.push(`Reaches ${escapeHtml(siteOrDepositName(world, game, PLAYER, q.toCell))}. Mines, camps and harbors need a road to a town: it brings the workers in and carries what they produce out.`);
   else if (q.kind === "road") lines.push(`${q.newEdges.length} new road segments. Joined towns share food, materials and one market.`);
   if (q.kind === "survey") lines.push(`Geologists map the ground about 2 cells around this spot. They measure the deposits you know of exactly (how much, and how rich) and may find deposits hidden under the surface.`);

@@ -337,6 +337,8 @@ function siteOrDepositName(w, g, nid, cell) {
   const t = depositType(w, cell);
   const near = nearestCity(g, cell, nid);
   if (t && knowsDeposit(w, g, nid, cell)) return `the ${RES[t].label.toLowerCase()} deposit${near ? ` near ${near.name}` : ""}`;
+  const v = (g.villages || []).find(x => x.cell === cell && x.status !== "ruin");
+  if (v) return v.name;
   return near ? `a spot near ${near.name}` : "the site";
 }
 function siteKindFor(w, g, nid, cell) {

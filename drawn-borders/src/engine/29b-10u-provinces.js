@@ -19,7 +19,9 @@ const PROV = {
 };
 const VILLAGE_HEADS = ["Ash", "Birch", "Brook", "Clay", "Elm", "Fern", "Glen", "Hay", "Holt", "Ivy", "Kin", "Lark", "Mill", "Moss", "Oak", "Pen", "Reed", "Rye", "Stone", "Thorn", "Wil", "Wold", "Yew", "Bar", "Cross", "Dun", "Fair", "Gold", "Har", "Lang", "Mar", "Nor", "Ock", "Sand", "Tarn", "Wick"];
 const VILLAGE_TAILS = ["by", "ham", "ley", "well", "thorpe", "field", "brook", "stead", "wick", "cote", "dale", "ford", "hurst", "moor", "worth", "bridge", "holme", "combe"];
-const VILLAGE_KINDS = { farm: "Farming village", mine: "Mining village", fish: "Fishing village" };
+const VILLAGE_KINDS = { farm: "Farming village", mine: "Mining village", fish: "Fishing village", market: "Market village" };
+const VILLAGE_NAMES_DRY = { heads: ["Ain", "Bir", "Dar", "Wad", "Kas", "Tal", "Qal", "Ras", "Suk", "Zar", "Hab", "Mer", "Sal", "Tam", "Dun", "Kel", "Ada", "Oum"], tails: ["ra", "ab", "din", "mar", "sir", "oun", "ash", "kan", "zir", "oba", "ane", "ech", "ila", "out", "ara"] };
+const VILLAGE_NAMES_WET = { heads: ["Bar", "Chan", "Dhan", "Gop", "Ram", "Shan", "Sun", "Kal", "Mon", "Pala", "Tir", "Bel", "Kor", "Ana", "Hari", "Lak", "Nal", "Sar"], tails: ["pur", "ganj", "nagar", "gaon", "bari", "hat", "kot", "dia", "pal", "bagh", "nadi", "tola", "khali"] };
 
 function provList(g, nid) { return (g.provinces || []).filter(p => p.owner === nid); }
 function provById(g, id) { return id >= 0 && g.provinces ? g.provinces.find(p => p.id === id) || null : null; }
@@ -352,12 +354,15 @@ function provinceStats(w, g, nid, econ) {
 }
 
 /* ---------- Villages: where the countryside lives ---------- */
+/* Village names sound like their land (10w): dry lands, wet green lands and the temperate middle each have their own. */
 function villageName(w, g, cell, taken) {
+  const m = moistureAt(w.seed, cellX(cell) + 0.5, cellY(cell) + 0.5);
+  const set = m < 0.34 ? VILLAGE_NAMES_DRY : m > 0.5 ? VILLAGE_NAMES_WET : { heads: VILLAGE_HEADS, tails: VILLAGE_TAILS };
   for (let k = 0; k < 40; k++) {
-    const n = VILLAGE_HEADS[Math.floor(hash2(cell, k, w.seed + 501) * VILLAGE_HEADS.length)] + VILLAGE_TAILS[Math.floor(hash2(cell, k, w.seed + 502) * VILLAGE_TAILS.length)];
+    const n = set.heads[Math.floor(hash2(cell, k, w.seed + 501) * set.heads.length)] + set.tails[Math.floor(hash2(cell, k, w.seed + 502) * set.tails.length)];
     if (!taken.has(n)) return n;
   }
-  return `${VILLAGE_HEADS[cell % VILLAGE_HEADS.length]}${VILLAGE_TAILS[cell % VILLAGE_TAILS.length]} ${cell}`;
+  return `${set.heads[cell % set.heads.length]}${set.tails[cell % set.tails.length]} ${cell}`;
 }
 /* Villages are worked out by "places that live" (10w); this keeps the old name for the callers. */
 function updateVillages(w, g) { seasonVillages(w, g, null); }

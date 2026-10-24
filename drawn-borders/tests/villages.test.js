@@ -8,7 +8,8 @@ const { engineSource } = require("../build.js");
 
 const worlds = Number(process.argv[2] || 2), seasons = Number(process.argv[3] || 12);
 const expose = "\n;globalThis.E = { generateWorld, setupGame, runSeason, claimFromPath, mulberry32, GRID_W, GRID_H, PLAYER, N_CELLS, edgeKey, dist, cellX, cellY, idx, inBounds, isLand, "
-  + "hamletsOf, cellSettlement, villageStats, siteReport, charterCheck, ensureProvinces, decide, VIL, VILLAGE_PLANS, SITE_FEATURES, cityStay, nearestCity, cityModsActive, villMeta };";
+  + "hamletsOf, cellSettlement, villageStats, siteReport, charterCheck, ensureProvinces, decide, VIL, VILLAGE_PLANS, SITE_FEATURES, cityStay, nearestCity, cityModsActive, villMeta, "
+  + "DECISIONS, decisionCtx, makeDecision, VILLAGE_DECISIONS, orderVillageWork, villageWorkCheck, VILLAGE_WORK_ORDER, villageFileLines, effectText };";
 const ctx = vm.createContext({ console, Math, Date, JSON, Map, Set, structuredClone });
 vm.runInContext(engineSource() + expose, ctx, { filename: "engine.js" });
 const E = ctx.E;
@@ -173,6 +174,35 @@ for (let wi = 0; wi < worlds; wi++) {
       break;
     }
 
+    // what a government can do for its villages, and what happens to them
+    const owner = E.PLAYER;
+    const mineV = () => game.villages.filter(z => game.owner[z.cell] === owner && z.status !== "ruin");
+    let works = 0;
+    for (const z of mineV()) for (const key of E.VILLAGE_WORK_ORDER) {
+      const ch = E.villageWorkCheck(world, game, owner, z, key);
+      if (!ch.ok) continue;
+      game.nations[owner].treasury += ch.cost + 1;
+      const r = E.orderVillageWork(world, game, owner, z.id, key);
+      check(r.ok && z.works && z.works[key] === game.turn, `${key} for ${z.name} did not happen (${r.reason})`);
+      works++;
+      if (works >= 3) break;
+    }
+    const events = [];
+    for (const key of Object.keys(E.VILLAGE_DECISIONS)) {
+      const c = E.decisionCtx(world, game, owner, E.mulberry32(seed + key.length));
+      const f = E.DECISIONS[key].find(c);
+      if (!f) continue;
+      const d = E.makeDecision(c, key, f);
+      check(d && d.options.length >= 2 && d.villageId, `${key}: no proper question`);
+      for (const o of d.options) for (const e of o.effects) check(typeof E.effectText(game, e, owner).text === "string", `${key}: an effect has no words`);
+      game.nations[owner].treasury += 5;
+      E.decide(world, game, d, d.options[0].id, false);
+      events.push(key);
+    }
+    E.runSeason(world, game, {});
+    invariants(world, game, "after works and events");
+    check(Array.isArray(E.villageFileLines(world, game, owner)), "the minister knows nothing of the villages");
+
     // an old save: villages from version 38 (no ids, looks, stories), no village book, towns without sites
     const old = JSON.parse(JSON.stringify(game));
     for (const k of ["prov", "irrigated", "owner", "pop", "forest", "fish", "depLeft", "occ", "cleared"]) if (game[k] && game[k].constructor !== Array) old[k] = game[k].slice ? game[k].slice() : game[k];
@@ -188,7 +218,7 @@ for (let wi = 0; wi < worlds; wi++) {
     const saved = JSON.stringify(game);
     check(!saved.includes('"_vroad"') && !saved.includes('"_vctx"'), "working copies leaked into the save");
     console.log(`world ${seed}: ok · villages ${before} → ${game.villages.filter(z => z.status !== "ruin").length} (${game.villages.filter(z => z.status === "ruin").length} ruins) · markets ${markets} · `
-      + `boom ${v.name} ${Math.round(popBoom * 1e6)} → ${Math.round(popGrown * 1e6)} then ${becameTown ? "a town (charter)" : ruinSeen ? "ruins" : "a farm village"} · ruins ${ruinsTested ? "and resettling" : "not testable"} · charter ${charterTested ? "granted" : "not testable here"} · ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+      + `boom ${v.name} ${Math.round(popBoom * 1e6)} → ${Math.round(popGrown * 1e6)} then ${becameTown ? "a town (charter)" : ruinSeen ? "ruins" : "a farm village"} · ruins ${ruinsTested ? "and resettling" : "not testable"} · charter ${charterTested ? "granted" : "not testable here"} · works ${works} · events ${events.length ? events.join(", ") : "none fitted"} · ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   } catch (e) {
     failed++;
     console.error(`world ${seed}: FAILED\n${e.stack}`);

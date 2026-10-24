@@ -553,6 +553,8 @@ function ministerFile(w, g, nid, key, table) {
       return `${c.name}${c.capital ? " (capital)" : ""}: ${cityClass(c.imp).label.toLowerCase()}, importance ${c.imp || "?"}${c.rankW ? ` (${cityOrd(c.rankW)} in the world)` : ""}${(c.roles || []).filter(k => CITY_ROLES[k] && k !== "capital").length ? `; ${(c.roles || []).filter(k => CITY_ROLES[k] && k !== "capital").slice(0, 3).map(k => CITY_ROLES[k].label.toLowerCase()).join(", ")}` : ""}; ${bPeople(r.pop)} people, unemployment ${pct1(townURate(r))}, output ${bMoney(r.gdp || 0)}, farmland for ${pct(r.foodRatio || 0)} of its people; mood ${Math.round(c.mood ?? 55)}${moodWhy ? ` (${moodWhy})` : ""}${c.origin !== c.owner ? `; loyalty ${Math.round(c.loyalty ?? 92)} (it was the ${nameOf(g, c.origin)}'s)` : ""}${c.focus && FOCI[c.focus] ? `; program: ${FOCI[c.focus].label.toLowerCase()}` : ""}${net && net.capital ? "" : ", CUT OFF from the capital"}${c.port ? ", harbor" : ""}${occ ? `, OCCUPIED by the ${nameOf(g, g.occ[c.cell])}` : ""}.`;
     }));
     const lostT = g.cities.filter(c => c.origin === nid && c.owner !== nid);
+    const vl = villageFileLines(w, g, nid);
+    if (vl.length) sec("Our villages", vl);
     sec("Interest groups", groupFileLines(w, g, n));
     sec("People and work", peopleFileLines(w, g, n, econ));
     if (lostT.length) sec("Towns we have lost", lostT.map(c => `${c.name}, now the ${nameOf(g, c.owner)}'s: its people's loyalty to them is ${Math.round(c.loyalty ?? 92)}${(c.loyalty ?? 92) < CITY.integrate ? "; we have a just cause to win it back" : "; they have come to feel at home there"}.`));

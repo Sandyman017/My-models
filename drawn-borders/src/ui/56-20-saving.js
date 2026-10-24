@@ -16,6 +16,7 @@ function serializeGame(g) {
     story: g.story, decisions: g.decisions, amb: g.amb, works: g.works, firsts: g.firsts, era: g.era || 0, intel: g.intel || {},
     sea: g.sea || null, trade: g.trade || null, opening: g.opening || null, cabSalt: g.cabSalt, topCity: g.topCity, depth: 1,
     prov: g.prov ? Array.from(g.prov) : null, provinces: g.provinces || null, provNext: g.provNext || 0, villages: g.villages || null,
+    villMeta: g.villMeta || null,   // the village book (v39): next id, crossroads' ages, charters
   };
 }
 function deserializeGame(s) {
@@ -47,6 +48,7 @@ function deserializeGame(s) {
   // provinces and villages (v38); saves from before get them in restore (ensureProvinces)
   if (Array.isArray(s.prov) && s.prov.length === N_CELLS && Array.isArray(s.provinces)) { g.prov = Int16Array.from(s.prov); g.provinces = s.provinces; g.provNext = s.provNext || 0; }
   if (Array.isArray(s.villages)) g.villages = s.villages;
+  if (s.villMeta && typeof s.villMeta === "object") g.villMeta = s.villMeta;
   for (const c of g.cities) if (c.port && !c.portLvl) c.portLvl = 1;
   if (g.assembly) for (const t of g.assembly.topics) for (const m of t.msgs) if (m.pending) { m.pending = false; if (!m.text) m.text = m.fallback; }
   for (const L of g.letters) if (L.status !== "done") { L.status = "done"; L.reply = L.reply || "(The reply was lost when the page closed. Their decision still stands.)"; }

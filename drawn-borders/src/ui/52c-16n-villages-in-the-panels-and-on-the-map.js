@@ -168,12 +168,23 @@ function villageDetailHtml(v) {
       <p class="small">${ch.ok ? `${escapeHtml(v.name)} is big enough and well placed to ask for a town charter; it will ask when the time comes (one village at a time, every ${VIL.charterCool / 4} years at most).` : `To ask for a town charter it needs ${fmtCount(VIL.charterPop * 1e6)} people, a site of ${VIL.charterScore} or better, a road, and no town within ${BUILD.townMinSpacing} cells.`}${asked}</p>
       ${ch.ok ? "" : `<ul class="factors">${ch.why.map(x => `<li><span class="muted">${escapeHtml(x)}</span></li>`).join("")}</ul>`}</div>`;
   }
+  let works = "";
+  if (own === PLAYER) {
+    const done = Object.keys(v.works || {}).filter(k => VILLAGE_WORKS[k]);
+    const opts = VILLAGE_WORK_ORDER.map(k => ({ k, ch: villageWorkCheck(world, game, PLAYER, v, k) })).filter(x => x.ch.ok);
+    if (done.length || opts.length) works = `<div class="block"><span class="eyebrow">What you can do here</span>
+      ${done.length ? `<p class="small">Done: ${done.map(k => `${escapeHtml(VILLAGE_WORKS[k].done)} (${seasonLabel(v.works[k])})`).join(", ")}.</p>` : ""}
+      ${opts.map(x => `<p class="small"><b>${escapeHtml(VILLAGE_WORKS[x.k].label)}</b>: ${escapeHtml(VILLAGE_WORKS[x.k].text)}</p>
+        <div class="actions"><button class="btn small" type="button" data-action="village-work" data-vid="${v.id}" data-k="${x.k}">${escapeHtml(VILLAGE_WORKS[x.k].label)} · ${fmtMoneyFine(x.ch.cost)}</button></div>`).join("")}
+      ${!roadSites(world, game).deg[v.cell] && v.status !== "ruin" ? `<div class="actions"><button class="btn small" type="button" data-action="village-road" data-vid="${v.id}">Build a road to ${escapeHtml(v.name)}</button></div><p class="muted small">A road lets it grow (+12%), opens it to traders and is needed for a town charter.</p>` : ""}
+    </div>`;
+  }
   const story = `<details class="block cf-hist" open><summary>The story of ${escapeHtml(v.name)}</summary>
       ${villageTrendSvg(v)}
       ${(v.log || []).length ? `<ul class="news">${v.log.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span><span class="num muted small">${seasonLabel(x.t)}</span><br>${escapeHtml(x.text)}</span></li>`).join("")}</ul>` : ""}
     </details>`;
   const actions = `<div class="actions"><button class="btn small" type="button" data-action="village-look" data-vid="${v.id}">See it up close</button>${town ? `<button class="btn small" type="button" data-city-pick="${town.id}">${escapeHtml(town.name)}</button>` : ""}${n && own !== PLAYER && n.alive ? `<button class="btn small" type="button" data-action="nation-view" data-nid="${own}">About the ${escapeHtml(n.name)}</button>` : ""}</div>`;
-  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${story}${actions}`;
+  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${works}${story}${actions}`;
 }
 /* Who lives where in a cell, for the land's own page. */
 function cellSettlementHtml(i) {
@@ -234,6 +245,20 @@ function lookAtVillage(v, mpp) {
 function selectVillage(id) { ui.selectedVillage = id; ui.selectedCity = null; ui.selectedCell = -1; ui.tab = "selected"; }
 Object.assign(ACTIONS, {
   "village-pick": el => { const v = villageById(game, Number(el.dataset.vid)); if (!v) return; selectVillage(v.id); centerOnCell(v.cell, Math.max(view.zoom, 3)); },
+  "village-work": el => {
+    const v = villageById(game, Number(el.dataset.vid));
+    if (!v) return;
+    const r = orderVillageWork(world, game, PLAYER, v.id, el.dataset.k);
+    if (!r.ok) { flashHint(r.reason); return; }
+    addChronicle(game, r.text, "good", PLAYER);
+    VDRAW.key = null; bumpMap(); saveGame();
+  },
+  "village-road": el => {
+    const v = villageById(game, Number(el.dataset.vid));
+    if (!v) return;
+    const q = bestAccessRoad(world, game, PLAYER, v.cell, economies()[PLAYER]);
+    if (q && q.ok) { ui.pending = q; ui.tab = "realm"; } else flashHint((q && q.reason) || "No road through your own land reaches it.");
+  },
   "village-look": el => { const v = villageById(game, Number(el.dataset.vid)); if (!v) return; lookAtVillage(v, Math.max(1.5, villageRadius(v.pop, v.plan) * 50000 / 160)); },
 });
 
