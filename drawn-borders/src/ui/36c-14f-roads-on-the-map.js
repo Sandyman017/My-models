@@ -187,39 +187,6 @@ function roadPointAt(a, b, p) {
   return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t];
 }
 
-/* The turn of a town's main avenues (the angle the painter starts them from, 14d) so that they meet the roads that
-   come into the town: every half degree is tried, and the one where the roads (bigger ones count more) lie closest
-   to an avenue wins. A town without roads keeps its own random turn. */
-function townRoadTurn(t) {
-  const hh = townHash(t.id), base = hh * 43.98;
-  const city = game && game.cities.find(c => c.id === t.id);
-  if (!city || !world) return base;
-  const cx = t.gx ?? t.x, cy = t.gy ?? t.y, dirs = [];
-  for (const ch of roadNet().chains) {
-    const ends = [];
-    if (ch.cells[0] === city.cell) ends.push(ch.pts);
-    if (ch.cells[ch.cells.length - 1] === city.cell) ends.push(ch.pts.slice().reverse());
-    for (const pts of ends) {
-      // where the road reaches the edge of the town
-      const q = pts.find(p => Math.hypot(p[0] - cx, p[1] - cy) >= t.r) || pts[pts.length - 1];
-      dirs.push({ ang: Math.atan2(q[1] - cy, q[0] - cx), w: 1 + ch.grade });
-    }
-  }
-  if (!dirs.length) return base;
-  const N = 5 + Math.floor(hh * 4);
-  // the avenues' directions at the town's edge, as the painter draws them (artAng at d = R)
-  const art = (a0, k) => a0 + k * 2 * Math.PI / N + 0.15 * Math.sin(k * 1.7 + a0) + 0.12 * Math.sin(5 + k * 2.1);
-  const off = a => Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
-  let best = base, bestCost = Infinity;
-  for (let i = 0; i < 720; i++) {
-    const a0 = base + i * Math.PI / 360;
-    let cost = 0;
-    for (const d of dirs) { let m = Infinity; for (let k = 0; k < N; k++) m = Math.min(m, off(d.ang - art(a0, k))); cost += d.w * m * m; }
-    if (cost < bestCost - 1e-9) { bestCost = cost; best = a0; }
-  }
-  return best;
-}
-
 /* The roads packed for the graphics card: two texels a point (x, y, distance along, -; grade, hilliness, yellow
    centre line, random number), and a list of stretches for every map cell (with a margin for bends and far-out lines). */
 function roadTextures(chains) {
@@ -266,7 +233,8 @@ function glUploadRoads() {
 /* The roads' own small program for the graphics card. It runs after the land (and before the towns): it reads the
    land picture and the river picture the land pass left, and paints the roads over the land, on bridges where they
    cross rivers. It is kept apart from the land program on purpose: Windows turns every shader into DirectX, and a
-   program as big as the land one with the roads inside it was too much for some graphics cards (v39.1). */
+   program as big as the land one with the roads inside it was too much for some graphics cards (v39.1), and the land
+   program must stay exactly as it is, letter for letter: a computer keeps the prepared program and reuses it (v39.3). */
 function roadShaderSource() {
   const full = glShaderSource();
   const cut = (from, to) => {
@@ -282,10 +250,13 @@ uniform float uScale;     // cells per pixel
 uniform float uH;         // canvas height in pixels
 uniform int uOne;         // always 1 (keeps loops loops on Windows)
 uniform sampler2D uFrame; // the land as the land pass drew it
-uniform sampler2D uRiv;   // river water (x) and land (z) from the land pass
+uniform sampler2D uRiv;   // river water (x) from the land pass
+uniform int uSeed;        // the world, for the coastline
+uniform float uSea;
 layout(location = 0) out vec4 outColor;
 ${cut("float hash2(int ix", "// the game's continent")}
 ${cut("// what a satellite camera does", "const vec3 ROCK")}
+${cut("float elevationAt(vec2 p) {", "// relief on top of the coastline height")}
 const float M = 1.0 / 50000.0;          // one metre, in map cells
 ${roadGlsl()}
 void main() {
@@ -295,9 +266,9 @@ void main() {
   vec2 p = uOrigin + vec2(gl_FragCoord.x, uH - gl_FragCoord.y) * uScale;
   if (p.x < 1.0 || p.y < 1.0 || p.x >= 95.0 || p.y >= 63.0) return;
   vec4 rv = texelFetch(uRiv, fc, 0);
-  if (rv.z < 0.5) return;   // the sea
   vec4 road = roadAt(p, uScale, rv.x);
-  if (road.a > 0.0) outColor = vec4(mix(base.rgb, clamp(satLook(road.rgb), 0.0, 1.0), road.a), 1.0);
+  if (road.a <= 0.0 || coastE(p) <= uSea) return;   // no road out over the sea
+  outColor = vec4(mix(base.rgb, clamp(satLook(road.rgb), 0.0, 1.0), road.a), 1.0);
 }
 `;
 }

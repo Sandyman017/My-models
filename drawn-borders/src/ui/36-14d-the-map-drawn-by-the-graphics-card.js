@@ -8,23 +8,31 @@
    ===================================================================== */
 const GLMAP = { ok: false, tried: false, gl: null, canvas: null, prog: null, U: {}, tex: {}, landKey: null, nTowns: 0, nPits: 0, lastDraw: 0, low: false, timer: 0, villages: null, qIdle: 1, qMove: 0.5 };
 const GL_RIVER_W = [0.0012, 0.0028, 0.006, 0.012];   // real river widths in cells (60 m to 600 m)
-/* Compile one map painter program in the given context. Returns { prog } or { err }. */
+/* Hand one map painter program to the graphics card: compile and link, without waiting for the answer. */
+function glStartProgram(gl, src) {
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, "#version 300 es\nin vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }");
+  gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, src);
+  gl.compileShader(fs);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  return { prog, fs };
+}
+/* Whether a program the graphics card has finished is usable: { prog }, or { err, crash }. A real mistake in a shader
+   always comes with a message; no message (or a lost context) means the graphics card itself stopped. */
+function glProgramResult(gl, b) {
+  if (gl.isContextLost()) return { err: "the graphics card stopped (context lost)", crash: true };
+  if (gl.getProgramParameter(b.prog, gl.LINK_STATUS)) return { prog: b.prog };
+  const bad = !gl.getShaderParameter(b.fs, gl.COMPILE_STATUS);
+  const m = bad ? gl.getShaderInfoLog(b.fs) : gl.getProgramInfoLog(b.prog);
+  return { err: (bad ? "compile: " : "link: ") + (m ? m.slice(0, 300) : "no message: the graphics card stopped"), crash: !m || gl.isContextLost() };
+}
+/* Compile one map painter program and wait for it. Returns { prog } or { err }. */
 function glBuild(gl, src) {
-  try {
-    const vs = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vs, "#version 300 es\nin vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }");
-    gl.compileShader(vs);
-    const fs = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fs, src);
-    gl.compileShader(fs);
-    if (gl.isContextLost()) return { err: "the graphics card stopped (context lost)" };
-    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return { err: "compile: " + (gl.getShaderInfoLog(fs) || "no message").slice(0, 300) };
-    const prog = gl.createProgram();
-    gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-    if (gl.isContextLost()) return { err: "the graphics card stopped (context lost)" };
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return { err: "link: " + (gl.getProgramInfoLog(prog) || "no message").slice(0, 300) };
-    return { prog };
-  } catch (e) { return { err: "error: " + (e && e.message || e) }; }
+  try { const r = glProgramResult(gl, glStartProgram(gl, src)); return r.err ? { err: r.err } : { prog: r.prog }; }
+  catch (e) { return { err: "error: " + (e && e.message || e) }; }
 }
 const MAPKEY = { fail: "drawn-borders-map-fail", trying: "drawn-borders-map-trying" };
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -43,140 +51,197 @@ function glPlans() {
   if (typeof glShaderSourceSafe === "function") plans.push({ name: "the simpler map from version 26", parts: [glShaderSourceSafe()], simple: true });
   return plans;
 }
+/* Get the map painter ready. Every program is handed to the graphics card and, where the browser can (the
+   KHR_parallel_shader_compile extension), made ready in the background while the game goes on with the old tile map;
+   the full map switches on when it is ready. On Windows every program is first turned into DirectX, and the land
+   program takes long the first time: waiting for it in one go kept the browser's graphics process busy until the
+   browser stopped it (v39.1–39.2 on Maz's PC). A plan that fails is remembered and the next, lighter one is tried;
+   when the graphics card itself stops, only the plan in hand is blamed and the next one starts on a fresh context.
+   Returns whether the full map is ready now. */
 function glInit() {
   if (GLMAP.tried) return GLMAP.ok;
   GLMAP.tried = true;
   try {
     if (typeof document === "undefined" || window.__noWebGL || typeof glShaderSource !== "function") { GLMAP.note = "old tile map (WebGL not used)"; return false; }
-    let cv = null, gl = null;
-    const fresh = () => {
-      cv = document.createElement("canvas");
-      gl = cv.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
-      return gl;
-    };
-    if (!fresh()) { GLMAP.note = "old tile map: the browser gave no WebGL 2 (switched off, or blocked after a graphics crash)"; return false; }
     const build = String(GAME_BUILD);
     // what failed on this computer before (or stopped the page while it was being prepared) is not tried again;
-    // every failure is kept (not only the last one), so the next start goes on to the next, lighter map
+    // every failure is kept, so the next start goes on to the next, lighter map
     const failed = new Set((lsGet(MAPKEY.fail) || "").split(",").filter(f => f.startsWith(build + ":")));
     const tryingBefore = lsGet(MAPKEY.trying);
     if (tryingBefore && tryingBefore.startsWith(build + ":")) failed.add(tryingBefore);
-    const fail = key => { failed.add(key); lsSet(MAPKEY.fail, [...failed].join(",")); };
     lsSet(MAPKEY.fail, [...failed].join(","));
     lsSet(MAPKEY.trying, null);
-    const retry = !!window.__retryMap;
-    const notes = GLMAP.restartNote ? [GLMAP.restartNote] : [];
-    let chosen = null;
-    for (const [pi, plan] of glPlans().entries()) {
-      const key = build + ":" + pi;
-      if (failed.has(key) && !retry) { notes.push(plan.name + ": skipped (failed here before)"); continue; }
-      // after a graphics crash the old context is dead: start again on a new one
-      if (gl.isContextLost() && !fresh()) { notes.push("no WebGL 2 after the graphics card stopped"); break; }
-      lsSet(MAPKEY.trying, key);
-      const progs = [];
-      let err = null;
-      for (const [k, src] of plan.parts.entries()) {
-        const r = glBuild(gl, src);
-        if (r.err) { err = (plan.parts.length > 1 ? `part ${k + 1}: ` : "") + r.err; break; }
-        progs.push(r.prog);
-      }
+    const S = { build, failed, plans: glPlans(), i: 0, retry: !!window.__retryMap, t0: performance.now(), async: false,
+      notes: GLMAP.restartNote ? [GLMAP.restartNote] : [], gen: (GLMAP.gen = (GLMAP.gen || 0) + 1) };
+    S.fail = key => { failed.add(key); lsSet(MAPKEY.fail, [...failed].join(",")); };
+    if (!glFreshContext(S)) { GLMAP.note = "old tile map: the browser gave no WebGL 2 (switched off, or blocked after a graphics crash)"; return false; }
+    GLMAP.preparing = true;
+    GLMAP.note = "the full map is being prepared (version " + build + ")";
+    // until it is ready, the old tile map is shown: it goes no closer than 500%
+    ZOOM.max = 5;
+    if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
+    glNextPlan(S);
+    return GLMAP.ok;
+  } catch (e) { console.warn("map: WebGL 2 not used", e); GLMAP.note = "Map error: " + (e && e.message || e); GLMAP.ok = false; GLMAP.preparing = false; return false; }
+}
+function glFreshContext(S) {
+  S.cv = document.createElement("canvas");
+  S.gl = S.cv.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
+  if (!S.gl) return null;
+  S.par = S.gl.getExtension("KHR_parallel_shader_compile");
+  try { const dbg = S.gl.getExtension("WEBGL_debug_renderer_info"); S.gpu = String(S.gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : S.gl.RENDERER) || ""); } catch (e) { S.gpu = ""; }
+  return S.gl;
+}
+/* Wait for programs the graphics card is preparing, without blocking it; then done(), or lost() if it stopped. */
+function glAwait(S, parts, done, lost) {
+  if (!S.par) return done();   // no background preparation here: the browser waits for them in done()
+  const step = () => {
+    if (S.gen !== GLMAP.gen) return;   // a newer start took over
+    try {
+      if (S.gl.isContextLost()) return lost();
+      if (!parts.every(b => S.gl.getProgramParameter(b.prog, S.par.COMPLETION_STATUS_KHR))) { S.async = true; setTimeout(step, 50); return; }
+    } catch (e) { console.warn("map:", e); return lost(); }
+    done();
+  };
+  step();
+}
+/* Try the plans in order, from the one in hand. */
+function glNextPlan(S) {
+  for (; S.i < S.plans.length; S.i++) {
+    const plan = S.plans[S.i], key = S.build + ":" + S.i;
+    if (S.failed.has(key) && !S.retry) { S.notes.push(plan.name + ": skipped (failed here before)"); continue; }
+    lsSet(MAPKEY.trying, key);
+    let parts;
+    try { parts = plan.parts.map(src => glStartProgram(S.gl, src)); } catch (e) { lsSet(MAPKEY.trying, null); S.notes.push(plan.name + " could not start (" + (e && e.message || e) + ")"); S.fail(key); continue; }
+    const crashed = what => { lsSet(MAPKEY.trying, null); S.notes.push(plan.name + " could not start (" + what + ")"); S.fail(key); S.i++; glAfterCrash(S); };
+    glAwait(S, parts, () => {
       lsSet(MAPKEY.trying, null);
-      if (err) {
-        notes.push(plan.name + " could not start (" + err + ")");
-        console.warn("map:", plan.name, err);
-        fail(key);
-        continue;
-      }
-      chosen = { plan, progs, pi, key };
-      break;
-    }
-    if (!chosen) { GLMAP.note = notes.join(" · ") + " · using the old tile map"; return false; }
-    // the roads' own small program (14f); if it cannot start here, the roads are drawn on top of the map instead
-    let roadProg = null;
-    const roadKey = build + ":roads";
-    if (!chosen.plan.simple) {
-      if (failed.has(roadKey) && !retry) notes.push("roads painted into the land: skipped (failed here before), drawn on top");
-      else {
-        lsSet(MAPKEY.trying, roadKey);
-        let r;
-        try { r = glBuild(gl, roadShaderSource()); } catch (e) { r = { err: String(e && e.message || e) }; }
-        lsSet(MAPKEY.trying, null);
-        if (r.err) {
-          notes.push("roads painted into the land could not start (" + r.err + "), drawn on top");
-          console.warn("map: roads", r.err);
-          fail(roadKey);
-          // the graphics card stopped while preparing it: start again on a new context, without it
-          if (gl.isContextLost()) { GLMAP.tried = false; GLMAP.restartNote = notes.join(" · "); const ok = glInit(); GLMAP.restartNote = null; return ok; }
-        } else roadProg = r.prog;
-      }
-    }
-    gl.useProgram(chosen.progs[0]);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    const progInfo = prog => {
-      const U = {};
-      for (const n of GL_UNIFORMS) U[n] = gl.getUniformLocation(prog, n);
-      const loc = gl.getAttribLocation(prog, "a");
-      return { prog, U, loc };
-    };
-    GLMAP.progs = chosen.progs.map(progInfo);
-    GLMAP.roadP = roadProg ? progInfo(roadProg) : null;
-    GLMAP.prog = chosen.progs[0]; GLMAP.U = GLMAP.progs[0].U;
-    const mk = (unit, filter) => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
-    GLMAP.tex = {};
-    GLMAP.tex.land = mk(0, gl.LINEAR);
-    GLMAP.tex.towns = mk(1, gl.NEAREST);
-    GLMAP.tex.pits = mk(2, gl.NEAREST);
-    GLMAP.tex.vill = mk(3, gl.NEAREST);
-    GLMAP.tex.tidx = mk(4, gl.NEAREST);
-    GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
-    GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
-    GLMAP.tex.roadV = mk(11, gl.NEAREST); GLMAP.tex.roadCell = mk(12, gl.NEAREST); GLMAP.tex.roadList = mk(13, gl.NEAREST);   // roads (14f)
-    Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple, noRoads: !GLMAP.roadP });
-    glEachProg(U => {
-      gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
-      gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
-      if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
-      if (U.uRoadV) { gl.uniform1i(U.uRoadV, 11); gl.uniform1i(U.uRoadCell, 12); gl.uniform1i(U.uRoadList, 13); }
-      if (U.uOne) gl.uniform1i(U.uOne, 1);
-      if (U.uFrame) gl.uniform1i(U.uFrame, 8);
-      if (U.uRiv) gl.uniform1i(U.uRiv, 9);
-    });
-    // the first part draws into two pictures (the land, and where the rivers are) that the roads and the towns read;
-    // the roads draw into a third (on unit 14, which no program reads) when the towns come after them
-    if (GLMAP.progs.length > 1) {
-      GLMAP.tex.frame = mk(8, gl.NEAREST); GLMAP.tex.riv = mk(9, gl.NEAREST);
-      GLMAP.fbo = gl.createFramebuffer(); GLMAP.fboSize = [0, 0];
-      if (GLMAP.roadP) { GLMAP.tex.frameB = mk(14, gl.NEAREST); GLMAP.fboB = gl.createFramebuffer(); }
-    }
-    GLMAP.note = (notes.length ? notes.join(" · ") + " · using " : "") + chosen.plan.name + (GLMAP.roadP ? ", roads painted into the land" : "") + " (version " + build + ")";
-    // if the graphics card gives up while drawing, remember what was in use and start again at once with less:
-    // first without the roads painter (the newest part), then the next lighter map
-    cv.addEventListener("webglcontextlost", e => {
-      e.preventDefault();
-      if (GLMAP.canvas !== cv) return;
-      const blame = GLMAP.roadP ? roadKey : chosen.key;
-      fail(blame);
-      GLMAP.ok = false;
-      GLMAP.note = "The graphics card stopped while drawing the map (" + (GLMAP.roadP ? "with the roads painted into the land" : chosen.plan.name) + "); trying again with less";
-      ZOOM.max = 5;
-      if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
-      try { if (world) resetTerrain(world); view.staticKey = ""; renderAll(); } catch (err) { console.warn(err); }
-      GLMAP.restarts = (GLMAP.restarts || 0) + 1;
-      if (GLMAP.restarts > 5) return;
-      const note = GLMAP.note;
-      setTimeout(() => {
-        if (GLMAP.ok) return;
-        GLMAP.tried = false; GLMAP.restartNote = note;
-        try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } } catch (err) { console.warn(err); }
-        GLMAP.restartNote = null;
-      }, 700);
-    });
-    glUploadEmpty();
-    ZOOM.max = 1000;   // down to about three metres a pixel
-    return true;
-  } catch (e) { console.warn("map: WebGL 2 not used", e); GLMAP.note = "Map error: " + (e && e.message || e); GLMAP.ok = false; return false; }
+      const res = parts.map(b => glProgramResult(S.gl, b));
+      const bad = res.findIndex(r => r.err);
+      if (bad < 0) { S.chosen = { plan, progs: res.map(r => r.prog), pi: S.i, key }; return glRoadsProgram(S); }
+      const what = (plan.parts.length > 1 ? `part ${bad + 1}: ` : "") + res[bad].err;
+      console.warn("map:", plan.name, what);
+      if (res.some(r => r.crash)) return crashed(what);
+      S.notes.push(plan.name + " could not start (" + what + ")"); S.fail(key); S.i++;
+      glNextPlan(S);
+    }, () => crashed("the graphics card stopped while preparing it"));
+    return;
+  }
+  glFinish(S, null);
+}
+/* The roads' own small program (14f); if it cannot start here, the roads are drawn on top of the map instead. */
+function glRoadsProgram(S) {
+  const key = S.build + ":roads";
+  if (S.chosen.plan.simple) return glActivate(S, null);
+  if (S.failed.has(key) && !S.retry) { S.notes.push("roads painted into the land: skipped (failed here before), drawn on top"); return glActivate(S, null); }
+  let b;
+  try { b = glStartProgram(S.gl, roadShaderSource()); }
+  catch (e) { S.notes.push("roads painted into the land could not start (" + (e && e.message || e) + "), drawn on top"); S.fail(key); return glActivate(S, null); }
+  lsSet(MAPKEY.trying, key);
+  // the graphics card stopped: the plan's programs went with it, so start the plan again on a fresh context, without the roads program
+  const crashed = what => { lsSet(MAPKEY.trying, null); S.notes.push("roads painted into the land could not start (" + what + ")"); S.fail(key); S.i = S.chosen.pi; S.chosen = null; glAfterCrash(S); };
+  glAwait(S, [b], () => {
+    lsSet(MAPKEY.trying, null);
+    const r = glProgramResult(S.gl, b);
+    if (!r.err) return glActivate(S, r.prog);
+    console.warn("map: roads", r.err);
+    if (r.crash) return crashed(r.err);
+    S.notes.push("roads painted into the land could not start (" + r.err + "), drawn on top"); S.fail(key);
+    glActivate(S, null);
+  }, () => crashed("the graphics card stopped while preparing it"));
+}
+/* The graphics card stopped: its context is gone. Give the browser a moment to start it again, then go on with the
+   next plan on a fresh context (a few times at most). */
+function glAfterCrash(S) {
+  GLMAP.restarts = (GLMAP.restarts || 0) + 1;
+  if (GLMAP.restarts > 6) { S.notes.push("the graphics card stopped too often"); return glFinish(S, null); }
+  S.async = true;
+  setTimeout(() => {
+    if (S.gen !== GLMAP.gen) return;
+    if (!glFreshContext(S)) { S.notes.push("no WebGL 2 after the graphics card stopped"); return glFinish(S, null); }
+    glNextPlan(S);
+  }, 1500);
+}
+/* What the Credits screen says about the map: what was tried, what is used, the graphics card and the time it took. */
+function glFinish(S, used) {
+  GLMAP.preparing = false;
+  const secs = ((performance.now() - S.t0) / 1000).toFixed(1);
+  const info = ` (version ${S.build}; ${S.gpu || "graphics card unknown"}; ${used ? `ready in ${secs} s${S.par ? ", prepared in the background" : ""}` : `after ${secs} s`})`;
+  GLMAP.note = used ? (S.notes.length ? S.notes.join(" · ") + " · using " : "") + used + info : S.notes.join(" · ") + " · using the old tile map" + info;
+}
+/* The plan is ready: set up its textures and uniforms and switch the full map on. */
+function glActivate(S, roadProg) {
+  const { gl, cv, chosen } = S;
+  gl.useProgram(chosen.progs[0]);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const progInfo = prog => {
+    const U = {};
+    for (const n of GL_UNIFORMS) U[n] = gl.getUniformLocation(prog, n);
+    const loc = gl.getAttribLocation(prog, "a");
+    return { prog, U, loc };
+  };
+  GLMAP.progs = chosen.progs.map(progInfo);
+  GLMAP.roadP = roadProg ? progInfo(roadProg) : null;
+  GLMAP.prog = chosen.progs[0]; GLMAP.U = GLMAP.progs[0].U;
+  const mk = (unit, filter) => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
+  GLMAP.tex = {};
+  GLMAP.tex.land = mk(0, gl.LINEAR);
+  GLMAP.tex.towns = mk(1, gl.NEAREST);
+  GLMAP.tex.pits = mk(2, gl.NEAREST);
+  GLMAP.tex.vill = mk(3, gl.NEAREST);
+  GLMAP.tex.tidx = mk(4, gl.NEAREST);
+  GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
+  GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
+  GLMAP.tex.roadV = mk(11, gl.NEAREST); GLMAP.tex.roadCell = mk(12, gl.NEAREST); GLMAP.tex.roadList = mk(13, gl.NEAREST);   // roads (14f)
+  Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple, noRoads: !GLMAP.roadP });
+  glEachProg(U => {
+    gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
+    gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
+    if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
+    if (U.uRoadV) { gl.uniform1i(U.uRoadV, 11); gl.uniform1i(U.uRoadCell, 12); gl.uniform1i(U.uRoadList, 13); }
+    if (U.uOne) gl.uniform1i(U.uOne, 1);
+    if (U.uFrame) gl.uniform1i(U.uFrame, 8);
+    if (U.uRiv) gl.uniform1i(U.uRiv, 9);
+  });
+  // the first part draws into two pictures (the land, and where the rivers are) that the roads and the towns read;
+  // the roads draw into a third (on unit 14, which no program reads) when the towns come after them
+  if (GLMAP.progs.length > 1) {
+    GLMAP.tex.frame = mk(8, gl.NEAREST); GLMAP.tex.riv = mk(9, gl.NEAREST);
+    GLMAP.fbo = gl.createFramebuffer(); GLMAP.fboSize = [0, 0];
+    if (GLMAP.roadP) { GLMAP.tex.frameB = mk(14, gl.NEAREST); GLMAP.fboB = gl.createFramebuffer(); }
+  }
+  glFinish(S, chosen.plan.name + (GLMAP.roadP ? ", roads painted into the land" : ""));
+  // if the graphics card gives up while drawing, remember what was in use and start again at once with less:
+  // first without the roads painter (the newest part), then the next lighter map
+  const roadKey = S.build + ":roads";
+  cv.addEventListener("webglcontextlost", e => {
+    e.preventDefault();
+    if (GLMAP.canvas !== cv || !GLMAP.ok) return;
+    S.fail(GLMAP.roadP ? roadKey : chosen.key);
+    GLMAP.ok = false;
+    GLMAP.note = "The graphics card stopped while drawing the map (" + (GLMAP.roadP ? "with the roads painted into the land" : chosen.plan.name) + "); trying again with less";
+    ZOOM.max = 5;
+    if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
+    try { if (world) resetTerrain(world); view.staticKey = ""; renderAll(); } catch (err) { console.warn(err); }
+    GLMAP.restarts = (GLMAP.restarts || 0) + 1;
+    if (GLMAP.restarts > 6) return;
+    const note = GLMAP.note;
+    setTimeout(() => {
+      if (GLMAP.ok) return;
+      GLMAP.tried = false; GLMAP.restartNote = note;
+      try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } else glInit(); } catch (err) { console.warn(err); }
+      GLMAP.restartNote = null;
+    }, 1500);
+  });
+  glUploadEmpty();
+  ZOOM.max = 1000;   // down to about three metres a pixel
+  // ready later than the start (prepared in the background): switch the full map on now
+  if (S.async) glReady();
+}
+function glReady() {
+  try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } } catch (e) { console.warn("map:", e); }
 }
 /* Set uniforms in every program of the map painter (the roads' own program too). */
 function glEachProg(fn) {
@@ -298,9 +363,8 @@ function glUpdateLand() {
   //  2: heavy industry, chemicals, power stations, light industry
   //  3: offices, campuses, resorts, planning style (0 grid, 1 boulevards, 2 old world)
   //  4: dryness, hills, direction to the sea (x, y)     5: distance to the sea, nuclear, fishing, how grand (capital)
-  //  6, 7: its persona (see townPersona)                  8: the turn of its main avenues (14f)
   const towns = (LANDUSE.towns || []).slice(0, 96);
-  const n = Math.max(1, towns.length), ROWS = 9;
+  const n = Math.max(1, towns.length), ROWS = 8;
   const T = new Float32Array(n * ROWS * 4);
   const put = (row, k, a, b, c, d) => T.set([a, b, c, d], (row * n + k) * 4);
   towns.forEach((t, k) => {
@@ -322,8 +386,6 @@ function glUpdateLand() {
     t.persona = P;
     put(6, k, P.axis, P.elong, P.tint, P.green);
     put(7, k, P.park, P.canal, P.rows, P.sky);
-    t.a0 = townRoadTurn(t);   // its main avenues turned to meet the roads that come in (14f)
-    put(8, k, t.a0, 0, 0, 0);
   });
   glTex(1, GLMAP.tex.towns, n, ROWS, gl.RGBA32F, gl.RGBA, gl.FLOAT, T);
   GLMAP.nTowns = towns.length;
@@ -488,7 +550,7 @@ function drawTownTraffic(c, cs, now) {
   for (const tw of LANDUSE.towns) {
     const twx = tw.gx ?? tw.x, twy = tw.gy ?? tw.y;
     if (twx + tw.r * 1.3 < x0 || twx - tw.r * 1.3 > x1 || twy + tw.r * 1.3 < y0 || twy - tw.r * 1.3 > y1) continue;
-    const hh = townHash(tw.id), N = 5 + Math.floor(hh * 4), a0 = tw.a0 ?? hh * 43.98, R = tw.r;
+    const hh = townHash(tw.id), N = 5 + Math.floor(hh * 4), a0 = hh * 43.98, R = tw.r;
     for (let k = 0; k < N; k++) {
       const ang = a0 + k * 2 * Math.PI / N + 0.15 * Math.sin(k * 1.7 + a0);
       const cars = Math.round(60 * R);
@@ -2045,9 +2107,10 @@ float artAng(int k, int N, float a0, float d, float R) {
   return a0 + fk * 6.2831853 / float(N) + 0.15 * sin(fk * 1.7 + a0) + 0.12 * sin(d / R * 5.0 + fk * 2.1) * sstep(0.0, 0.2 * R, d);
 }
 // distance to the nearest radial main road; the wedge between main roads the point is in; distances to the two rings
-float radialRoads(vec2 rel, float d, float R, float hh, float a0, out float ring1, out float ring2, out float wedgeA, out float wedgeSpan, out int wedge) {
+float radialRoads(vec2 rel, float d, float R, float hh, out float ring1, out float ring2, out float wedgeA, out float wedgeSpan, out int wedge) {
   float th = atan(rel.y, rel.x);
   int N = 5 + int(hh * 4.0);
+  float a0 = hh * 43.98;
   float best = 1e9, bestPos = 1e9;
   wedge = 0; wedgeA = 0.0; wedgeSpan = 1.0;
   for (int k = 0; k < 9 * uOne; k++) {
@@ -2068,7 +2131,6 @@ struct Town {
   vec2 c; float R, Ru, hh, pop, era, ind, heavy, chem, power, light, office, campus, resort, arid, hill, seaD, nuclear, fishing, big, med;
   vec2 seaDir; int style, seed; bool cap, port;
   float axis, elong, tint, green, park, canal, rows, sky;     // what makes this town itself
-  float a0;                                                   // the turn of its main avenues, to meet its roads
 };
 Town loadTown(int i) {
   Town t;
@@ -2083,7 +2145,6 @@ Town loadTown(int i) {
   vec4 r6 = texelFetch(uTowns, ivec2(i, 6), 0), r7 = texelFetch(uTowns, ivec2(i, 7), 0);
   t.axis = r6.x; t.elong = max(r6.y, 1.0); t.tint = r6.z; t.green = r6.w;
   t.park = r7.x; t.canal = r7.y; t.rows = r7.z; t.sky = r7.w;
-  t.a0 = texelFetch(uTowns, ivec2(i, 8), 0).x;
   // how much of a warm-country building tradition (tiled roofs, pale walls): old-world towns most, grids least
   t.med = (t.style == 2 ? 0.75 : t.style == 1 ? 0.35 : 0.15) * (1.0 - 0.6 * t.arid);
   if (t.canal > 0.5) t.med = 0.95;
@@ -2331,9 +2392,9 @@ vec4 cityColor(vec2 p, float pxm, float ce, float slope) {
     float d = length(rel);
     // ---- the main roads ----
     float ring1, ring2, wA, wSpan; int wedge;
-    float radial = radialRoads(rel, d, R, hh, t.a0, ring1, ring2, wA, wSpan, wedge);
+    float radial = radialRoads(rel, d, R, hh, ring1, ring2, wA, wSpan, wedge);
     float da = length(aniso(rel, t));
-    { float th = atan(rel.y, rel.x), a0 = t.a0;
+    { float th = atan(rel.y, rel.x), a0 = hh * 43.98;
       ring1 = abs(da - 0.3 * R * (1.0 + 0.05 * sin(3.0 * th + a0)));
       ring2 = abs(da - 0.62 * R * (1.0 + 0.06 * sin(2.0 * th + a0 * 1.3))); }
     float ang0 = hh * 1.5707963;
@@ -2484,7 +2545,7 @@ vec4 cityColor(vec2 p, float pxm, float ce, float slope) {
       vec2 relC = transpose(rot) * qc;
       if (oldTown || t.style == 2 || curvy > 0.0) relC = rel;
       float r1c, r2c, wAc, wSc; int wc;
-      float artC = radialRoads(relC, length(relC), R, hh, t.a0, r1c, r2c, wAc, wSc, wc);
+      float artC = radialRoads(relC, length(relC), R, hh, r1c, r2c, wAc, wSc, wc);
       float densC = townDens(relC, t, artC, max(pxm, bsz.x * M * 0.6)) + 0.12 * (bh2 - 0.5) - 0.55 * sstep(0.5, 1.3, slope) * (0.5 + 0.5 * t.hill);
       bool built = densC > 0.32;
       float parkC = fbm(relC / (0.04 * Ru) + 2.0, seed + 48, 2);
@@ -2741,7 +2802,7 @@ vec4 cityColor(vec2 p, float pxm, float ce, float slope) {
       for (int k = 0; k < 9 * uOne; k++) {
         int N = 5 + int(hh * 4.0);
         if (k >= N) break;
-        float ang = artAng(k, N, t.a0, hwR, R);
+        float ang = artAng(k, N, hh * 43.98, hwR, R);
         vec2 jc = vec2(cos(ang), sin(ang)) * hwR;
         for (int s2 = 0; s2 < 4 * uOne; s2++) {
           vec2 lc = jc + rot2(ang + 0.785 + 1.5708 * float(s2)) * vec2(170.0 * M, 0.0);
@@ -3201,7 +3262,7 @@ void main() {
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
     shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.6 * gVilA) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
-    outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 1.0, 1.0);   // z: land (the roads painter draws only there, 14f)
+    outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }
   outColor = vec4(clamp(satLook(col), 0.0, 1.0), 1.0);
 }
