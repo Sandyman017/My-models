@@ -200,6 +200,7 @@ function rivalPeopleHtml(z) {
     <li><span>Living standard</span><span class="num">${fmtK(P.ls)} a person</span></li>
     <li><span>Children per woman · over 65</span><span class="num">${D.tfr.toFixed(1)} · ${pct(D.old)}</span></li>
     <li><span>Skilled · educated</span><span class="num">${pct(ed.s)} · ${pct(ed.e)}</span></li>
+    ${(() => { const vs = villageStats(world, game, z.id); return vs.count ? `<li><span>Villages · people in them</span><span class="num">${vs.count} · ${fmtPeople(vs.people)}${vs.biggest[0] ? ` · biggest ${escapeHtml(vs.biggest[0].name)}` : ""}</span></li>` : ""; })()}
     <li><span>Unions · hours · women at work</span><span class="num">${escapeHtml(labourLaw(z.laws, "unions").label.toLowerCase())} · ${escapeHtml(labourLaw(z.laws, "hours").sub)} · ${escapeHtml(labourLaw(z.laws, "women").label.toLowerCase())}</span></li>
   </ul></div>`;
 }

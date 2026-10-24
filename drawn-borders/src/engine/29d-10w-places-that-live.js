@@ -438,7 +438,7 @@ function seasonVillages(w, g, dispatch) {
   const say = (v, text, tone, chron) => {
     villageLog(g, v, text, tone);
     if (g.owner[v.cell] === PLAYER) {
-      news.push({ text: `${v.name}: ${text}`, tone, cell: v.cell });
+      news.push({ text: `${v.name}: ${text}`, tone, cell: v.cell, major: !!chron });
       if (chron) addChronicle(g, `${v.name}: ${text}`, tone === "bad" ? "warn" : tone === "good" ? "good" : "neutral", PLAYER);
     }
   };
@@ -561,6 +561,13 @@ function seasonVillages(w, g, dispatch) {
   townBoomsAndBusts(w, g, news);
   // 5. charters: a big village on a good site asks to become a town
   charterSeason(w, g, news, dispatch);
+  // the season in one line: how the player's countryside changed
+  const mine = g.villages.filter(v => g.owner[v.cell] === PLAYER && v.status !== "ruin");
+  if (mine.length && news.length) {
+    let up = 0, down = 0, dp = 0;
+    for (const v of mine) { const h = v.hist || []; if (h.length < 2) continue; const d = h[h.length - 1] - h[h.length - 2]; dp += d; if (d > 0) up++; else if (d < 0) down++; }
+    news.unshift({ text: `Your ${mine.length} villages: ${up} grew and ${down} shrank this season (${dp >= 0 ? "+" : "−"}${fmtCount(Math.abs(dp))} people).`, tone: dp >= 0 ? "good" : "warn", summary: true });
+  }
   if (dispatch) dispatch.villages = news;
   return news;
 }
@@ -639,8 +646,15 @@ function charterSeason(w, g, news, dispatch) {
     if (!d) continue;
     const o = aiPickOption(c, d);
     decide(w, g, d, o.id, false);
+    const town = g.cities.find(t => t.fromVillage && t.name === best.name && t.owner === n.id && t.founded === g.turn);
+    if (town) {
+      const text = `Granted a town charter to ${town.name}, a village of ${fmtCount(town.fromVillage.pop * 1e6)} people.`;
+      noteFor(n, g, text, null);
+      if (dispatch && dispatch.abroad) dispatch.abroad.push({ nid: n.id, text, why: null });
+      addChronicle(g, `${n.name}: ${text}`, "neutral", n.id);
+    }
   }
-  void news; void dispatch;
+  void news;
 }
 /* The player's charter question, asked by the storyteller at the end of the season. */
 function charterDecisions(w, g, rng) {
@@ -1200,3 +1214,31 @@ function villageFileLines(w, g, nid) {
   if (s.chartered.length) out.push(`Granted a town charter: ${bJoin(s.chartered.slice(0, 4).map(c => c.name))}.`);
   return out;
 }
+
+/* ---------- Ambitions about villages ---------- */
+Object.assign(AMBITIONS, {
+  charter: {
+    cat: "Building", icon: "town", seasons: 16, prestige: 12,
+    offer: c => {
+      const near = (c.g.villages || []).filter(v => c.g.owner[v.cell] === PLAYER && v.status !== "ruin" && v.pop >= VIL.charterPop * 0.6 && c.g.cities.every(t => dist(t.cell, v.cell) >= BUILD.townMinSpacing));
+      if (!near.length) return null;
+      return { start: villMeta(c.g).chartered.filter(x => x.nid === PLAYER).length, village: near.sort((a, b) => b.pop - a.pop)[0].name, w: 1.1 };
+    },
+    title: () => "Grant a village a town charter",
+    why: a => `${a.village || "A village"} and others like it are growing into towns. A new town brings its own market, council and pride to the countryside.`,
+    progress: (c, a) => { const k = villMeta(c.g).chartered.filter(x => x.nid === PLAYER).length - a.start; return { cur: Math.max(0, k), need: 1, frac: Math.min(1, Math.max(0, k)), text: k > 0 ? "A charter was granted" : "No charter yet: give the village a road and room to grow", done: k >= 1 }; },
+    reward: () => [{ t: "mod", key: "amb_newtown", label: "A new town's pride", stab: 2, seasons: 8 }],
+  },
+  countryside: {
+    cat: "People", icon: "people", seasons: 16, prestige: 10,
+    offer: c => {
+      const s = villageStats(c.w, c.g, PLAYER);
+      if (s.count < 8) return null;
+      return { target: Math.ceil(s.people * 1.12 * 1000) / 1000, w: 0.9 };
+    },
+    title: a => `Grow the villages to ${fmtCount(a.target * 1e6)} people`,
+    why: () => "Busy villages feed the towns and keep the countryside alive. Markets, wells, bridges and schools help them grow.",
+    progress: (c, a) => { const p = villageStats(c.w, c.g, PLAYER).people; return { cur: p, need: a.target, frac: p / a.target, text: `${fmtCount(p * 1e6)} of ${fmtCount(a.target * 1e6)} people`, done: p >= a.target }; },
+    reward: () => [{ t: "group", key: "amb_villages", v: { farmers: 5, faith: 2 }, label: "Thriving villages", seasons: 12 }],
+  },
+});

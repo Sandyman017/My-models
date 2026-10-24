@@ -179,12 +179,15 @@ function villageDetailHtml(v) {
       ${!roadSites(world, game).deg[v.cell] && v.status !== "ruin" ? `<div class="actions"><button class="btn small" type="button" data-action="village-road" data-vid="${v.id}">Build a road to ${escapeHtml(v.name)}</button></div><p class="muted small">A road lets it grow (+12%), opens it to traders and is needed for a town charter.</p>` : ""}
     </div>`;
   }
+  // its neighbours: the villages around it, how far, and whether a road joins them
+  const nb = (game.villages || []).filter(x => x !== v && x.status !== "ruin" && dist(x.cell, v.cell) <= 2.3).sort((a, b) => dist(a.cell, v.cell) - dist(b.cell, v.cell)).slice(0, 5);
+  const neighbours = nb.length ? `<div class="block"><span class="eyebrow">Its neighbours</span><ul class="factors">${nb.map(x => `<li><span><button class="linkbtn" type="button" data-action="village-pick" data-vid="${x.id}">${escapeHtml(x.name)}</button> <span class="muted small">${escapeHtml(VILLAGE_PLANS[x.plan].label.toLowerCase())}${game.owner[x.cell] !== own && game.owner[x.cell] >= 0 ? ` · the ${escapeHtml(nameOf(game, game.owner[x.cell]))}` : ""}</span></span><span class="num">${Math.round(dist(x.cell, v.cell) * 50)} km · ${fmtVillPeople(x.pop)}</span></li>`).join("")}</ul></div>` : "";
   const story = `<details class="block cf-hist" open><summary>The story of ${escapeHtml(v.name)}</summary>
       ${villageTrendSvg(v)}
       ${(v.log || []).length ? `<ul class="news">${v.log.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span><span class="num muted small">${seasonLabel(x.t)}</span><br>${escapeHtml(x.text)}</span></li>`).join("")}</ul>` : ""}
     </details>`;
   const actions = `<div class="actions"><button class="btn small" type="button" data-action="village-look" data-vid="${v.id}">See it up close</button>${town ? `<button class="btn small" type="button" data-city-pick="${town.id}">${escapeHtml(town.name)}</button>` : ""}${n && own !== PLAYER && n.alive ? `<button class="btn small" type="button" data-action="nation-view" data-nid="${own}">About the ${escapeHtml(n.name)}</button>` : ""}</div>`;
-  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${works}${story}${actions}`;
+  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${works}${neighbours}${story}${actions}`;
 }
 /* Who lives where in a cell, for the land's own page. */
 function cellSettlementHtml(i) {
@@ -244,7 +247,7 @@ function countrysideHtml() {
 }
 /* The season report's village news. */
 function villagesDispatchHtml(d) {
-  const list = (d.villages || []).slice(0, 8);
+  const list = (d.villages || []).slice(0, 9);
   if (!list.length) return "";
   return `<div class="block"><span class="eyebrow">Villages</span><ul class="news">${list.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span>${escapeHtml(x.text)}</span></li>`).join("")}</ul>${(d.villages || []).length > 8 ? `<p class="muted small">And ${(d.villages || []).length - 8} more.</p>` : ""}</div>`;
 }

@@ -8,7 +8,7 @@ const { engineSource } = require("../build.js");
 
 const worlds = Number(process.argv[2] || 2), seasons = Number(process.argv[3] || 12);
 const expose = "\n;globalThis.E = { generateWorld, setupGame, runSeason, claimFromPath, mulberry32, GRID_W, GRID_H, PLAYER, N_CELLS, edgeKey, dist, cellX, cellY, idx, inBounds, isLand, "
-  + "hamletsOf, cellSettlement, villageStats, siteReport, charterCheck, ensureProvinces, decide, VIL, VILLAGE_PLANS, SITE_FEATURES, cityStay, nearestCity, cityModsActive, villMeta, "
+  + "hamletsOf, cellSettlement, villageStats, siteReport, charterCheck, ensureProvinces, decide, VIL, VILLAGE_PLANS, SITE_FEATURES, cityStay, nearestCity, cityModsActive, villMeta, AMBITIONS, ambCtx, "
   + "DECISIONS, decisionCtx, makeDecision, VILLAGE_DECISIONS, orderVillageWork, villageWorkCheck, VILLAGE_WORK_ORDER, villageFileLines, effectText };";
 const ctx = vm.createContext({ console, Math, Date, JSON, Map, Set, structuredClone });
 vm.runInContext(engineSource() + expose, ctx, { filename: "engine.js" });
@@ -202,6 +202,14 @@ for (let wi = 0; wi < worlds; wi++) {
     E.runSeason(world, game, {});
     invariants(world, game, "after works and events");
     check(Array.isArray(E.villageFileLines(world, game, owner)), "the minister knows nothing of the villages");
+    // the village ambitions: offered when they fit, and their progress reads
+    for (const key of ["charter", "countryside"]) {
+      const ac = E.ambCtx(world, game), A = E.AMBITIONS[key], o = A.offer(ac);
+      if (!o) continue;
+      const amb = { key, ...o };
+      const pr = A.progress(ac, amb);
+      check(typeof A.title(amb, game) === "string" && typeof A.why(amb, game) === "string" && Number.isFinite(pr.frac) && typeof pr.text === "string", `the ${key} ambition is broken`);
+    }
 
     // an old save: villages from version 38 (no ids, looks, stories), no village book, towns without sites
     const old = JSON.parse(JSON.stringify(game));

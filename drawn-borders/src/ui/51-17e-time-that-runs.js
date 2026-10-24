@@ -114,6 +114,7 @@ function seasonHeadlines(d) {
   for (const x of d.people || []) add(x.tone === "bad" ? 66 : x.tone === "warn" ? 60 : 40, "people", x.text, x.tone, { panel: "people" });
   for (const x of d.groups || []) add(x.tone === "bad" ? 74 : x.tone === "warn" ? 70 : 48, "groups", x.text, x.tone, { panel: "groups" });
   for (const x of d.cities || []) add(x.tone === "bad" ? 68 : x.tone === "good" ? 53 : 42, "city", x.text, x.tone, { city: x.cityId });
+  for (const x of d.villages || []) if (x.major) add(x.tone === "bad" ? 56 : 44, "town", x.text, x.tone, { cell: x.cell });   // a boom, a bust, ruins, a market (10w)
   out.sort((a, b) => b.pri - a.pri);
   const seen = new Set(), list = [];
   ui.newsSeen = ui.newsSeen || {};
@@ -168,6 +169,7 @@ function openNews(id) {
   if (a.assembly) { openAssembly(); return; }
   if (a.goals) { ui.goalsOpen = true; return; }
   if (a.city !== undefined && game.cities.some(c => c.id === a.city)) { ui.selectedCity = a.city; ui.selectedCell = -1; ui.tab = "selected"; return; }
+  if (a.cell !== undefined && villageAt(game, a.cell)) { selectVillage(villageAt(game, a.cell).id); centerOnCell(a.cell, Math.max(view.zoom, 3)); return; }   // a village's news opens its page (16n)
   const r = (ui.reports || []).find(r => r.turn === x.turn) || (ui.reports || [])[0];
   if (r) ui.dispatch = r.d;
 }

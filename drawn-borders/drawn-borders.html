@@ -16363,7 +16363,7 @@ function seasonVillages(w, g, dispatch) {
   const say = (v, text, tone, chron) => {
     villageLog(g, v, text, tone);
     if (g.owner[v.cell] === PLAYER) {
-      news.push({ text: `${v.name}: ${text}`, tone, cell: v.cell });
+      news.push({ text: `${v.name}: ${text}`, tone, cell: v.cell, major: !!chron });
       if (chron) addChronicle(g, `${v.name}: ${text}`, tone === "bad" ? "warn" : tone === "good" ? "good" : "neutral", PLAYER);
     }
   };
@@ -16486,6 +16486,13 @@ function seasonVillages(w, g, dispatch) {
   townBoomsAndBusts(w, g, news);
   // 5. charters: a big village on a good site asks to become a town
   charterSeason(w, g, news, dispatch);
+  // the season in one line: how the player's countryside changed
+  const mine = g.villages.filter(v => g.owner[v.cell] === PLAYER && v.status !== "ruin");
+  if (mine.length && news.length) {
+    let up = 0, down = 0, dp = 0;
+    for (const v of mine) { const h = v.hist || []; if (h.length < 2) continue; const d = h[h.length - 1] - h[h.length - 2]; dp += d; if (d > 0) up++; else if (d < 0) down++; }
+    news.unshift({ text: `Your ${mine.length} villages: ${up} grew and ${down} shrank this season (${dp >= 0 ? "+" : "−"}${fmtCount(Math.abs(dp))} people).`, tone: dp >= 0 ? "good" : "warn", summary: true });
+  }
   if (dispatch) dispatch.villages = news;
   return news;
 }
@@ -16564,8 +16571,15 @@ function charterSeason(w, g, news, dispatch) {
     if (!d) continue;
     const o = aiPickOption(c, d);
     decide(w, g, d, o.id, false);
+    const town = g.cities.find(t => t.fromVillage && t.name === best.name && t.owner === n.id && t.founded === g.turn);
+    if (town) {
+      const text = `Granted a town charter to ${town.name}, a village of ${fmtCount(town.fromVillage.pop * 1e6)} people.`;
+      noteFor(n, g, text, null);
+      if (dispatch && dispatch.abroad) dispatch.abroad.push({ nid: n.id, text, why: null });
+      addChronicle(g, `${n.name}: ${text}`, "neutral", n.id);
+    }
   }
-  void news; void dispatch;
+  void news;
 }
 /* The player's charter question, asked by the storyteller at the end of the season. */
 function charterDecisions(w, g, rng) {
@@ -17125,6 +17139,34 @@ function villageFileLines(w, g, nid) {
   if (s.chartered.length) out.push(`Granted a town charter: ${bJoin(s.chartered.slice(0, 4).map(c => c.name))}.`);
   return out;
 }
+
+/* ---------- Ambitions about villages ---------- */
+Object.assign(AMBITIONS, {
+  charter: {
+    cat: "Building", icon: "town", seasons: 16, prestige: 12,
+    offer: c => {
+      const near = (c.g.villages || []).filter(v => c.g.owner[v.cell] === PLAYER && v.status !== "ruin" && v.pop >= VIL.charterPop * 0.6 && c.g.cities.every(t => dist(t.cell, v.cell) >= BUILD.townMinSpacing));
+      if (!near.length) return null;
+      return { start: villMeta(c.g).chartered.filter(x => x.nid === PLAYER).length, village: near.sort((a, b) => b.pop - a.pop)[0].name, w: 1.1 };
+    },
+    title: () => "Grant a village a town charter",
+    why: a => `${a.village || "A village"} and others like it are growing into towns. A new town brings its own market, council and pride to the countryside.`,
+    progress: (c, a) => { const k = villMeta(c.g).chartered.filter(x => x.nid === PLAYER).length - a.start; return { cur: Math.max(0, k), need: 1, frac: Math.min(1, Math.max(0, k)), text: k > 0 ? "A charter was granted" : "No charter yet: give the village a road and room to grow", done: k >= 1 }; },
+    reward: () => [{ t: "mod", key: "amb_newtown", label: "A new town's pride", stab: 2, seasons: 8 }],
+  },
+  countryside: {
+    cat: "People", icon: "people", seasons: 16, prestige: 10,
+    offer: c => {
+      const s = villageStats(c.w, c.g, PLAYER);
+      if (s.count < 8) return null;
+      return { target: Math.ceil(s.people * 1.12 * 1000) / 1000, w: 0.9 };
+    },
+    title: a => `Grow the villages to ${fmtCount(a.target * 1e6)} people`,
+    why: () => "Busy villages feed the towns and keep the countryside alive. Markets, wells, bridges and schools help them grow.",
+    progress: (c, a) => { const p = villageStats(c.w, c.g, PLAYER).people; return { cur: p, need: a.target, frac: p / a.target, text: `${fmtCount(p * 1e6)} of ${fmtCount(a.target * 1e6)} people`, done: p >= a.target }; },
+    reward: () => [{ t: "group", key: "amb_villages", v: { farmers: 5, faith: 2 }, label: "Thriving villages", seasons: 12 }],
+  },
+});
 /* =====================================================================
    10q. Interest groups: who holds power in the nation, what they want, and what they do when they are angry
    Borrowed ideas: Victoria 3 (groups whose power comes from the real economy), Tropico (factions with demands),
@@ -30868,6 +30910,7 @@ function seasonHeadlines(d) {
   for (const x of d.people || []) add(x.tone === "bad" ? 66 : x.tone === "warn" ? 60 : 40, "people", x.text, x.tone, { panel: "people" });
   for (const x of d.groups || []) add(x.tone === "bad" ? 74 : x.tone === "warn" ? 70 : 48, "groups", x.text, x.tone, { panel: "groups" });
   for (const x of d.cities || []) add(x.tone === "bad" ? 68 : x.tone === "good" ? 53 : 42, "city", x.text, x.tone, { city: x.cityId });
+  for (const x of d.villages || []) if (x.major) add(x.tone === "bad" ? 56 : 44, "town", x.text, x.tone, { cell: x.cell });   // a boom, a bust, ruins, a market (10w)
   out.sort((a, b) => b.pri - a.pri);
   const seen = new Set(), list = [];
   ui.newsSeen = ui.newsSeen || {};
@@ -30922,6 +30965,7 @@ function openNews(id) {
   if (a.assembly) { openAssembly(); return; }
   if (a.goals) { ui.goalsOpen = true; return; }
   if (a.city !== undefined && game.cities.some(c => c.id === a.city)) { ui.selectedCity = a.city; ui.selectedCell = -1; ui.tab = "selected"; return; }
+  if (a.cell !== undefined && villageAt(game, a.cell)) { selectVillage(villageAt(game, a.cell).id); centerOnCell(a.cell, Math.max(view.zoom, 3)); return; }   // a village's news opens its page (16n)
   const r = (ui.reports || []).find(r => r.turn === x.turn) || (ui.reports || [])[0];
   if (r) ui.dispatch = r.d;
 }
@@ -31885,12 +31929,15 @@ function villageDetailHtml(v) {
       ${!roadSites(world, game).deg[v.cell] && v.status !== "ruin" ? `<div class="actions"><button class="btn small" type="button" data-action="village-road" data-vid="${v.id}">Build a road to ${escapeHtml(v.name)}</button></div><p class="muted small">A road lets it grow (+12%), opens it to traders and is needed for a town charter.</p>` : ""}
     </div>`;
   }
+  // its neighbours: the villages around it, how far, and whether a road joins them
+  const nb = (game.villages || []).filter(x => x !== v && x.status !== "ruin" && dist(x.cell, v.cell) <= 2.3).sort((a, b) => dist(a.cell, v.cell) - dist(b.cell, v.cell)).slice(0, 5);
+  const neighbours = nb.length ? `<div class="block"><span class="eyebrow">Its neighbours</span><ul class="factors">${nb.map(x => `<li><span><button class="linkbtn" type="button" data-action="village-pick" data-vid="${x.id}">${escapeHtml(x.name)}</button> <span class="muted small">${escapeHtml(VILLAGE_PLANS[x.plan].label.toLowerCase())}${game.owner[x.cell] !== own && game.owner[x.cell] >= 0 ? ` · the ${escapeHtml(nameOf(game, game.owner[x.cell]))}` : ""}</span></span><span class="num">${Math.round(dist(x.cell, v.cell) * 50)} km · ${fmtVillPeople(x.pop)}</span></li>`).join("")}</ul></div>` : "";
   const story = `<details class="block cf-hist" open><summary>The story of ${escapeHtml(v.name)}</summary>
       ${villageTrendSvg(v)}
       ${(v.log || []).length ? `<ul class="news">${v.log.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span><span class="num muted small">${seasonLabel(x.t)}</span><br>${escapeHtml(x.text)}</span></li>`).join("")}</ul>` : ""}
     </details>`;
   const actions = `<div class="actions"><button class="btn small" type="button" data-action="village-look" data-vid="${v.id}">See it up close</button>${town ? `<button class="btn small" type="button" data-city-pick="${town.id}">${escapeHtml(town.name)}</button>` : ""}${n && own !== PLAYER && n.alive ? `<button class="btn small" type="button" data-action="nation-view" data-nid="${own}">About the ${escapeHtml(n.name)}</button>` : ""}</div>`;
-  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${works}${story}${actions}`;
+  return `${head}${status}${occ}${figs}${ruin ? "" : `<div class="block">${why}</div>`}${look}${live}${site}${land}${charter}${works}${neighbours}${story}${actions}`;
 }
 /* Who lives where in a cell, for the land's own page. */
 function cellSettlementHtml(i) {
@@ -31950,7 +31997,7 @@ function countrysideHtml() {
 }
 /* The season report's village news. */
 function villagesDispatchHtml(d) {
-  const list = (d.villages || []).slice(0, 8);
+  const list = (d.villages || []).slice(0, 9);
   if (!list.length) return "";
   return `<div class="block"><span class="eyebrow">Villages</span><ul class="news">${list.map(x => `<li><span class="dot" style="background:${x.tone === "good" ? "var(--good)" : x.tone === "bad" ? "var(--bad)" : x.tone === "warn" ? "var(--warn)" : "var(--muted)"}"></span><span>${escapeHtml(x.text)}</span></li>`).join("")}</ul>${(d.villages || []).length > 8 ? `<p class="muted small">And ${(d.villages || []).length - 8} more.</p>` : ""}</div>`;
 }
@@ -32314,6 +32361,7 @@ function rivalPeopleHtml(z) {
     <li><span>Living standard</span><span class="num">${fmtK(P.ls)} a person</span></li>
     <li><span>Children per woman · over 65</span><span class="num">${D.tfr.toFixed(1)} · ${pct(D.old)}</span></li>
     <li><span>Skilled · educated</span><span class="num">${pct(ed.s)} · ${pct(ed.e)}</span></li>
+    ${(() => { const vs = villageStats(world, game, z.id); return vs.count ? `<li><span>Villages · people in them</span><span class="num">${vs.count} · ${fmtPeople(vs.people)}${vs.biggest[0] ? ` · biggest ${escapeHtml(vs.biggest[0].name)}` : ""}</span></li>` : ""; })()}
     <li><span>Unions · hours · women at work</span><span class="num">${escapeHtml(labourLaw(z.laws, "unions").label.toLowerCase())} · ${escapeHtml(labourLaw(z.laws, "hours").sub)} · ${escapeHtml(labourLaw(z.laws, "women").label.toLowerCase())}</span></li>
   </ul></div>`;
 }
