@@ -29,7 +29,7 @@ function glBuild(gl, src) {
 const MAPKEY = { fail: "drawn-borders-map-fail", trying: "drawn-borders-map-trying" };
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* storage may be off */ } }
-const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVillInfo", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn"];
+const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVillInfo", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn", "uRoadV", "uRoadCell", "uRoadList", "uRoadOn"];
 /* The painters this game can use, best first. The full map is three small programs drawn one over another (land and
    rivers; towns; river water and quays inside towns), because one huge program is too much for some graphics
    drivers (Windows translates every shader for DirectX, and a very long one can fail there). */
@@ -99,11 +99,13 @@ function glInit() {
     GLMAP.tex.tidx = mk(4, gl.NEAREST);
     GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
     GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
+    GLMAP.tex.roadV = mk(11, gl.NEAREST); GLMAP.tex.roadCell = mk(12, gl.NEAREST); GLMAP.tex.roadList = mk(13, gl.NEAREST);   // roads (14f)
     Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple });
     glEachProg(U => {
       gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
       gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
       if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
+      if (U.uRoadV) { gl.uniform1i(U.uRoadV, 11); gl.uniform1i(U.uRoadCell, 12); gl.uniform1i(U.uRoadList, 13); }
       if (U.uOne) gl.uniform1i(U.uOne, 1);
       if (U.uFrame) gl.uniform1i(U.uFrame, 8);
       if (U.uRiv) gl.uniform1i(U.uRiv, 9);
@@ -150,7 +152,10 @@ function glUploadEmpty() {
   glTex(5, GLMAP.tex.rv, 5, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(20));
   glTex(6, GLMAP.tex.rcell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(N_CELLS * 4));
   glTex(7, GLMAP.tex.rlist, 1, 1, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(1));
-  GLMAP.nTowns = 0; GLMAP.nPits = 0; GLMAP.rivOn = 0;
+  glTex(11, GLMAP.tex.roadV, 2, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(8));
+  glTex(12, GLMAP.tex.roadCell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(N_CELLS * 4));
+  glTex(13, GLMAP.tex.roadList, 1, 1, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(1));
+  GLMAP.nTowns = 0; GLMAP.nPits = 0; GLMAP.rivOn = 0; GLMAP.roadOn = 0; GLMAP.roadKey = null; GLMAP.roadEdges = null;
 }
 /* A town's random number, shared by the painter (its streets) and the cars driving on them. */
 function townHash(id) { return hash2(id, 7, 991); }
@@ -226,6 +231,7 @@ function townCentre(t, geo) {
 /* What people have made of the land, sent to the graphics card whenever it changes. */
 function glUpdateLand() {
   if (!GLMAP.ok || !world) return;
+  try { glUploadRoads(); } catch (e) { console.warn("roads:", e); GLMAP.roadOn = 0; GLMAP.roadEdges = null; }   // roads change apart from the land (14f)
   const key = `${world.seed}|${LANDUSE.key}`;
   if (GLMAP.landKey === key) return;
   GLMAP.landKey = key;
@@ -244,8 +250,9 @@ function glUpdateLand() {
   //  2: heavy industry, chemicals, power stations, light industry
   //  3: offices, campuses, resorts, planning style (0 grid, 1 boulevards, 2 old world)
   //  4: dryness, hills, direction to the sea (x, y)     5: distance to the sea, nuclear, fishing, how grand (capital)
+  //  6, 7: its persona (see townPersona)                  8: the turn of its main avenues (14f)
   const towns = (LANDUSE.towns || []).slice(0, 96);
-  const n = Math.max(1, towns.length), ROWS = 8;
+  const n = Math.max(1, towns.length), ROWS = 9;
   const T = new Float32Array(n * ROWS * 4);
   const put = (row, k, a, b, c, d) => T.set([a, b, c, d], (row * n + k) * 4);
   towns.forEach((t, k) => {
@@ -267,6 +274,8 @@ function glUpdateLand() {
     t.persona = P;
     put(6, k, P.axis, P.elong, P.tint, P.green);
     put(7, k, P.park, P.canal, P.rows, P.sky);
+    t.a0 = townRoadTurn(t);   // its main avenues turned to meet the roads that come in (14f)
+    put(8, k, t.a0, 0, 0, 0);
   });
   glTex(1, GLMAP.tex.towns, n, ROWS, gl.RGBA32F, gl.RGBA, gl.FLOAT, T);
   GLMAP.nTowns = towns.length;
@@ -339,6 +348,7 @@ function glDrawTerrain(c, kind) {
     gl.uniform1f(U.uH, H);
     gl.uniform1i(U.uMode, kind === "mask" ? 1 : 0);
     gl.uniform1i(U.uNTowns, GLMAP.nTowns); gl.uniform1i(U.uNPits, GLMAP.nPits); gl.uniform1i(U.uRivOn, GLMAP.rivOn || 0);
+    if (U.uRoadOn) gl.uniform1i(U.uRoadOn, GLMAP.roadOn || 0);
     gl.uniform2i(U.uVGrid, (GLMAP.vgrid || [1, 1])[0], (GLMAP.vgrid || [1, 1])[1]);
   };
   if (townsOn) {
@@ -413,7 +423,7 @@ function drawTownTraffic(c, cs, now) {
   for (const tw of LANDUSE.towns) {
     const twx = tw.gx ?? tw.x, twy = tw.gy ?? tw.y;
     if (twx + tw.r * 1.3 < x0 || twx - tw.r * 1.3 > x1 || twy + tw.r * 1.3 < y0 || twy - tw.r * 1.3 > y1) continue;
-    const hh = townHash(tw.id), N = 5 + Math.floor(hh * 4), a0 = hh * 43.98, R = tw.r;
+    const hh = townHash(tw.id), N = 5 + Math.floor(hh * 4), a0 = tw.a0 ?? hh * 43.98, R = tw.r;
     for (let k = 0; k < N; k++) {
       const ang = a0 + k * 2 * Math.PI / N + 0.15 * Math.sin(k * 1.7 + a0);
       const cars = Math.round(60 * R);
@@ -1970,10 +1980,9 @@ float artAng(int k, int N, float a0, float d, float R) {
   return a0 + fk * 6.2831853 / float(N) + 0.15 * sin(fk * 1.7 + a0) + 0.12 * sin(d / R * 5.0 + fk * 2.1) * sstep(0.0, 0.2 * R, d);
 }
 // distance to the nearest radial main road; the wedge between main roads the point is in; distances to the two rings
-float radialRoads(vec2 rel, float d, float R, float hh, out float ring1, out float ring2, out float wedgeA, out float wedgeSpan, out int wedge) {
+float radialRoads(vec2 rel, float d, float R, float hh, float a0, out float ring1, out float ring2, out float wedgeA, out float wedgeSpan, out int wedge) {
   float th = atan(rel.y, rel.x);
   int N = 5 + int(hh * 4.0);
-  float a0 = hh * 43.98;
   float best = 1e9, bestPos = 1e9;
   wedge = 0; wedgeA = 0.0; wedgeSpan = 1.0;
   for (int k = 0; k < 9 * uOne; k++) {
@@ -1994,6 +2003,7 @@ struct Town {
   vec2 c; float R, Ru, hh, pop, era, ind, heavy, chem, power, light, office, campus, resort, arid, hill, seaD, nuclear, fishing, big, med;
   vec2 seaDir; int style, seed; bool cap, port;
   float axis, elong, tint, green, park, canal, rows, sky;     // what makes this town itself
+  float a0;                                                   // the turn of its main avenues, to meet its roads
 };
 Town loadTown(int i) {
   Town t;
@@ -2008,6 +2018,7 @@ Town loadTown(int i) {
   vec4 r6 = texelFetch(uTowns, ivec2(i, 6), 0), r7 = texelFetch(uTowns, ivec2(i, 7), 0);
   t.axis = r6.x; t.elong = max(r6.y, 1.0); t.tint = r6.z; t.green = r6.w;
   t.park = r7.x; t.canal = r7.y; t.rows = r7.z; t.sky = r7.w;
+  t.a0 = texelFetch(uTowns, ivec2(i, 8), 0).x;
   // how much of a warm-country building tradition (tiled roofs, pale walls): old-world towns most, grids least
   t.med = (t.style == 2 ? 0.75 : t.style == 1 ? 0.35 : 0.15) * (1.0 - 0.6 * t.arid);
   if (t.canal > 0.5) t.med = 0.95;
@@ -2255,9 +2266,9 @@ vec4 cityColor(vec2 p, float pxm, float ce, float slope) {
     float d = length(rel);
     // ---- the main roads ----
     float ring1, ring2, wA, wSpan; int wedge;
-    float radial = radialRoads(rel, d, R, hh, ring1, ring2, wA, wSpan, wedge);
+    float radial = radialRoads(rel, d, R, hh, t.a0, ring1, ring2, wA, wSpan, wedge);
     float da = length(aniso(rel, t));
-    { float th = atan(rel.y, rel.x), a0 = hh * 43.98;
+    { float th = atan(rel.y, rel.x), a0 = t.a0;
       ring1 = abs(da - 0.3 * R * (1.0 + 0.05 * sin(3.0 * th + a0)));
       ring2 = abs(da - 0.62 * R * (1.0 + 0.06 * sin(2.0 * th + a0 * 1.3))); }
     float ang0 = hh * 1.5707963;
@@ -2408,7 +2419,7 @@ vec4 cityColor(vec2 p, float pxm, float ce, float slope) {
       vec2 relC = transpose(rot) * qc;
       if (oldTown || t.style == 2 || curvy > 0.0) relC = rel;
       float r1c, r2c, wAc, wSc; int wc;
-      float artC = radialRoads(relC, length(relC), R, hh, r1c, r2c, wAc, wSc, wc);
+      float artC = radialRoads(relC, length(relC), R, hh, t.a0, r1c, r2c, wAc, wSc, wc);
       float densC = townDens(relC, t, artC, max(pxm, bsz.x * M * 0.6)) + 0.12 * (bh2 - 0.5) - 0.55 * sstep(0.5, 1.3, slope) * (0.5 + 0.5 * t.hill);
       bool built = densC > 0.32;
       float parkC = fbm(relC / (0.04 * Ru) + 2.0, seed + 48, 2);
@@ -2665,7 +2676,7 @@ vec4 cityColor(vec2 p, float pxm, float ce, float slope) {
       for (int k = 0; k < 9 * uOne; k++) {
         int N = 5 + int(hh * 4.0);
         if (k >= N) break;
-        float ang = artAng(k, N, hh * 43.98, hwR, R);
+        float ang = artAng(k, N, t.a0, hwR, R);
         vec2 jc = vec2(cos(ang), sin(ang)) * hwR;
         for (int s2 = 0; s2 < 4 * uOne; s2++) {
           vec2 lc = jc + rot2(ang + 0.785 + 1.5708 * float(s2)) * vec2(170.0 * M, 0.0);
@@ -3079,6 +3090,7 @@ vec3 waterColor(vec2 p, float e) {
 #ifndef VILLAGE_LITE
 ${villageGlsl()}
 #endif
+${roadGlsl()}
 #if PASS == 1
 // pass 1: land, sea, rivers, farms, forests, mountains, mines and harbours (no towns)
 void main() {
@@ -3125,6 +3137,9 @@ void main() {
     float hillW = sstep(uHill - 0.012, uHill + 0.022, e), mtnW = sstep(uMtn - 0.01, uMtn + 0.035, e);
     shade = 1.0 + (shade - 1.0) * (0.35 + 0.65 * max(hillW, mtnW)) * (1.0 - 0.7 * gFarm) * (1.0 - 0.75 * town.a) * (1.0 - 0.6 * gVilA) * (1.0 - 0.5 * pit.a) * (1.0 - 0.85 * gRivWater);
     col = g * shade;
+    // roads over everything in the land, on bridges where they cross rivers (14f)
+    vec4 road = roadAt(p, uScale, gRivWater);
+    col = mix(col, road.rgb * (0.9 + 0.1 * shade), road.a);
     outRiv = vec4(gRivWater, clamp(gRivBank / 160.0, 0.0, 1.0), 0.0, 1.0);
   }
   outColor = vec4(clamp(satLook(col), 0.0, 1.0), 1.0);
@@ -3404,31 +3419,22 @@ function buildShapes() {
     }
     shapeCache.fronts = linesToPath(lines, 2);
   }
-  shapeCache.roads = roadPath();
+  shapeCache.roads = null;   // worked out when drawn (drawRoads), since the graphics card may paint them
   buildProvinceShapes(shapeCache);   // province lines and names (16m)
   return shapeCache;
 }
 
-/* Roads drawn as smooth curves: each bend is a curve through the town or cell it passes. */
-function roadPath() {
+/* Roads drawn as smooth curves (the same curves the graphics card paints, 14f), for the maps that draw them
+   on top: the tile map, the simpler map, and roads the land picture does not have yet (built during a replay).
+   With `only`, just those edges. */
+function roadPath(only) {
   const path = new Path2D();
-  const nbrs = new Map();
-  for (const k of game.roads) {
-    const [a, b] = edgeEnds(k);
-    if (!nbrs.has(a)) nbrs.set(a, []); if (!nbrs.has(b)) nbrs.set(b, []);
-    nbrs.get(a).push(b); nbrs.get(b).push(a);
-  }
-  const ctr = c => [cellX(c) + 0.5, cellY(c) + 0.5];
-  const mid = (a, b) => { const p = ctr(a), q = ctr(b); return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]; };
-  for (const [c, list] of nbrs) {
-    const p = ctr(c);
-    const town = game.cities.some(t => t.cell === c);
-    if (list.length === 2 && !town) {
-      const m1 = mid(c, list[0]), m2 = mid(c, list[1]);
-      path.moveTo(m1[0], m1[1]); path.quadraticCurveTo(p[0], p[1], m2[0], m2[1]);
-    } else {
-      for (const n of list) { const m = mid(c, n); path.moveTo(p[0], p[1]); path.lineTo(m[0], m[1]); }
-    }
+  const R = roadNet();
+  for (const k of only || game.roads) {
+    const pts = R.edgePts.get(k);
+    if (!pts) { const [a, b] = edgeEnds(k); path.moveTo(cellX(a) + 0.5, cellY(a) + 0.5); path.lineTo(cellX(b) + 0.5, cellY(b) + 0.5); continue; }
+    path.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) path.lineTo(pts[i][0], pts[i][1]);
   }
   return path;
 }
@@ -3500,15 +3506,25 @@ function strokeEdges(c, edges, cs) {
   c.stroke();
 }
 
-/* Roads: pale ribbons with a soft dark edge, like seen from the air. */
+/* Roads: pale ribbons with a soft dark edge, like seen from the air. With the full map the graphics card paints
+   them into the land (14f); here only those it does not have yet. */
 function drawRoads(c, cs) {
   const sh = buildShapes();
-  c.save();
-  c.scale(cs, cs);
-  c.lineCap = "round"; c.lineJoin = "round";
-  c.strokeStyle = "rgba(26,22,18,0.55)"; c.lineWidth = clamp(cs * 0.17, 1.8, 5.5) / cs; c.stroke(sh.roads);
-  c.strokeStyle = "#ddd5c1"; c.lineWidth = clamp(cs * 0.075, 0.8, 2.6) / cs; c.stroke(sh.roads);
-  c.restore();
+  const painted = GLMAP.ok && !GLMAP.simple && GLMAP.roadEdges;
+  const rkey = `${sh.key}|${roadNet().key}|${painted ? GLMAP.roadKey : "-"}`;
+  if (sh.roadsKey !== rkey) {
+    sh.roadsKey = rkey;
+    const missing = painted ? [...game.roads].filter(k => !GLMAP.roadEdges.has(k)) : null;
+    sh.roads = !painted ? roadPath() : missing.length ? roadPath(missing) : null;
+  }
+  if (sh.roads) {
+    c.save();
+    c.scale(cs, cs);
+    c.lineCap = "round"; c.lineJoin = "round";
+    c.strokeStyle = "rgba(26,22,18,0.55)"; c.lineWidth = clamp(cs * 0.17, 1.8, 5.5) / cs; c.stroke(sh.roads);
+    c.strokeStyle = "#ddd5c1"; c.lineWidth = clamp(cs * 0.075, 0.8, 2.6) / cs; c.stroke(sh.roads);
+    c.restore();
+  }
   for (const p of game.projects) {
     if (p.kind === "road") {
       c.setLineDash([cs * 0.3, cs * 0.25]);

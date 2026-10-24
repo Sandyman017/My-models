@@ -414,3 +414,20 @@ Why Maz wants it: the game is about drawing borders, and this brings that back f
 - **Balance** (8 worlds × 40 seasons against v38.2): the opening war the same in every world, wars 1.5 → 1.6, stability 57.1 → 57.9, world output −3% (a second run during the work gave +3%: within the noise; town sites, charters and village events move worlds both ways), seasons 9% slower (1.26 → 1.38 s). Nobody starves more.
 - Size: about 2,600 lines of new code and tests (engine 10w about 1,300, village painter about 580, village screens about 400, tests about 330), plus the research and these notes.
 - GAME_BUILD 39, installer version 39.0.0.
+
+## Next: roads (agreed with Maz after v39; Part 1 is done, below)
+Maz: "I don't like how they look, and they are useless except for connecting my cities." Today a road only matters as joined-or-not: once two towns are joined, a long winding road works like a short straight one and a second road adds nothing.
+- **Part 1 – Looks** (done): roads painted into the land at their real width, smooth curves that follow the ground, bridges, four kinds of road by era and traffic, town avenues turned to meet them. No change to the rules.
+- **Part 2 – Travel time and road grades**: replace joined-or-not with travel time along the roads (a town 2 days from the capital trades with it more than one 10 days away); track → paved → motorway upgrades as projects (faster, cheaper hauling and marching, more upkeep), unlocked by era; rivals use the same choices. The look of Part 1 then shows the real grade.
+- **Part 3 – Traffic**: each stretch carries trade, food and ore; busy roads slow down, which shows where to upgrade; traffic on the map and in Statistics.
+- **Part 4 – Distance and loyalty, then war**: provinces far from the capital by road are harder to hold; famine help moves along roads; army supply follows roads.
+
+### Version 39.1: roads, part 1 — how they look (Maz: "first I don't like how they look", with photos of asphalt roads, a winding road and a motorway)
+- **Painted into the land** by the graphics card (`ui/36c-14f-roads-on-the-map.js`), like the rivers: real width in metres, under towns, over fields, forests and villages. Far out, where a road is thinner than a pixel, it is a thin pale map line so it can still be seen.
+- **Smooth curves**: each road is a curve through the centres of the cells it joins (it still passes every centre, so villages, markets and the carts stay on it), never out over the sea; close up it bends gently with the ground, more in hills, and on some stretches of mountain road it climbs in hairpin turns.
+- **Four kinds of road**, from the nation's own era and the road's traffic (the people of the towns it joins, by the shortest road between each pair): a dirt track with wheel ruts (the steam age, little traffic, wild land), a gravel road, a two-lane asphalt road (white edge lines; a dashed white centre line, or a double yellow one in nations that build grid towns), and from the Electronic Age a motorway between big towns (two carriageways of three lanes, grass median with a barrier, yellow inner lines, white lane lines, hard shoulders). For now this is only the look: Part 2 makes grades real.
+- **Bridges** where a road crosses a river (a concrete deck, parapets, its shadow on the water); a dirt track fords it.
+- **Towns meet their roads**: each town's main avenues are turned so they leave the town along the real roads (on average 0.7° off, before 14°); the cars in the towns follow.
+- The overlay draws only the roads the land picture does not have yet, and the tile map and the simpler map keep drawing roads on top, along the same curves; carts follow the curves too.
+- **Checks**: `tests/road-looks.js` draws every kind of road with the game's own painter from 1 m to 1.5 km a pixel in seconds (`tests/out/road-looks.png`); every map plan compiles; engine, trade, village and browser tests pass. Rules unchanged, so no balance run.
+
