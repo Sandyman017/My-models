@@ -263,7 +263,46 @@ function glUploadRoads() {
   GLMAP.roadEdges = new Set(game.roads);
 }
 
-/* The road painter, inside the land pass of the full map (after the rivers, so roads cross them on bridges). */
+/* The roads' own small program for the graphics card. It runs after the land (and before the towns): it reads the
+   land picture and the river picture the land pass left, and paints the roads over the land, on bridges where they
+   cross rivers. It is kept apart from the land program on purpose: Windows turns every shader into DirectX, and a
+   program as big as the land one with the roads inside it was too much for some graphics cards (v39.1). */
+function roadShaderSource() {
+  const full = glShaderSource();
+  const cut = (from, to) => {
+    const a = full.indexOf(from), b = full.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error("road painter: a piece of the map painter was not found (" + from + ")");
+    return full.slice(a, b);
+  };
+  return `#version 300 es
+precision highp float;
+precision highp int;
+uniform vec2 uOrigin;     // the map point (in cells) at the top-left pixel
+uniform float uScale;     // cells per pixel
+uniform float uH;         // canvas height in pixels
+uniform int uOne;         // always 1 (keeps loops loops on Windows)
+uniform sampler2D uFrame; // the land as the land pass drew it
+uniform sampler2D uRiv;   // river water (x) and land (z) from the land pass
+layout(location = 0) out vec4 outColor;
+${cut("float hash2(int ix", "// the game's continent")}
+${cut("// what a satellite camera does", "const vec3 ROCK")}
+const float M = 1.0 / 50000.0;          // one metre, in map cells
+${roadGlsl()}
+void main() {
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  vec4 base = texelFetch(uFrame, fc, 0);
+  outColor = base;
+  vec2 p = uOrigin + vec2(gl_FragCoord.x, uH - gl_FragCoord.y) * uScale;
+  if (p.x < 1.0 || p.y < 1.0 || p.x >= 95.0 || p.y >= 63.0) return;
+  vec4 rv = texelFetch(uRiv, fc, 0);
+  if (rv.z < 0.5) return;   // the sea
+  vec4 road = roadAt(p, uScale, rv.x);
+  if (road.a > 0.0) outColor = vec4(mix(base.rgb, clamp(satLook(road.rgb), 0.0, 1.0), road.a), 1.0);
+}
+`;
+}
+
+/* The road painter (inside roadShaderSource). */
 function roadGlsl() {
   return `
 // ---------- roads ----------
