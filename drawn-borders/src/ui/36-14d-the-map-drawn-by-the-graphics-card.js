@@ -207,38 +207,48 @@ function glActivate(S, roadProg) {
   });
   // the first part draws into two pictures (the land, and where the rivers are) that the roads and the towns read;
   // the roads draw into a third (on unit 14, which no program reads) when the towns come after them
+  // (nothing is kept from an earlier start: a framebuffer of a dead context once unhooked the land picture, v39.3)
+  GLMAP.fbo = null; GLMAP.fboB = null; GLMAP.fboSize = [0, 0]; GLMAP.frameChecks = 0;
   if (GLMAP.progs.length > 1) {
     GLMAP.tex.frame = mk(8, gl.NEAREST); GLMAP.tex.riv = mk(9, gl.NEAREST);
-    GLMAP.fbo = gl.createFramebuffer(); GLMAP.fboSize = [0, 0];
-    if (GLMAP.roadP) { GLMAP.tex.frameB = mk(14, gl.NEAREST); GLMAP.fboB = gl.createFramebuffer(); }
+    GLMAP.fbo = gl.createFramebuffer();
+    if (GLMAP.roadP) { GLMAP.tex.frameB = mk(8, gl.NEAREST); GLMAP.fboB = gl.createFramebuffer(); }
+    gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, null);
   }
+  GLMAP.S = S;
   glFinish(S, chosen.plan.name + (GLMAP.roadP ? ", roads painted into the land" : ""));
-  // if the graphics card gives up while drawing, remember what was in use and start again at once with less:
-  // first without the roads painter (the newest part), then the next lighter map
-  const roadKey = S.build + ":roads";
+  // if the graphics card gives up while drawing, start again at once with less (glRestart)
   cv.addEventListener("webglcontextlost", e => {
     e.preventDefault();
-    if (GLMAP.canvas !== cv || !GLMAP.ok) return;
-    S.fail(GLMAP.roadP ? roadKey : chosen.key);
-    GLMAP.ok = false;
-    GLMAP.note = "The graphics card stopped while drawing the map (" + (GLMAP.roadP ? "with the roads painted into the land" : chosen.plan.name) + "); trying again with less";
-    ZOOM.max = 5;
-    if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
-    try { if (world) resetTerrain(world); view.staticKey = ""; renderAll(); } catch (err) { console.warn(err); }
-    GLMAP.restarts = (GLMAP.restarts || 0) + 1;
-    if (GLMAP.restarts > 6) return;
-    const note = GLMAP.note;
-    setTimeout(() => {
-      if (GLMAP.ok) return;
-      GLMAP.tried = false; GLMAP.restartNote = note;
-      try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } else glInit(); } catch (err) { console.warn(err); }
-      GLMAP.restartNote = null;
-    }, 1500);
+    if (GLMAP.canvas === cv) glRestart("The graphics card stopped while drawing the map");
   });
   glUploadEmpty();
   ZOOM.max = 1000;   // down to about three metres a pixel
   // ready later than the start (prepared in the background): switch the full map on now
   if (S.async) glReady();
+}
+/* The map in use cannot go on (the graphics card stopped, or a picture it drew stayed empty): remember what to blame
+   (the roads painter first, the newest part; then the plan), show the old tile map for a moment, and start again with
+   less on a fresh context. */
+function glRestart(why) {
+  const S = GLMAP.S;
+  if (!S || !S.chosen || !GLMAP.ok) return;
+  S.fail(GLMAP.roadP ? S.build + ":roads" : S.chosen.key);
+  GLMAP.ok = false;
+  GLMAP.note = why + " (" + (GLMAP.roadP ? "with the roads painted into the land" : S.chosen.plan.name) + "); trying again with less";
+  ZOOM.max = 5;
+  if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
+  try { if (world) resetTerrain(world); view.staticKey = ""; renderAll(); } catch (err) { console.warn(err); }
+  GLMAP.restarts = (GLMAP.restarts || 0) + 1;
+  if (GLMAP.restarts > 6) return;
+  const note = GLMAP.note;
+  setTimeout(() => {
+    if (GLMAP.ok) return;
+    GLMAP.tried = false; GLMAP.restartNote = note;
+    try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } else glInit(); } catch (err) { console.warn(err); }
+    GLMAP.restartNote = null;
+  }, 1500);
 }
 function glReady() {
   try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } } catch (e) { console.warn("map:", e); }
@@ -425,6 +435,12 @@ function glSetWorld(w) {
     }
   } catch (e) { console.warn("rivers:", e); GLMAP.rivOn = 0; }
 }
+/* Whether the framebuffer being drawn holds a drawn (opaque) pixel in the middle of the view. */
+function glPictureDrawn(gl, W, H) {
+  const px = new Uint8Array(4);
+  gl.readPixels(Math.floor(W / 2), Math.floor(H / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return gl.isContextLost() || px[3] > 0;
+}
 /* Draw the land for the current view into a 2D context (kind "img"), or just where land is ("mask"). While the
    camera moves, a coarser picture is drawn so it stays smooth; the sharp one follows when it stops. */
 function glDrawTerrain(c, kind) {
@@ -470,12 +486,12 @@ function glDrawTerrain(c, kind) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GLMAP.tex.frame, 0);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, GLMAP.tex.riv, 0);
-      if (GLMAP.fboB) {
-        glTex(14, GLMAP.tex.frameB, W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      if (GLMAP.roadP && GLMAP.fboB) {
+        glTex(8, GLMAP.tex.frameB, W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
         gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fboB);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GLMAP.tex.frameB, 0);
       }
-      GLMAP.fboSize = [W, H];
+      GLMAP.fboSize = [W, H]; GLMAP.frameChecks = 0;
     }
     // the land into the two pictures (unbound from the texture units while they are drawn into)
     gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, null);
@@ -484,6 +500,10 @@ function glDrawTerrain(c, kind) {
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
     setU(GLMAP.progs[0]);
     draw();
+    // the first few times (and after every new size), check that the land really is in its picture: every pixel the
+    // land pass draws is opaque, so an empty middle means this computer does not draw it, and the map starts again with less
+    const checking = (GLMAP.frameChecks || 0) < 3;
+    if (checking && !glPictureDrawn(gl, W, H)) { setTimeout(() => glRestart("The land picture stayed empty"), 0); return false; }
     gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, GLMAP.tex.frame);
     gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, GLMAP.tex.riv);
     if (roadsOn) {
@@ -492,6 +512,7 @@ function glDrawTerrain(c, kind) {
       else gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       setU(GLMAP.roadP);
       draw();
+      if (townsOn && checking && !glPictureDrawn(gl, W, H)) { setTimeout(() => glRestart("The picture with the roads stayed empty"), 0); return false; }
       if (townsOn) { gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, GLMAP.tex.frameB); }
     }
     if (townsOn) {
@@ -499,6 +520,7 @@ function glDrawTerrain(c, kind) {
       setU(GLMAP.progs[1]);
       draw();
     }
+    if (checking) GLMAP.frameChecks = (GLMAP.frameChecks || 0) + 1;
   } else {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     setU(GLMAP.progs[0]);

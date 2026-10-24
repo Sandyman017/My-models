@@ -446,3 +446,9 @@ Maz: "I don't like how they look, and they are useless except for connecting my 
 - **Checks**: `tests/map-fallback.test.js` (map programs identical to v39; a silent stop as on Maz's PC; a lost context; a roads program that cannot start; a stop while drawing; background preparation); every plan and the roads program compile; roads draw in a real game through the roads program (3.3, 10 and 34 m a pixel, with a hairpin climb); engine, trade, browser and road-looks tests pass.
 - GAME_BUILD 39.3 (so his PC forgets the plans 39.2 wrongly remembered as failed), installer version 39.3.0.
 
+### Version 39.4: no more empty land after a restart (Maz sent a screenshot: no land at all, black squares around the towns, roads drawn on top)
+- **What it showed**: the background colour is the one used only with the full map, so 39.3 did start the full map. Then the graphics card stopped once while drawing with the roads painted in; the map started again without the roads program, as planned, but `glActivate` kept the roads' framebuffer from the dead context, and the next draw used it to unhook the land picture. The land pass drew into nothing; the town pass painted its squares on the empty picture.
+- **The fix**: nothing is kept from an earlier start. And a self-check: the first draws after a start (or a new size) read back the middle pixel of the land picture; if it is empty, the map starts again with less (without the roads program, then the next plan) instead of showing an empty map.
+- **Checks**: `tests/map-fallback.test.js` adds "nothing left over after a restart" and "the land picture stayed empty → the map starts again"; every earlier case still passes; engine, trade, browser and road-looks tests pass.
+- GAME_BUILD 39.4 (painted roads get one more try on Maz's PC; if the graphics card stops again they are drawn on top and the Credits line says so), installer version 39.4.0.
+

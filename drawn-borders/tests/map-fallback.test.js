@@ -5,7 +5,9 @@
      A2 the next start skips that plan and does not blame any other
      L  the same with the context reported lost
      B  the roads' own program cannot start: the full map, with the roads drawn on top
-     C  the graphics card stops while drawing: the full map comes back by itself, without the roads painter
+     C  the graphics card stops while drawing: the full map comes back by itself, without the roads painter, with
+        nothing left over from before (a leftover framebuffer once unhooked the land picture: v39.3 on Maz's PC)
+     E  the land picture stays empty after a draw: the map notices and starts again with less
      P  where the browser prepares programs in the background (KHR_parallel_shader_compile, imitated here): the old
         tile map shows while they are prepared, then the full map switches on by itself
    and the land and town programs are exactly those of version 39 (a computer reuses the program it prepared then).
@@ -78,7 +80,25 @@ const { execSync } = require("child_process");
   check("C0: clean start, roads painted", await settle(), { ok: true, roads: true, failed: "", note: n => /roads painted into the land/.test(n) });
   await page.evaluate(() => GLMAP.gl.getExtension("WEBGL_lose_context").loseContext());
   await page.waitForTimeout(2000);
-  check("C: graphics card stops while drawing", await settle(), { ok: true, roads: false, zoomMax: 1000, failed: build + ":roads" });
+  const c = await settle();
+  c.leftover = await page.evaluate(() => !!GLMAP.fboB || !!(GLMAP.tex && GLMAP.tex.frameB));
+  check("C: graphics card stops while drawing", c, { ok: true, roads: false, zoomMax: 1000, failed: build + ":roads", leftover: false });
+  // E: draw a tiny view with the roads painter on, then unhook the land picture and draw again
+  await page.evaluate(() => __start());
+  await settle();
+  const drawTiny = () => page.evaluate(() => {
+    canvas.width = 32; canvas.height = 24; view.dpr = 1; view.vw = 32; view.vh = 24; __sea();
+    updateLanduse(); glUpdateLand(); GLMAP.lastDraw = 0; GLMAP.qIdle = 1;   // the same size every time
+    const cv = document.createElement("canvas"); cv.width = 32; cv.height = 24;
+    glDrawTerrain(cv.getContext("2d"), "img");
+    const d = cv.getContext("2d").getImageData(16, 12, 1, 1).data;
+    return { ok: GLMAP.ok, roads: !!GLMAP.roadP, drawn: d[3] > 0, checks: GLMAP.frameChecks };
+  });
+  check("E1: a tiny view with the roads painter", await drawTiny(), { ok: true, roads: true, drawn: true, checks: 1 });
+  await page.evaluate(() => { const gl = GLMAP.gl; gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0); gl.bindFramebuffer(gl.FRAMEBUFFER, null); });
+  await drawTiny();
+  await page.waitForTimeout(300);
+  check("E2: the land picture stayed empty", await settle(), { ok: true, roads: false, failed: build + ":roads", note: n => /land picture stayed empty/.test(n) });
   await page.evaluate(() => { __fakePar(12); __start(); });
   check("P1: preparing in the background", await state(), { ok: false, preparing: true, zoomMax: 5 });
   const p = await settle();
