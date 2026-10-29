@@ -294,7 +294,8 @@ function drawTraffic(c, cs, now) {
   for (const e of trafficEdges()) {
     let p = (now / 1000 * e.speed + e.phase) % 1;
     if (e.dir) p = 1 - p;
-    const x = (cellX(e.a) + 0.5 + (cellX(e.b) - cellX(e.a)) * p) * cs, y = (cellY(e.a) + 0.5 + (cellY(e.b) - cellY(e.a)) * p) * cs;
+    const [rx, ry] = roadPointAt(e.a, e.b, p);   // on the road's curve (14f)
+    const x = rx * cs, y = ry * cs;
     c.fillStyle = e.trade ? "#ffd36b" : "rgba(255,248,230,0.9)";
     c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
   }

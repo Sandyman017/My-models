@@ -19686,28 +19686,36 @@ function drawTerrainTiles(c, kind, budget) {
    ===================================================================== */
 const GLMAP = { ok: false, tried: false, gl: null, canvas: null, prog: null, U: {}, tex: {}, landKey: null, nTowns: 0, nPits: 0, lastDraw: 0, low: false, timer: 0, villages: null, qIdle: 1, qMove: 0.5 };
 const GL_RIVER_W = [0.0012, 0.0028, 0.006, 0.012];   // real river widths in cells (60 m to 600 m)
-/* Compile one map painter program in the given context. Returns { prog } or { err }. */
+/* Hand one map painter program to the graphics card: compile and link, without waiting for the answer. */
+function glStartProgram(gl, src) {
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, "#version 300 es\nin vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }");
+  gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, src);
+  gl.compileShader(fs);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  return { prog, fs };
+}
+/* Whether a program the graphics card has finished is usable: { prog }, or { err, crash }. A real mistake in a shader
+   always comes with a message; no message (or a lost context) means the graphics card itself stopped. */
+function glProgramResult(gl, b) {
+  if (gl.isContextLost()) return { err: "the graphics card stopped (context lost)", crash: true };
+  if (gl.getProgramParameter(b.prog, gl.LINK_STATUS)) return { prog: b.prog };
+  const bad = !gl.getShaderParameter(b.fs, gl.COMPILE_STATUS);
+  const m = bad ? gl.getShaderInfoLog(b.fs) : gl.getProgramInfoLog(b.prog);
+  return { err: (bad ? "compile: " : "link: ") + (m ? m.slice(0, 300) : "no message: the graphics card stopped"), crash: !m || gl.isContextLost() };
+}
+/* Compile one map painter program and wait for it. Returns { prog } or { err }. */
 function glBuild(gl, src) {
-  try {
-    const vs = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vs, "#version 300 es\nin vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }");
-    gl.compileShader(vs);
-    const fs = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fs, src);
-    gl.compileShader(fs);
-    if (gl.isContextLost()) return { err: "the graphics card stopped (context lost)" };
-    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return { err: "compile: " + (gl.getShaderInfoLog(fs) || "no message").slice(0, 300) };
-    const prog = gl.createProgram();
-    gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-    if (gl.isContextLost()) return { err: "the graphics card stopped (context lost)" };
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return { err: "link: " + (gl.getProgramInfoLog(prog) || "no message").slice(0, 300) };
-    return { prog };
-  } catch (e) { return { err: "error: " + (e && e.message || e) }; }
+  try { const r = glProgramResult(gl, glStartProgram(gl, src)); return r.err ? { err: r.err } : { prog: r.prog }; }
+  catch (e) { return { err: "error: " + (e && e.message || e) }; }
 }
 const MAPKEY = { fail: "drawn-borders-map-fail", trying: "drawn-borders-map-trying" };
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* storage may be off */ } }
-const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVillInfo", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn"];
+const GL_UNIFORMS = ["uFrame", "uRiv", "uOrigin", "uScale", "uH", "uMode", "uOne", "uSea", "uHill", "uMtn", "uMoist", "uSeed", "uLand", "uTowns", "uNTowns", "uPits", "uNPits", "uVillages", "uVillInfo", "uVGrid", "uTownIdx", "uRV", "uRCell", "uRList", "uRivOn", "uRoadV", "uRoadCell", "uRoadList", "uRoadOn"];
 /* The painters this game can use, best first. The full map is three small programs drawn one over another (land and
    rivers; towns; river water and quays inside towns), because one huge program is too much for some graphics
    drivers (Windows translates every shader for DirectX, and a very long one can fail there). */
@@ -19721,95 +19729,212 @@ function glPlans() {
   if (typeof glShaderSourceSafe === "function") plans.push({ name: "the simpler map from version 26", parts: [glShaderSourceSafe()], simple: true });
   return plans;
 }
+/* Get the map painter ready. Every program is handed to the graphics card and, where the browser can (the
+   KHR_parallel_shader_compile extension), made ready in the background while the game goes on with the old tile map;
+   the full map switches on when it is ready. On Windows every program is first turned into DirectX, and the land
+   program takes long the first time: waiting for it in one go kept the browser's graphics process busy until the
+   browser stopped it (v39.1–39.2 on Maz's PC). A plan that fails is remembered and the next, lighter one is tried;
+   when the graphics card itself stops, only the plan in hand is blamed and the next one starts on a fresh context.
+   Returns whether the full map is ready now. */
 function glInit() {
   if (GLMAP.tried) return GLMAP.ok;
   GLMAP.tried = true;
   try {
     if (typeof document === "undefined" || window.__noWebGL || typeof glShaderSource !== "function") { GLMAP.note = "old tile map (WebGL not used)"; return false; }
-    const cv = document.createElement("canvas");
-    const gl = cv.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
-    if (!gl) { GLMAP.note = "old tile map: the browser gave no WebGL 2 (switched off, or blocked after a graphics crash)"; return false; }
     const build = String(GAME_BUILD);
-    // a plan that failed on this computer before (or stopped the page while it was being prepared) is not tried again
-    const failed = (lsGet(MAPKEY.fail) || "").split(",");
+    // what failed on this computer before (or stopped the page while it was being prepared) is not tried again;
+    // every failure is kept, so the next start goes on to the next, lighter map
+    const failed = new Set((lsGet(MAPKEY.fail) || "").split(",").filter(f => f.startsWith(build + ":")));
     const tryingBefore = lsGet(MAPKEY.trying);
-    if (tryingBefore && tryingBefore.startsWith(build + ":")) failed.push(tryingBefore);
-    const notes = [];
-    let chosen = null;
-    for (const [pi, plan] of glPlans().entries()) {
-      const key = build + ":" + pi;
-      if (failed.includes(key) && !window.__retryMap) { notes.push(plan.name + ": skipped (failed here before)"); continue; }
-      lsSet(MAPKEY.trying, key);
-      const progs = [];
-      let err = null;
-      for (const [k, src] of plan.parts.entries()) {
-        const r = glBuild(gl, src);
-        if (r.err) { err = (plan.parts.length > 1 ? `part ${k + 1}: ` : "") + r.err; break; }
-        progs.push(r.prog);
-      }
-      lsSet(MAPKEY.trying, null);
-      if (err) {
-        notes.push(plan.name + " could not start (" + err + ")");
-        console.warn("map:", plan.name, err);
-        lsSet(MAPKEY.fail, [...failed.filter(f => f.startsWith(build + ":")), key].join(","));
-        continue;
-      }
-      chosen = { plan, progs, pi };
-      break;
-    }
-    if (!chosen) { GLMAP.note = notes.join(" · ") + " · using the old tile map"; return false; }
-    gl.useProgram(chosen.progs[0]);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    GLMAP.progs = chosen.progs.map(prog => {
-      const U = {};
-      for (const n of GL_UNIFORMS) U[n] = gl.getUniformLocation(prog, n);
-      const loc = gl.getAttribLocation(prog, "a");
-      return { prog, U, loc };
-    });
-    GLMAP.prog = chosen.progs[0]; GLMAP.U = GLMAP.progs[0].U;
-    const mk = (unit, filter) => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
-    GLMAP.tex.land = mk(0, gl.LINEAR);
-    GLMAP.tex.towns = mk(1, gl.NEAREST);
-    GLMAP.tex.pits = mk(2, gl.NEAREST);
-    GLMAP.tex.vill = mk(3, gl.NEAREST);
-    GLMAP.tex.tidx = mk(4, gl.NEAREST);
-    GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
-    GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
-    Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple });
-    glEachProg(U => {
-      gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
-      gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
-      if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
-      if (U.uOne) gl.uniform1i(U.uOne, 1);
-      if (U.uFrame) gl.uniform1i(U.uFrame, 8);
-      if (U.uRiv) gl.uniform1i(U.uRiv, 9);
-    });
-    // the first part draws into two pictures (the land, and where the rivers are) that the second part reads
-    if (GLMAP.progs.length > 1) {
-      GLMAP.tex.frame = mk(8, gl.NEAREST); GLMAP.tex.riv = mk(9, gl.NEAREST);
-      GLMAP.fbo = gl.createFramebuffer(); GLMAP.fboSize = [0, 0];
-    }
-    GLMAP.note = (notes.length ? notes.join(" · ") + " · using " : "") + chosen.plan.name + " (version " + build + ")";
-    // if the graphics card gives up later, remember it and carry on with the tile painter
-    cv.addEventListener("webglcontextlost", e => {
-      e.preventDefault();
-      lsSet(MAPKEY.fail, [...(lsGet(MAPKEY.fail) || "").split(",").filter(f => f.startsWith(build + ":")), build + ":" + chosen.pi].join(","));
-      GLMAP.ok = false; GLMAP.note = "The graphics card stopped while drawing the map (" + chosen.plan.name + "); the old map is used until the page is reloaded, then a lighter map is tried";
-      ZOOM.max = 5;
-      if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
-      try { resetTerrain(world); view.staticKey = ""; renderAll(); } catch (err) { console.warn(err); }
-    });
-    glUploadEmpty();
-    ZOOM.max = 1000;   // down to about three metres a pixel
-    return true;
-  } catch (e) { console.warn("map: WebGL 2 not used", e); GLMAP.note = "Map error: " + (e && e.message || e); GLMAP.ok = false; return false; }
+    if (tryingBefore && tryingBefore.startsWith(build + ":")) failed.add(tryingBefore);
+    lsSet(MAPKEY.fail, [...failed].join(","));
+    lsSet(MAPKEY.trying, null);
+    const S = { build, failed, plans: glPlans(), i: 0, retry: !!window.__retryMap, t0: performance.now(), async: false,
+      notes: GLMAP.restartNote ? [GLMAP.restartNote] : [], gen: (GLMAP.gen = (GLMAP.gen || 0) + 1) };
+    S.fail = key => { failed.add(key); lsSet(MAPKEY.fail, [...failed].join(",")); };
+    if (!glFreshContext(S)) { GLMAP.note = "old tile map: the browser gave no WebGL 2 (switched off, or blocked after a graphics crash)"; return false; }
+    GLMAP.preparing = true;
+    GLMAP.note = "the full map is being prepared (version " + build + ")";
+    // until it is ready, the old tile map is shown: it goes no closer than 500%
+    ZOOM.max = 5;
+    if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
+    glNextPlan(S);
+    return GLMAP.ok;
+  } catch (e) { console.warn("map: WebGL 2 not used", e); GLMAP.note = "Map error: " + (e && e.message || e); GLMAP.ok = false; GLMAP.preparing = false; return false; }
 }
-/* Set uniforms in every program of the map painter. */
+function glFreshContext(S) {
+  S.cv = document.createElement("canvas");
+  S.gl = S.cv.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
+  if (!S.gl) return null;
+  S.par = S.gl.getExtension("KHR_parallel_shader_compile");
+  try { const dbg = S.gl.getExtension("WEBGL_debug_renderer_info"); S.gpu = String(S.gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : S.gl.RENDERER) || ""); } catch (e) { S.gpu = ""; }
+  return S.gl;
+}
+/* Wait for programs the graphics card is preparing, without blocking it; then done(), or lost() if it stopped. */
+function glAwait(S, parts, done, lost) {
+  if (!S.par) return done();   // no background preparation here: the browser waits for them in done()
+  const step = () => {
+    if (S.gen !== GLMAP.gen) return;   // a newer start took over
+    try {
+      if (S.gl.isContextLost()) return lost();
+      if (!parts.every(b => S.gl.getProgramParameter(b.prog, S.par.COMPLETION_STATUS_KHR))) { S.async = true; setTimeout(step, 50); return; }
+    } catch (e) { console.warn("map:", e); return lost(); }
+    done();
+  };
+  step();
+}
+/* Try the plans in order, from the one in hand. */
+function glNextPlan(S) {
+  for (; S.i < S.plans.length; S.i++) {
+    const plan = S.plans[S.i], key = S.build + ":" + S.i;
+    if (S.failed.has(key) && !S.retry) { S.notes.push(plan.name + ": skipped (failed here before)"); continue; }
+    lsSet(MAPKEY.trying, key);
+    let parts;
+    try { parts = plan.parts.map(src => glStartProgram(S.gl, src)); } catch (e) { lsSet(MAPKEY.trying, null); S.notes.push(plan.name + " could not start (" + (e && e.message || e) + ")"); S.fail(key); continue; }
+    const crashed = what => { lsSet(MAPKEY.trying, null); S.notes.push(plan.name + " could not start (" + what + ")"); S.fail(key); S.i++; glAfterCrash(S); };
+    glAwait(S, parts, () => {
+      lsSet(MAPKEY.trying, null);
+      const res = parts.map(b => glProgramResult(S.gl, b));
+      const bad = res.findIndex(r => r.err);
+      if (bad < 0) { S.chosen = { plan, progs: res.map(r => r.prog), pi: S.i, key }; return glRoadsProgram(S); }
+      const what = (plan.parts.length > 1 ? `part ${bad + 1}: ` : "") + res[bad].err;
+      console.warn("map:", plan.name, what);
+      if (res.some(r => r.crash)) return crashed(what);
+      S.notes.push(plan.name + " could not start (" + what + ")"); S.fail(key); S.i++;
+      glNextPlan(S);
+    }, () => crashed("the graphics card stopped while preparing it"));
+    return;
+  }
+  glFinish(S, null);
+}
+/* The roads' own small program (14f); if it cannot start here, the roads are drawn on top of the map instead. */
+function glRoadsProgram(S) {
+  const key = S.build + ":roads";
+  if (S.chosen.plan.simple) return glActivate(S, null);
+  if (S.failed.has(key) && !S.retry) { S.notes.push("roads painted into the land: skipped (failed here before), drawn on top"); return glActivate(S, null); }
+  let b;
+  try { b = glStartProgram(S.gl, roadShaderSource()); }
+  catch (e) { S.notes.push("roads painted into the land could not start (" + (e && e.message || e) + "), drawn on top"); S.fail(key); return glActivate(S, null); }
+  lsSet(MAPKEY.trying, key);
+  // the graphics card stopped: the plan's programs went with it, so start the plan again on a fresh context, without the roads program
+  const crashed = what => { lsSet(MAPKEY.trying, null); S.notes.push("roads painted into the land could not start (" + what + ")"); S.fail(key); S.i = S.chosen.pi; S.chosen = null; glAfterCrash(S); };
+  glAwait(S, [b], () => {
+    lsSet(MAPKEY.trying, null);
+    const r = glProgramResult(S.gl, b);
+    if (!r.err) return glActivate(S, r.prog);
+    console.warn("map: roads", r.err);
+    if (r.crash) return crashed(r.err);
+    S.notes.push("roads painted into the land could not start (" + r.err + "), drawn on top"); S.fail(key);
+    glActivate(S, null);
+  }, () => crashed("the graphics card stopped while preparing it"));
+}
+/* The graphics card stopped: its context is gone. Give the browser a moment to start it again, then go on with the
+   next plan on a fresh context (a few times at most). */
+function glAfterCrash(S) {
+  GLMAP.restarts = (GLMAP.restarts || 0) + 1;
+  if (GLMAP.restarts > 6) { S.notes.push("the graphics card stopped too often"); return glFinish(S, null); }
+  S.async = true;
+  setTimeout(() => {
+    if (S.gen !== GLMAP.gen) return;
+    if (!glFreshContext(S)) { S.notes.push("no WebGL 2 after the graphics card stopped"); return glFinish(S, null); }
+    glNextPlan(S);
+  }, 1500);
+}
+/* What the Credits screen says about the map: what was tried, what is used, the graphics card and the time it took. */
+function glFinish(S, used) {
+  GLMAP.preparing = false;
+  const secs = ((performance.now() - S.t0) / 1000).toFixed(1);
+  const info = ` (version ${S.build}; ${S.gpu || "graphics card unknown"}; ${used ? `ready in ${secs} s${S.par ? ", prepared in the background" : ""}` : `after ${secs} s`})`;
+  GLMAP.note = used ? (S.notes.length ? S.notes.join(" · ") + " · using " : "") + used + info : S.notes.join(" · ") + " · using the old tile map" + info;
+}
+/* The plan is ready: set up its textures and uniforms and switch the full map on. */
+function glActivate(S, roadProg) {
+  const { gl, cv, chosen } = S;
+  gl.useProgram(chosen.progs[0]);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const progInfo = prog => {
+    const U = {};
+    for (const n of GL_UNIFORMS) U[n] = gl.getUniformLocation(prog, n);
+    const loc = gl.getAttribLocation(prog, "a");
+    return { prog, U, loc };
+  };
+  GLMAP.progs = chosen.progs.map(progInfo);
+  GLMAP.roadP = roadProg ? progInfo(roadProg) : null;
+  GLMAP.prog = chosen.progs[0]; GLMAP.U = GLMAP.progs[0].U;
+  const mk = (unit, filter) => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
+  GLMAP.tex = {};
+  GLMAP.tex.land = mk(0, gl.LINEAR);
+  GLMAP.tex.towns = mk(1, gl.NEAREST);
+  GLMAP.tex.pits = mk(2, gl.NEAREST);
+  GLMAP.tex.vill = mk(3, gl.NEAREST);
+  GLMAP.tex.tidx = mk(4, gl.NEAREST);
+  GLMAP.tex.vinfo = mk(10, gl.NEAREST);   // each village's look, direction and random number (14e)
+  GLMAP.tex.rv = mk(5, gl.NEAREST); GLMAP.tex.rcell = mk(6, gl.NEAREST); GLMAP.tex.rlist = mk(7, gl.NEAREST);
+  GLMAP.tex.roadV = mk(11, gl.NEAREST); GLMAP.tex.roadCell = mk(12, gl.NEAREST); GLMAP.tex.roadList = mk(13, gl.NEAREST);   // roads (14f)
+  Object.assign(GLMAP, { gl, canvas: cv, ok: true, simple: !!chosen.plan.simple, noRoads: !GLMAP.roadP });
+  glEachProg(U => {
+    gl.uniform1i(U.uLand, 0); gl.uniform1i(U.uTowns, 1); gl.uniform1i(U.uPits, 2); gl.uniform1i(U.uVillages, 3);
+    gl.uniform1i(U.uTownIdx, 4); gl.uniform1i(U.uRV, 5); gl.uniform1i(U.uRCell, 6); gl.uniform1i(U.uRList, 7);
+    if (U.uVillInfo) gl.uniform1i(U.uVillInfo, 10);
+    if (U.uRoadV) { gl.uniform1i(U.uRoadV, 11); gl.uniform1i(U.uRoadCell, 12); gl.uniform1i(U.uRoadList, 13); }
+    if (U.uOne) gl.uniform1i(U.uOne, 1);
+    if (U.uFrame) gl.uniform1i(U.uFrame, 8);
+    if (U.uRiv) gl.uniform1i(U.uRiv, 9);
+  });
+  // the first part draws into two pictures (the land, and where the rivers are) that the roads and the towns read;
+  // the roads draw into a third (on unit 14, which no program reads) when the towns come after them
+  // (nothing is kept from an earlier start: a framebuffer of a dead context once unhooked the land picture, v39.3)
+  GLMAP.fbo = null; GLMAP.fboB = null; GLMAP.fboSize = [0, 0]; GLMAP.frameChecks = 0;
+  if (GLMAP.progs.length > 1) {
+    GLMAP.tex.frame = mk(8, gl.NEAREST); GLMAP.tex.riv = mk(9, gl.NEAREST);
+    GLMAP.fbo = gl.createFramebuffer();
+    if (GLMAP.roadP) { GLMAP.tex.frameB = mk(8, gl.NEAREST); GLMAP.fboB = gl.createFramebuffer(); }
+    gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+  GLMAP.S = S;
+  glFinish(S, chosen.plan.name + (GLMAP.roadP ? ", roads painted into the land" : ""));
+  // if the graphics card gives up while drawing, start again at once with less (glRestart)
+  cv.addEventListener("webglcontextlost", e => {
+    e.preventDefault();
+    if (GLMAP.canvas === cv) glRestart("The graphics card stopped while drawing the map");
+  });
+  glUploadEmpty();
+  ZOOM.max = 1000;   // down to about three metres a pixel
+  // ready later than the start (prepared in the background): switch the full map on now
+  if (S.async) glReady();
+}
+/* The map in use cannot go on (the graphics card stopped, or a picture it drew stayed empty): remember what to blame
+   (the roads painter first, the newest part; then the plan), show the old tile map for a moment, and start again with
+   less on a fresh context. */
+function glRestart(why) {
+  const S = GLMAP.S;
+  if (!S || !S.chosen || !GLMAP.ok) return;
+  S.fail(GLMAP.roadP ? S.build + ":roads" : S.chosen.key);
+  GLMAP.ok = false;
+  GLMAP.note = why + " (" + (GLMAP.roadP ? "with the roads painted into the land" : S.chosen.plan.name) + "); trying again with less";
+  ZOOM.max = 5;
+  if (view.zoom > ZOOM.max) { view.zoom = ZOOM.max; view.cs = view.base * view.zoom; clampCamera(); }
+  try { if (world) resetTerrain(world); view.staticKey = ""; renderAll(); } catch (err) { console.warn(err); }
+  GLMAP.restarts = (GLMAP.restarts || 0) + 1;
+  if (GLMAP.restarts > 6) return;
+  const note = GLMAP.note;
+  setTimeout(() => {
+    if (GLMAP.ok) return;
+    GLMAP.tried = false; GLMAP.restartNote = note;
+    try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } else glInit(); } catch (err) { console.warn(err); }
+    GLMAP.restartNote = null;
+  }, 1500);
+}
+function glReady() {
+  try { if (world) { resetTerrain(world); view.staticKey = ""; renderAll(); } } catch (e) { console.warn("map:", e); }
+}
+/* Set uniforms in every program of the map painter (the roads' own program too). */
 function glEachProg(fn) {
   const gl = GLMAP.gl;
-  for (const P of GLMAP.progs || []) { gl.useProgram(P.prog); fn(P.U, P); }
+  for (const P of [...(GLMAP.progs || []), ...(GLMAP.roadP ? [GLMAP.roadP] : [])]) { gl.useProgram(P.prog); fn(P.U, P); }
 }
 function glTex(unit, tex, w, h, internal, format, type, data) {
   const gl = GLMAP.gl;
@@ -19828,7 +19953,10 @@ function glUploadEmpty() {
   glTex(5, GLMAP.tex.rv, 5, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(20));
   glTex(6, GLMAP.tex.rcell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(N_CELLS * 4));
   glTex(7, GLMAP.tex.rlist, 1, 1, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(1));
-  GLMAP.nTowns = 0; GLMAP.nPits = 0; GLMAP.rivOn = 0;
+  glTex(11, GLMAP.tex.roadV, 2, 1, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(8));
+  glTex(12, GLMAP.tex.roadCell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, new Float32Array(N_CELLS * 4));
+  glTex(13, GLMAP.tex.roadList, 1, 1, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(1));
+  GLMAP.nTowns = 0; GLMAP.nPits = 0; GLMAP.rivOn = 0; GLMAP.roadOn = 0; GLMAP.roadKey = null; GLMAP.roadEdges = null;
 }
 /* A town's random number, shared by the painter (its streets) and the cars driving on them. */
 function townHash(id) { return hash2(id, 7, 991); }
@@ -19904,6 +20032,7 @@ function townCentre(t, geo) {
 /* What people have made of the land, sent to the graphics card whenever it changes. */
 function glUpdateLand() {
   if (!GLMAP.ok || !world) return;
+  try { glUploadRoads(); } catch (e) { console.warn("roads:", e); GLMAP.roadOn = 0; GLMAP.roadEdges = null; }   // roads change apart from the land (14f)
   const key = `${world.seed}|${LANDUSE.key}`;
   if (GLMAP.landKey === key) return;
   GLMAP.landKey = key;
@@ -19984,6 +20113,12 @@ function glSetWorld(w) {
     }
   } catch (e) { console.warn("rivers:", e); GLMAP.rivOn = 0; }
 }
+/* Whether the framebuffer being drawn holds a drawn (opaque) pixel in the middle of the view. */
+function glPictureDrawn(gl, W, H) {
+  const px = new Uint8Array(4);
+  gl.readPixels(Math.floor(W / 2), Math.floor(H / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return gl.isContextLost() || px[3] > 0;
+}
 /* Draw the land for the current view into a 2D context (kind "img"), or just where land is ("mask"). While the
    camera moves, a coarser picture is drawn so it stays smooth; the sharp one follows when it stops. */
 function glDrawTerrain(c, kind) {
@@ -20017,15 +20152,24 @@ function glDrawTerrain(c, kind) {
     gl.uniform1f(U.uH, H);
     gl.uniform1i(U.uMode, kind === "mask" ? 1 : 0);
     gl.uniform1i(U.uNTowns, GLMAP.nTowns); gl.uniform1i(U.uNPits, GLMAP.nPits); gl.uniform1i(U.uRivOn, GLMAP.rivOn || 0);
+    if (U.uRoadOn) gl.uniform1i(U.uRoadOn, GLMAP.roadOn || 0);
     gl.uniform2i(U.uVGrid, (GLMAP.vgrid || [1, 1])[0], (GLMAP.vgrid || [1, 1])[1]);
   };
-  if (townsOn) {
+  // with the roads' own program (14f), they are painted over the land and under the towns
+  const roadsOn = kind !== "mask" && !!GLMAP.roadP && !!GLMAP.roadOn && GLMAP.progs.length > 1;
+  const draw = () => { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); };
+  if (townsOn || roadsOn) {
     if (GLMAP.fboSize[0] !== W || GLMAP.fboSize[1] !== H) {
       for (const [unit, tex] of [[8, GLMAP.tex.frame], [9, GLMAP.tex.riv]]) glTex(unit, tex, W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GLMAP.tex.frame, 0);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, GLMAP.tex.riv, 0);
-      GLMAP.fboSize = [W, H];
+      if (GLMAP.roadP && GLMAP.fboB) {
+        glTex(8, GLMAP.tex.frameB, W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fboB);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GLMAP.tex.frameB, 0);
+      }
+      GLMAP.fboSize = [W, H]; GLMAP.frameChecks = 0;
     }
     // the land into the two pictures (unbound from the texture units while they are drawn into)
     gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, null);
@@ -20033,18 +20177,33 @@ function glDrawTerrain(c, kind) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fbo);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
     setU(GLMAP.progs[0]);
-    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    draw();
+    // the first few times (and after every new size), check that the land really is in its picture: every pixel the
+    // land pass draws is opaque, so an empty middle means this computer does not draw it, and the map starts again with less
+    const checking = (GLMAP.frameChecks || 0) < 3;
+    if (checking && !glPictureDrawn(gl, W, H)) { setTimeout(() => glRestart("The land picture stayed empty"), 0); return false; }
     gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, GLMAP.tex.frame);
     gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, GLMAP.tex.riv);
-    setU(GLMAP.progs[1]);
+    if (roadsOn) {
+      // the roads over the land: into the third picture when the towns come next, else straight onto the screen
+      if (townsOn) { gl.bindFramebuffer(gl.FRAMEBUFFER, GLMAP.fboB); gl.drawBuffers([gl.COLOR_ATTACHMENT0]); }
+      else gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      setU(GLMAP.roadP);
+      draw();
+      if (townsOn && checking && !glPictureDrawn(gl, W, H)) { setTimeout(() => glRestart("The picture with the roads stayed empty"), 0); return false; }
+      if (townsOn) { gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, GLMAP.tex.frameB); }
+    }
+    if (townsOn) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      setU(GLMAP.progs[1]);
+      draw();
+    }
+    if (checking) GLMAP.frameChecks = (GLMAP.frameChecks || 0) + 1;
   } else {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     setU(GLMAP.progs[0]);
+    draw();
   }
-  gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   c.drawImage(cv, 0, 0, canvas.width, canvas.height);
   if (kind === "img") {
     const dt = performance.now() - t0;
@@ -23082,31 +23241,22 @@ function buildShapes() {
     }
     shapeCache.fronts = linesToPath(lines, 2);
   }
-  shapeCache.roads = roadPath();
+  shapeCache.roads = null;   // worked out when drawn (drawRoads), since the graphics card may paint them
   buildProvinceShapes(shapeCache);   // province lines and names (16m)
   return shapeCache;
 }
 
-/* Roads drawn as smooth curves: each bend is a curve through the town or cell it passes. */
-function roadPath() {
+/* Roads drawn as smooth curves (the same curves the graphics card paints, 14f), for the maps that draw them
+   on top: the tile map, the simpler map, and roads the land picture does not have yet (built during a replay).
+   With `only`, just those edges. */
+function roadPath(only) {
   const path = new Path2D();
-  const nbrs = new Map();
-  for (const k of game.roads) {
-    const [a, b] = edgeEnds(k);
-    if (!nbrs.has(a)) nbrs.set(a, []); if (!nbrs.has(b)) nbrs.set(b, []);
-    nbrs.get(a).push(b); nbrs.get(b).push(a);
-  }
-  const ctr = c => [cellX(c) + 0.5, cellY(c) + 0.5];
-  const mid = (a, b) => { const p = ctr(a), q = ctr(b); return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]; };
-  for (const [c, list] of nbrs) {
-    const p = ctr(c);
-    const town = game.cities.some(t => t.cell === c);
-    if (list.length === 2 && !town) {
-      const m1 = mid(c, list[0]), m2 = mid(c, list[1]);
-      path.moveTo(m1[0], m1[1]); path.quadraticCurveTo(p[0], p[1], m2[0], m2[1]);
-    } else {
-      for (const n of list) { const m = mid(c, n); path.moveTo(p[0], p[1]); path.lineTo(m[0], m[1]); }
-    }
+  const R = roadNet();
+  for (const k of only || game.roads) {
+    const pts = R.edgePts.get(k);
+    if (!pts) { const [a, b] = edgeEnds(k); path.moveTo(cellX(a) + 0.5, cellY(a) + 0.5); path.lineTo(cellX(b) + 0.5, cellY(b) + 0.5); continue; }
+    path.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) path.lineTo(pts[i][0], pts[i][1]);
   }
   return path;
 }
@@ -23178,15 +23328,25 @@ function strokeEdges(c, edges, cs) {
   c.stroke();
 }
 
-/* Roads: pale ribbons with a soft dark edge, like seen from the air. */
+/* Roads: pale ribbons with a soft dark edge, like seen from the air. With the full map the graphics card paints
+   them into the land (14f); here only those it does not have yet. */
 function drawRoads(c, cs) {
   const sh = buildShapes();
-  c.save();
-  c.scale(cs, cs);
-  c.lineCap = "round"; c.lineJoin = "round";
-  c.strokeStyle = "rgba(26,22,18,0.55)"; c.lineWidth = clamp(cs * 0.17, 1.8, 5.5) / cs; c.stroke(sh.roads);
-  c.strokeStyle = "#ddd5c1"; c.lineWidth = clamp(cs * 0.075, 0.8, 2.6) / cs; c.stroke(sh.roads);
-  c.restore();
+  const painted = GLMAP.ok && !GLMAP.simple && !GLMAP.noRoads && GLMAP.roadEdges;
+  const rkey = `${sh.key}|${roadNet().key}|${painted ? GLMAP.roadKey : "-"}`;
+  if (sh.roadsKey !== rkey) {
+    sh.roadsKey = rkey;
+    const missing = painted ? [...game.roads].filter(k => !GLMAP.roadEdges.has(k)) : null;
+    sh.roads = !painted ? roadPath() : missing.length ? roadPath(missing) : null;
+  }
+  if (sh.roads) {
+    c.save();
+    c.scale(cs, cs);
+    c.lineCap = "round"; c.lineJoin = "round";
+    c.strokeStyle = "rgba(26,22,18,0.55)"; c.lineWidth = clamp(cs * 0.17, 1.8, 5.5) / cs; c.stroke(sh.roads);
+    c.strokeStyle = "#ddd5c1"; c.lineWidth = clamp(cs * 0.075, 0.8, 2.6) / cs; c.stroke(sh.roads);
+    c.restore();
+  }
   for (const p of game.projects) {
     if (p.kind === "road") {
       c.setLineDash([cs * 0.3, cs * 0.25]);
@@ -24655,6 +24815,418 @@ vec4 villageLayer(vec2 p, float pxm, float farm) {
   vec3 track = vec3(0.70, 0.67, 0.60);
   if (hit.a <= 0.01) return vec4(track, rv);
   return vec4(mix(track, hit.rgb, hit.a), max(hit.a, rv));
+}
+`;
+}
+/* =====================================================================
+   14f. Roads on the map
+   Roads are painted into the land by the graphics card, as wide as they really are, the way the rivers are.
+   Each road is a smooth curve through the cells it joins (it still passes every cell's centre, so villages,
+   markets and traffic stay on it); close up it bends gently with the ground, and winds in hairpins up mountains.
+   What a road is built as follows its nation's era and how much it carries (the people of the towns it joins):
+     0 dirt track      a pale earth track with two wheel ruts (the steam age, little traffic, wild land)
+     1 gravel road     a grey-beige road with no markings
+     2 asphalt road    two lanes, white edge lines; a dashed white centre line, or a double yellow one in
+                       nations that build grid towns (as in America)
+     3 motorway        two carriageways of three lanes, a grass median with a barrier, yellow inner lines, white
+                       dashed lane lines, hard shoulders (from the Electronic Age, between big towns)
+   Where a road crosses a river it is on a bridge; a dirt track fords it.
+   Far out, where a road is narrower than a pixel, it is drawn as a thin map line so it can still be seen.
+   ===================================================================== */
+const ROAD_GRADES = [   // half: half the width in metres, verges included (the painter below uses the same numbers)
+  { name: "Dirt track", half: 2.6 }, { name: "Gravel road", half: 3.6 }, { name: "Asphalt road", half: 5.0 }, { name: "Motorway", half: 19.0 },
+];
+const ROAD_TRAFFIC = { paved: 0.12, motorway: 0.5, reach: 30 };   // town-pair traffic (people × people / distance) for a better road
+const ROADNET = { key: null, chains: [], edgePts: new Map(), grade: new Map(), glKey: null, glEdges: null };
+
+/* A nation's own era: the latest age whose invention it has made. */
+function roadNationEra(g, nid) {
+  const n = nid >= 0 ? g.nations[nid] : null;
+  if (!n) return 0;
+  let k = 0;
+  ERAS.forEach((e, i) => { if (e.tech && hasTech(n, e.tech)) k = Math.max(k, i); });
+  return k;
+}
+/* About how many people (millions) live in and around a town: its cell and the cells beside it. */
+function roadTownPop(g, c) {
+  if (!g.pop) return 0.5;
+  let s = g.pop[c.cell] || 0;
+  for (const [dx, dy] of DIRS8) {
+    const x = cellX(c.cell) + dx, y = cellY(c.cell) + dy;
+    if (inBounds(x, y) && g.owner[idx(x, y)] === c.owner) s += 0.35 * (g.pop[idx(x, y)] || 0);
+  }
+  return s;
+}
+/* How much each stretch of road carries: every pair of towns joined by road sends traffic along the shortest way
+   between them, more for bigger towns, less the further apart they are. */
+function roadTraffic(g) {
+  const adj = new Map();
+  for (const k of g.roads) {
+    const [a, b] = edgeEnds(k);
+    const len = cellX(a) !== cellX(b) && cellY(a) !== cellY(b) ? 1.414 : 1;
+    if (!adj.has(a)) adj.set(a, []); if (!adj.has(b)) adj.set(b, []);
+    adj.get(a).push([b, k, len]); adj.get(b).push([a, k, len]);
+  }
+  const towns = g.cities.filter(c => adj.has(c.cell)).map(c => ({ cell: c.cell, pop: roadTownPop(g, c) }));
+  const traffic = new Map();
+  const townAt = new Map(towns.map((t, i) => [t.cell, i]));
+  towns.forEach((A, ia) => {
+    const cost = new Map([[A.cell, 0]]), prev = new Map(), done = new Set(), open = [A.cell];
+    while (open.length) {
+      let bi = 0;
+      for (let k = 1; k < open.length; k++) if (cost.get(open[k]) < cost.get(open[bi])) bi = k;
+      const c = open.splice(bi, 1)[0];
+      if (done.has(c)) continue;
+      done.add(c);
+      const cc = cost.get(c);
+      if (cc > ROAD_TRAFFIC.reach) break;
+      for (const [n, k, len] of adj.get(c)) {
+        if (done.has(n)) continue;
+        const nc = cc + len;
+        if (!cost.has(n) || nc < cost.get(n)) { cost.set(n, nc); prev.set(n, [c, k]); open.push(n); }
+      }
+    }
+    for (const c of done) {
+      const ib = townAt.get(c);
+      if (ib === undefined || ib <= ia) continue;
+      const v = A.pop * towns[ib].pop / Math.max(2, cost.get(c));
+      for (let x = c; x !== A.cell; x = prev.get(x)[0]) { const k = prev.get(x)[1]; traffic.set(k, (traffic.get(k) || 0) + v); }
+    }
+  });
+  return traffic;
+}
+/* What each stretch is built as (0 track … 3 motorway), from its nations' era and its traffic. */
+function roadGrades(g) {
+  const traffic = roadTraffic(g), out = new Map();
+  for (const k of g.roads) {
+    const [a, b] = edgeEnds(k);
+    const oa = g.owner[a], ob = g.owner[b];
+    const era = Math.max(roadNationEra(g, oa), roadNationEra(g, ob));
+    const t = traffic.get(k) || 0;
+    let grade;
+    if (oa < 0 || ob < 0) grade = era >= 3 ? 1 : 0;   // across wild land: a track the carts keep open
+    else if (era >= 3 && t >= ROAD_TRAFFIC.motorway) grade = 3;
+    else if (t >= ROAD_TRAFFIC.paved) grade = era >= 1 ? 2 : 1;
+    else grade = era >= 3 ? 2 : era >= 1 ? 1 : 0;
+    out.set(k, grade);
+  }
+  return out;
+}
+
+/* Roads as smooth curves. Chains run from one node (a town, a junction, a dead end, or where the road changes
+   grade) to the next; each is a curve through the centres of its cells (Catmull-Rom), with points every ~8 km. */
+function buildRoadNet(w, g) {
+  const grade = roadGrades(g);
+  const nbrs = new Map();
+  for (const k of g.roads) {
+    const [a, b] = edgeEnds(k);
+    if (!nbrs.has(a)) nbrs.set(a, []); if (!nbrs.has(b)) nbrs.set(b, []);
+    nbrs.get(a).push(b); nbrs.get(b).push(a);
+  }
+  const towns = new Set(g.cities.map(c => c.cell));
+  const isNode = c => {
+    const l = nbrs.get(c);
+    if (l.length !== 2 || towns.has(c)) return true;
+    return grade.get(edgeKey(c, l[0])) !== grade.get(edgeKey(c, l[1]));
+  };
+  const used = new Set(), chains = [];
+  const walk = (start, next) => {
+    const cells = [start];
+    let prev = start, c = next;
+    used.add(edgeKey(start, next));
+    while (true) {
+      cells.push(c);
+      if (c === start || isNode(c)) break;
+      const n = nbrs.get(c).find(x => x !== prev && !used.has(edgeKey(c, x)));
+      if (n === undefined) break;
+      used.add(edgeKey(c, n));
+      prev = c; c = n;
+    }
+    chains.push({ cells, grade: grade.get(edgeKey(cells[0], cells[1])) });
+  };
+  for (const c of [...nbrs.keys()].sort((a, b) => a - b)) if (isNode(c)) for (const n of nbrs.get(c)) if (!used.has(edgeKey(c, n))) walk(c, n);
+  // loops with no node on them
+  for (const c of [...nbrs.keys()].sort((a, b) => a - b)) for (const n of nbrs.get(c)) if (!used.has(edgeKey(c, n))) walk(c, n);
+
+  const ctr = c => [cellX(c) + 0.5, cellY(c) + 0.5];
+  const edgePts = new Map();
+  const style = nid => nid >= 0 && typeof townStyle === "function" && townStyle({ owner: nid }) === 0 ? 1 : 0;
+  for (const ch of chains) {
+    const P = ch.cells.map(ctr);
+    const closed = ch.cells.length > 2 && ch.cells[0] === ch.cells[ch.cells.length - 1];
+    const at = i => {
+      if (i >= 0 && i < P.length) return P[i];
+      if (closed) return P[(i + P.length - 1) % (P.length - 1)];
+      const [a, b] = i < 0 ? [P[0], P[1]] : [P[P.length - 1], P[P.length - 2]];
+      return [2 * a[0] - b[0], 2 * a[1] - b[1]];
+    };
+    const pts = [P[0].slice()];
+    for (let i = 0; i < P.length - 1; i++) {
+      const p0 = at(i - 1), p1 = P[i], p2 = P[i + 1], p3 = at(i + 2);
+      const n = 6, seg = [p1.slice()];
+      for (let s = 1; s <= n; s++) {
+        const t = s / n, t2 = t * t, t3 = t2 * t;
+        // Catmull-Rom with a gentler pull (tension 0.4), so the curve does not swing wide of the straight line
+        const T = 0.4, f = (a, b, c, d) => b + T * (c - a) * t + (2 * T * a + (T - 3) * b + (3 - 2 * T) * c - T * d) * t2 + (-T * a + (2 - T) * b + (T - 2) * c + T * d) * t3;
+        let x = s === n ? p2[0] : f(p0[0], p1[0], p2[0], p3[0]), y = s === n ? p2[1] : f(p0[1], p1[1], p2[1], p3[1]);
+        // never out over the sea or a lake: fall back to the straight line there
+        if (s < n && typeof landAt === "function" && !landAt(x, y)) { x = p1[0] + (p2[0] - p1[0]) * t; y = p1[1] + (p2[1] - p1[1]) * t; }
+        seg.push([x, y]);
+        pts.push([x, y]);
+      }
+      edgePts.set(edgeKey(ch.cells[i], ch.cells[i + 1]), ch.cells[i] < ch.cells[i + 1] ? seg : seg.slice().reverse());
+    }
+    ch.pts = pts;
+    const owner = g.owner[ch.cells[Math.floor(ch.cells.length / 2)]];
+    ch.yellow = style(owner);
+    ch.seed = hash2(ch.cells[0], ch.cells[ch.cells.length - 1], 77) * 1000;
+    // how hilly the ground is under each point (0 plains, 0.5 hills, 1 mountains), smoothed along the road
+    const hill = pts.map(([x, y]) => {
+      const e = elevationAt(w.seed, x, y);
+      return e >= w.mountainLevel ? 1 : e >= w.hillLevel ? 0.5 + 0.5 * clamp((e - w.hillLevel) / Math.max(0.01, w.mountainLevel - w.hillLevel), 0, 1) : 0.5 * clamp((e - w.hillLevel + 0.03) / 0.03, 0, 1);
+    });
+    ch.hill = hill.map((h, i) => (hill[Math.max(0, i - 1)] + 2 * h + hill[Math.min(hill.length - 1, i + 1)]) / 4);
+  }
+  return { chains, edgePts, grade };
+}
+/* The road network for the map, rebuilt when the roads, the towns, the owners or the season change. */
+function roadNet() {
+  if (!game || !world) return ROADNET;
+  const key = `${world.seed}|${game.turn}|${game.roads.size}|${game.cities.length}|${game.era || 0}|${typeof mapVersion !== "undefined" ? mapVersion : 0}`;
+  if (ROADNET.key === key) return ROADNET;
+  const R = buildRoadNet(world, game);
+  Object.assign(ROADNET, R, { key });
+  return ROADNET;
+}
+/* The point a fraction p of the way along road edge a→b, on its curve (for carts and cars on the overlay). */
+function roadPointAt(a, b, p) {
+  const pts = roadNet().edgePts.get(edgeKey(a, b));
+  if (!pts) return [cellX(a) + 0.5 + (cellX(b) - cellX(a)) * p, cellY(a) + 0.5 + (cellY(b) - cellY(a)) * p];
+  const q = a < b ? p : 1 - p;
+  const f = q * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)), t = f - i;
+  return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t];
+}
+
+/* The roads packed for the graphics card: two texels a point (x, y, distance along, -; grade, hilliness, yellow
+   centre line, random number), and a list of stretches for every map cell (with a margin for bends and far-out lines). */
+function roadTextures(chains) {
+  const verts = [], segs = [];
+  for (const ch of chains) {
+    let s = 0;
+    ch.pts.forEach(([x, y], i) => {
+      if (i > 0) { s += Math.hypot(x - ch.pts[i - 1][0], y - ch.pts[i - 1][1]); segs.push(verts.length - 1); }
+      verts.push([x, y, s, 0, ch.grade, ch.hill[i], ch.yellow, ch.seed]);
+    });
+  }
+  const vtW = 1024, vtH = Math.max(1, Math.ceil(Math.max(1, verts.length) * 2 / vtW));
+  const V = new Float32Array(vtW * vtH * 4);
+  verts.forEach((v, i) => V.set(v, i * 8));
+  const MARGIN = 0.12;
+  const byCell = Array.from({ length: N_CELLS }, () => []);
+  for (const v of segs) {
+    const a = verts[v], b = verts[v + 1];
+    const x0 = Math.max(0, Math.floor(Math.min(a[0], b[0]) - MARGIN)), x1 = Math.min(GRID_W - 1, Math.floor(Math.max(a[0], b[0]) + MARGIN));
+    const y0 = Math.max(0, Math.floor(Math.min(a[1], b[1]) - MARGIN)), y1 = Math.min(GRID_H - 1, Math.floor(Math.max(a[1], b[1]) + MARGIN));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) byCell[y * GRID_W + x].push(v);
+  }
+  const cells = new Float32Array(N_CELLS * 4), list = [];
+  byCell.forEach((l, i) => { cells[i * 4] = list.length; cells[i * 4 + 1] = Math.min(l.length, 160); for (const v of l.slice(0, 160)) list.push(v); });
+  const lW = 2048, lH = Math.max(1, Math.ceil(Math.max(1, list.length) / lW));
+  const L = new Float32Array(lW * lH);
+  L.set(list);
+  return { V, vtW, vtH, cells, L, lW, lH, nSegs: segs.length };
+}
+/* Send the roads to the graphics card when they change. */
+function glUploadRoads() {
+  if (!GLMAP.ok || GLMAP.simple || GLMAP.noRoads || !game) return;
+  const R = roadNet();
+  if (GLMAP.roadKey === R.key) return;
+  GLMAP.roadKey = R.key;
+  const gl = GLMAP.gl, X = roadTextures(R.chains);
+  glTex(11, GLMAP.tex.roadV, X.vtW, X.vtH, gl.RGBA32F, gl.RGBA, gl.FLOAT, X.V);
+  glTex(12, GLMAP.tex.roadCell, GRID_W, GRID_H, gl.RGBA32F, gl.RGBA, gl.FLOAT, X.cells);
+  glTex(13, GLMAP.tex.roadList, X.lW, X.lH, gl.R32F, gl.RED, gl.FLOAT, X.L);
+  GLMAP.roadOn = X.nSegs ? 1 : 0;
+  GLMAP.roadEdges = new Set(game.roads);
+}
+
+/* The roads' own small program for the graphics card. It runs after the land (and before the towns): it reads the
+   land picture and the river picture the land pass left, and paints the roads over the land, on bridges where they
+   cross rivers. It is kept apart from the land program on purpose: Windows turns every shader into DirectX, and a
+   program as big as the land one with the roads inside it was too much for some graphics cards (v39.1), and the land
+   program must stay exactly as it is, letter for letter: a computer keeps the prepared program and reuses it (v39.3). */
+function roadShaderSource() {
+  const full = glShaderSource();
+  const cut = (from, to) => {
+    const a = full.indexOf(from), b = full.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error("road painter: a piece of the map painter was not found (" + from + ")");
+    return full.slice(a, b);
+  };
+  return `#version 300 es
+precision highp float;
+precision highp int;
+uniform vec2 uOrigin;     // the map point (in cells) at the top-left pixel
+uniform float uScale;     // cells per pixel
+uniform float uH;         // canvas height in pixels
+uniform int uOne;         // always 1 (keeps loops loops on Windows)
+uniform sampler2D uFrame; // the land as the land pass drew it
+uniform sampler2D uRiv;   // river water (x) from the land pass
+uniform int uSeed;        // the world, for the coastline
+uniform float uSea;
+layout(location = 0) out vec4 outColor;
+${cut("float hash2(int ix", "// the game's continent")}
+${cut("// what a satellite camera does", "const vec3 ROCK")}
+${cut("float elevationAt(vec2 p) {", "// relief on top of the coastline height")}
+const float M = 1.0 / 50000.0;          // one metre, in map cells
+${roadGlsl()}
+void main() {
+  ivec2 fc = ivec2(gl_FragCoord.xy);
+  vec4 base = texelFetch(uFrame, fc, 0);
+  outColor = base;
+  vec2 p = uOrigin + vec2(gl_FragCoord.x, uH - gl_FragCoord.y) * uScale;
+  if (p.x < 1.0 || p.y < 1.0 || p.x >= 95.0 || p.y >= 63.0) return;
+  vec4 rv = texelFetch(uRiv, fc, 0);
+  vec4 road = roadAt(p, uScale, rv.x);
+  if (road.a <= 0.0 || coastE(p) <= uSea) return;   // no road out over the sea
+  outColor = vec4(mix(base.rgb, clamp(satLook(road.rgb), 0.0, 1.0), road.a), 1.0);
+}
+`;
+}
+
+/* The road painter (inside roadShaderSource). */
+function roadGlsl() {
+  return `
+// ---------- roads ----------
+uniform highp sampler2D uRoadV;
+uniform highp sampler2D uRoadCell;
+uniform highp sampler2D uRoadList;
+uniform int uRoadOn;
+vec4 rdT(int v, int k) { int i = v * 2 + k; return texelFetch(uRoadV, ivec2(i & 1023, i >> 10), 0); }
+// how much of a pixel (pxm wide) the band [lo, hi] covers, at a
+float rdBand(float a, float lo, float hi, float pxm) { return clamp((min(hi, a + 0.5 * pxm) - max(lo, a - 0.5 * pxm)) / pxm, 0.0, 1.0); }
+// a painted line, centred at c, w wide: a little bolder than real when it is far below a pixel, so it still shows
+float rdLine(float a, float c, float w, float pxm) { float ww = min(max(w, 0.35 * pxm), 2.5 * w); return rdBand(a, c - 0.5 * ww, c + 0.5 * ww, pxm); }
+// dashes along the road: on for the first part of each period; an even grey where they are smaller than pixels
+float rdDash(float sm, float period, float on, float pxm) { float f = fract(sm / period); return mix(step(f, on), on, sstep(0.08, 0.3, pxm / period)); }
+// how far the road's centre swings from its curve here (metres): gentle bends in the plains, more in the hills,
+// and in stretches of mountain road the hairpins of a climb
+float rdWob(float sm, float hill, float seed) {
+  float w = 34.0 * (vnoise(vec2(sm / 900.0, seed), 7101) - 0.5) + 16.0 * (vnoise(vec2(sm / 330.0, seed + 3.1), 7102) - 0.5);
+  w *= 1.0 + 3.0 * hill;
+  // a climb up a steep slope: straight legs across it, about 70 m apart, some long and some short, joined by
+  // tight hairpin turns (a rounded triangle wave); a few such climbs on a mountain road, winding stretches between
+  float climb = sstep(0.6, 0.85, hill) * sstep(0.55, 0.68, vnoise(vec2(sm / 2200.0, seed + 7.7), 7103));
+  float leg = 110.0 + 190.0 * vnoise(vec2(sm / 260.0, seed + 2.3), 7104);
+  float ph = sm / 140.0 + 0.6 * vnoise(vec2(sm / 500.0, seed + 5.9), 7105);
+  return w + climb * leg * 0.6366 * asin(0.97 * sin(ph * 6.2831853));
+}
+// the road at p: its colour and how much it covers (a); bridge > 0 where it is on a bridge over water
+vec4 roadAt(vec2 p, float pxm, float water) {
+  if (uRoadOn == 0) return vec4(0.0);
+  vec4 cl = texelFetch(uRoadCell, ivec2(clamp(floor(p), vec2(0.0), vec2(95.0, 63.0))), 0);
+  int off = int(cl.x), cnt = int(cl.y);
+  if (cnt == 0) return vec4(0.0);
+  float pxmM = pxm / M;
+  float wobOn = 1.0 - sstep(60.0, 200.0, pxmM);   // the bends are only worth working out close up
+  // find the nearest stretch: cheap work only in the loop (Windows turns a shader into DirectX and copies a loop out
+  // once for every turn unless its count comes from a uniform, so uOne keeps it a loop); the bends are worked out
+  // once, for the stretch found
+  float best = 1e9; int bv = -1; float bt = 0.0, btr = 0.0;
+  for (int i = 0; i < 160 * uOne; i++) {
+    if (i >= cnt) break;
+    int li = off + i;
+    int v = int(texelFetch(uRoadList, ivec2(li & 2047, li >> 11), 0).r + 0.5);
+    vec4 A = rdT(v, 0), B = rdT(v + 1, 0);
+    vec2 ab = B.xy - A.xy;
+    float tr = dot(p - A.xy, ab) / max(dot(ab, ab), 1e-12), t = clamp(tr, 0.0, 1.0);
+    float d0 = length(p - A.xy - ab * t);
+    if (d0 > 0.012 + 3.0 * pxm) continue;
+    float grade = rdT(v, 1).x;
+    float score = d0 - (grade > 2.5 ? 19.0 : grade > 1.5 ? 5.0 : grade > 0.5 ? 3.6 : 2.6) * M - grade * 0.5 * M;   // where roads meet, the bigger road is on top
+    if (score < best) { best = score; bv = v; bt = t; btr = tr; }
+  }
+  if (bv < 0) return vec4(0.0);
+  vec4 A = rdT(bv, 0), B = rdT(bv + 1, 0), I = rdT(bv, 1), J = rdT(bv + 1, 1);
+  vec2 ab = B.xy - A.xy;
+  vec2 dir = normalize(ab), nrm = vec2(-dir.y, dir.x);
+  vec2 q = A.xy + ab * bt;
+  float bS = mix(A.z, B.z, bt) / M, bGrade = I.x, bYellow = I.z;
+  float n = dot(p - q, nrm), along = dot(p - q, dir);
+  float w0 = 0.0, dw = 0.0;
+  if (wobOn > 0.0) {
+    // no bends at a cell's centre, where the road meets towns, villages and other roads
+    float env = wobOn * sstep(0.004, 0.03, length(fract(q) - 0.5));
+    float hill = mix(I.y, J.y, bt);
+    w0 = rdWob(bS, hill, I.w) * env;
+    dw = (rdWob(bS + 4.0, hill, I.w) - rdWob(bS - 4.0, hill, I.w)) * env / 8.0;
+    w0 *= M;
+  }
+  float bAcross = (n - w0) / sqrt(1.0 + dw * dw);
+  if (btr < 0.0 || btr > 1.0) bAcross = sign(n - w0 + 1e-9) * length(vec2(along, n - w0));
+  best = abs(bAcross) - max((bGrade > 2.5 ? 19.0 : bGrade > 1.5 ? 5.0 : bGrade > 0.5 ? 3.6 : 2.6) * M, 0.6 * pxm);
+  if (best > 2.0 * pxm) return vec4(0.0);
+  int G = int(bGrade + 0.5);
+  float a = abs(bAcross) / M;         // metres from the centre line
+  float halfM = G == 3 ? 19.0 : G == 2 ? 5.0 : G == 1 ? 3.6 : 2.6;
+  // far out: a thin line, pale like a road on a map, fading in as the real road gets wider than a pixel
+  float minPx = G == 3 ? 1.6 : G == 2 ? 1.25 : 1.0;
+  float shown = max(halfM, 0.5 * minPx * pxmM);
+  float cover = rdBand(a, -shown, shown, pxmM);
+  float farA = G == 3 ? 0.95 : G == 2 ? 0.8 : G == 1 ? 0.6 : 0.45;
+  vec3 farCol = G == 3 ? vec3(0.95, 0.90, 0.74) : G == 2 ? vec3(0.86, 0.84, 0.78) : G == 1 ? vec3(0.76, 0.73, 0.66) : vec3(0.70, 0.62, 0.48);
+  float real = sstep(0.9, 2.6, 2.0 * halfM / pxmM);
+  // close up: the road as it is built
+  float grain = vnoise(p / (1.2 * M), 7120) - 0.5;
+  vec3 c = vec3(0.0);
+  float ca = 0.0;
+  bool bridge = water > 0.3 && G >= 1;
+  if (G == 0) {
+    // a dirt track: worn earth, two wheel ruts, grass down the middle
+    c = vec3(0.60, 0.53, 0.40) * (1.0 + 0.12 * grain);
+    float rut = rdLine(a, 0.85, 0.5, pxmM);
+    c = mix(c, vec3(0.47, 0.41, 0.31), 0.55 * rut);
+    c = mix(c, vec3(0.42, 0.46, 0.30), 0.35 * rdBand(a, 0.0, 0.35, pxmM));
+    ca = rdBand(a, -2.6, 2.6, pxmM) * (1.0 - 0.65 * water);   // a ford: the water runs over it
+  } else if (G == 1) {
+    // a gravel road: pale stones, darker where the wheels run
+    c = vec3(0.64, 0.61, 0.55) * (1.0 + 0.08 * grain);
+    c = mix(c, vec3(0.55, 0.53, 0.48), 0.4 * rdLine(a, 1.6, 1.0, pxmM));
+    ca = rdBand(a, -3.6, 3.6, pxmM);
+  } else if (G == 2) {
+    // two lanes of asphalt with gravel shoulders
+    vec3 asph = vec3(0.21, 0.21, 0.22) * (1.0 + 0.10 * grain);
+    c = mix(vec3(0.56, 0.53, 0.46), asph, rdBand(a, 0.0, 3.75, pxmM));
+    c = mix(c, vec3(0.25, 0.25, 0.26), 0.5 * rdLine(a, 1.9, 0.8, pxmM));   // worn lighter where the wheels run
+    c = mix(c, vec3(0.92, 0.92, 0.88), 0.9 * rdLine(a, 3.55, 0.15, pxmM));   // white edge lines
+    if (bYellow > 0.5) c = mix(c, vec3(0.93, 0.74, 0.20), 0.95 * rdLine(a, 0.12, 0.12, pxmM));   // double yellow centre
+    else c = mix(c, vec3(0.94, 0.94, 0.90), 0.9 * rdLine(a, 0.0, 0.15, pxmM) * rdDash(bS, 12.0, 0.25, pxmM));   // dashed white centre
+    ca = rdBand(a, -5.0, 5.0, pxmM);
+  } else {
+    // a motorway: grass median with a barrier, two carriageways of three lanes, hard shoulders, grass verges
+    vec3 asph = vec3(0.23, 0.23, 0.24) * (1.0 + 0.10 * grain);
+    c = mix(vec3(0.36, 0.42, 0.26) * (1.0 + 0.1 * grain), vec3(0.62, 0.61, 0.58), rdLine(a, 0.0, 0.7, pxmM));   // median and barrier
+    c = mix(c, asph, rdBand(a, 2.0, 16.0, pxmM));
+    c = mix(c, vec3(0.20, 0.20, 0.21), 0.5 * (rdLine(a, 4.75, 1.4, pxmM) + rdLine(a, 8.25, 1.4, pxmM) + rdLine(a, 11.75, 1.4, pxmM)));   // oil down each lane
+    c = mix(c, vec3(0.93, 0.76, 0.22), 0.95 * rdLine(a, 3.0, 0.2, pxmM));   // yellow inner edge
+    float dash = rdDash(bS, 18.0, 0.33, pxmM);
+    c = mix(c, vec3(0.94, 0.94, 0.90), 0.9 * dash * (rdLine(a, 6.5, 0.15, pxmM) + rdLine(a, 10.0, 0.15, pxmM)));   // lane lines
+    c = mix(c, vec3(0.94, 0.94, 0.90), 0.95 * rdLine(a, 13.5, 0.25, pxmM));   // white outer edge
+    c = mix(c, vec3(0.47, 0.50, 0.36), rdBand(a, 16.0, 19.0, pxmM));   // mown verge
+    ca = rdBand(a, -19.0, 19.0, pxmM);
+  }
+  if (bridge) {
+    // on a bridge: a concrete deck with dark parapets, and its shadow on the water beside it
+    float deck = halfM + 1.2;
+    vec3 inner = G == 3 ? c : mix(vec3(0.60, 0.59, 0.56), c, rdBand(a, 0.0, halfM - 1.0, pxmM));
+    c = mix(inner, vec3(0.30, 0.30, 0.30), rdLine(a, deck - 0.4, 0.5, pxmM));
+    c = mix(c, vec3(0.60, 0.59, 0.56), rdBand(a, deck - 0.2, deck, pxmM));
+    ca = rdBand(a, -deck, deck, pxmM);
+    float shadow = (bAcross > 0.0 ? 1.0 : 0.0) * rdBand(a, deck, deck + 8.0, pxmM);
+    if (ca < 0.01 && shadow > 0.0) return vec4(vec3(0.0), 0.35 * shadow);
+  }
+  vec3 col = mix(farCol, c, real);
+  float al = mix(cover * farA, ca, real);
+  return vec4(col, clamp(al, 0.0, 1.0));
 }
 `;
 }
@@ -27071,7 +27643,8 @@ function drawTraffic(c, cs, now) {
   for (const e of trafficEdges()) {
     let p = (now / 1000 * e.speed + e.phase) % 1;
     if (e.dir) p = 1 - p;
-    const x = (cellX(e.a) + 0.5 + (cellX(e.b) - cellX(e.a)) * p) * cs, y = (cellY(e.a) + 0.5 + (cellY(e.b) - cellY(e.a)) * p) * cs;
+    const [rx, ry] = roadPointAt(e.a, e.b, p);   // on the road's curve (14f)
+    const x = rx * cs, y = ry * cs;
     c.fillStyle = e.trade ? "#ffd36b" : "rgba(255,248,230,0.9)";
     c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
   }
@@ -33510,7 +34083,7 @@ function restore(saved) {
 Object.assign(ICONS, { save: giSvg("delapouite/save"), cloud: giSvg("delapouite/cloud-upload") });
 const SAVE_FORMAT = "drawn-borders-save";
 const SAVE_VERSION = 6;                         // version 5 saves (before version 18 of the game) load as they are
-const GAME_BUILD = 39;
+const GAME_BUILD = 39.4;
 const LOCAL_KEYS = { auto: SAVE_KEY, earlier: "drawn-borders/save-earlier-raw", rescued: "drawn-borders/save-rescued", slots: "drawn-borders/slots", slot: "drawn-borders/slot/" };
 const SAVE_LIMITS = { named: 10, earlier: 3, chunk: 200000 };
 const SAVES = {
