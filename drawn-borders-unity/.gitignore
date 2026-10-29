@@ -1,0 +1,18 @@
+# Made by Unity on your computer: never committed
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+.vs/
+*.csproj
+*.sln
+*.pidb
+*.userprefs
+# The checking tools' build output
+Tools/*/bin/
+Tools/*/obj/
+!Tools/*/*.csproj

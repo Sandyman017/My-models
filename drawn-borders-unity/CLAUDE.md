@@ -1,0 +1,13 @@
+# Drawn Borders in Unity — Maz's strategy game, moving to Unity
+
+The web game lives in `../drawn-borders` (read its `CLAUDE.md`: who Maz is, how we work). This folder is the start of a Unity version, made because the web map lags and Unity can look much better. Maz plays on Windows (GTX 1650) and opens this folder in Unity Hub; cloud sessions cannot run Unity, so every change is checked with the tools in `Tools/` (see `Tools/README.md`) and Maz tests it on his PC.
+
+## Done so far (part 1: the founding step)
+- `Assets/DrawnBorders/Engine` (pure C#, no Unity): `Noise` (mulberry32, hash2, value noise, fbm — bit-for-bit the web engine), `World` (terrain, levels, deposits, coast), `Rivers` (`RiverField` priority flood, `RiverGeo` navigable systems, `SeaGeo` ocean and shore, `PortSeaCell`, `BeachSeaCell`), `Borders` (`ClaimFromPath`, `MeasureShape`, `Traits`), `Founding` (`FoundingPreview`: people, farmland, towns via `PlaceTowns` with `Rng(7)`, the factors list worded as the web panel; `SampleShape`). The full economy is not ported, so the preview has no Output figure. Sorts that must match JS use a stable order (by cell on ties); `Math.round` is `Noise.JsRound`.
+- `Assets/DrawnBorders/Bake/MapBaker.cs` (pure C#): bakes at 24 px a cell (2304×1536, about 2 s on 4 cores): colour (the web map's palette; alpha = baked sun shadow from the north-west), data (r = coast: 0.5 + (e − sea) × 1.25, g = distance to the nearest river ÷ 0.3, b = its half width ÷ 0.1, a = open sky), normals, heights (land: (height − sea) × 3.2, sea floor × 1.6). Mountains use ridged gradient noise (`Ridges`), not the web map's ridges, which looked like bubbles in 3D. Rivers are the web map's traced lines (`RiverLines`), stored as distances so the shader draws them sharp at any zoom.
+- `Assets/DrawnBorders/Game`: `Boot` (starts the game in any scene on Play), `FoundingGame` (+ `FoundingUi`: the panel and labels in IMGUI), `MapView` (textures, the land mesh at 8 points a cell, the sea sheet, the owner mask blurred into smooth borders, deposits, hover, 3D towns, ray to the ground), `CameraRig`, `InputState` (classic Input, or IMGUI events when the project allows only the new Input System).
+- Shaders in `Assets/DrawnBorders/Resources/DrawnBorders` (CG, no LightMode tag, own lighting in `DrawnBorders.cginc`: they work in the built-in pipeline and URP, Gamma or Linear).
+- No `Packages/` or `ProjectSettings/` are committed: Unity makes them for whatever version Maz opens it with.
+
+## Next
+Provinces (step 2 of founding), then the season engine, ported file by file and checked against the web engine the same way (`Tools/js-reference.js` → `Tools/EngineCheck`).
