@@ -8,7 +8,7 @@ The rules are the web game's own, moved to C#: the same world number makes the s
 
 1. Get this folder onto your PC: pull the branch `claude/sleepy-newton-3rfvjr` of `My-models` (GitHub Desktop), or download it as a ZIP from GitHub.
 2. Open **Unity Hub** → **Add** → **Add project from disk** → choose the folder `drawn-borders-unity`.
-3. If Unity Hub asks which Unity version to use, pick the one you made the truck game with.
+3. If Unity Hub asks which Unity version to use, pick **Unity 6** (the one you made the truck game with). If Unity shows warnings about the Input System or the render pipeline, you can close them: the game works with either setting.
 4. Open it. The first time, Unity sets up the project (a minute or two).
 5. Press **Play** (the ▶ button at the top). The game starts by itself; there is no scene to set up.
 
