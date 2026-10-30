@@ -1,5 +1,5 @@
 // The camera: looks down on the whole continent from far away and tilts toward the horizon as you zoom in.
-// Wheel: zoom toward the mouse. Right or middle drag: move the map. WASD / arrows: move. Q / E: turn. Home: the whole map.
+// Wheel: zoom toward the mouse; R / F or + / -: zoom. Right or middle drag: move the map. WASD / arrows: move. Q / E: turn. Home: the whole map.
 using DrawnBorders.Engine;
 using UnityEngine;
 
@@ -115,6 +115,11 @@ namespace DrawnBorders.Game
                 if (mv != Vector3.zero) targetGoal += mv.normalized * distGoal * 0.9f * dt;
                 if (InputState.Key(KeyCode.Q)) yawGoal += 70 * dt;
                 if (InputState.Key(KeyCode.E)) yawGoal -= 70 * dt;
+                // zoom without a wheel: R / F or + / -, about six wheel steps a second while held
+                float zoomKeys = 0;
+                if (InputState.Key(KeyCode.R) || InputState.Key(KeyCode.Equals) || InputState.Key(KeyCode.KeypadPlus)) zoomKeys += 1;
+                if (InputState.Key(KeyCode.F) || InputState.Key(KeyCode.Minus) || InputState.Key(KeyCode.KeypadMinus)) zoomKeys -= 1;
+                if (zoomKeys != 0) distGoal = Mathf.Clamp(distGoal * Mathf.Pow(0.85f, zoomKeys * 6 * dt), MinDist, MaxDist);
                 if (InputState.KeyDown(KeyCode.Home)) Home(false);
             }
 

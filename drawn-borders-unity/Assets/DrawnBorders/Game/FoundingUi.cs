@@ -125,7 +125,7 @@ namespace DrawnBorders.Game
 
         void TopLeft()
         {
-            const string keys = "Left-drag: draw borders   Right-drag: move   Wheel: zoom   Q / E: turn   Home: whole map";
+            const string keys = "Left-drag: draw borders   Right-drag: move   Wheel or R / F: zoom   Q / E: turn   Home: whole map";
             // as wide as the help line, so it is not cut off
             var box = new Rect(16, 16, Mathf.Max(470, help.CalcSize(new GUIContent(keys)).x + 24), 66);
             var old = GUI.color;

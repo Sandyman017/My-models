@@ -18,7 +18,7 @@ Tip: in the Game window, choose **Maximize on Play**, so the map fills the scree
 
 - **Left mouse, drag**: draw your borders around the land you want, then let go.
 - **Right or middle mouse, drag**: move the map.
-- **Mouse wheel**: zoom (the camera tilts toward the horizon as you get closer).
+- **Mouse wheel**, or hold **R / F** (or **+ / −**): zoom (the camera tilts toward the horizon as you get closer).
 - **W A S D** or the arrow keys: move. **Q / E**: turn. **Home**: the whole map again.
 - The panel on the right shows what your borders give you. Name your nation, then **Found this nation**.
 
