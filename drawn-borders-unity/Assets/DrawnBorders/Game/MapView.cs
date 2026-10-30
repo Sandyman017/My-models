@@ -100,7 +100,8 @@ namespace DrawnBorders.Game
         {
             var t = new Texture2D(w, h, TextureFormat.RGBA32, mips, linear);
             t.wrapMode = wrap; t.filterMode = filter; t.anisoLevel = mips ? 8 : 1;
-            t.LoadRawTextureData(rgba);
+            // only the full-size level: LoadRawTextureData wants every mip level when the texture has them
+            t.SetPixelData(rgba, 0);
             t.Apply(mips, !keepReadable);
             owned.Add(t);
             return t;

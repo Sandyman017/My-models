@@ -69,7 +69,7 @@ namespace DrawnBorders.Game
             field.normal.textColor = field.focused.textColor = field.hover.textColor = Ink;
             notice = Style(13, MapView.Hex("#ffd9cf")); notice.normal.background = Solid(new Color(0.55f, 0.18f, 0.12f, 0.55f)); notice.padding = new RectOffset(10, 10, 8, 8);
             info = Style(13, MapView.Hex("#d9e7f5")); info.normal.background = Solid(new Color(0.16f, 0.3f, 0.45f, 0.5f)); info.padding = new RectOffset(10, 10, 8, 8);
-            tip = Style(13, Ink); tip.normal.background = Solid(new Color(0.04f, 0.06f, 0.08f, 0.88f)); tip.padding = new RectOffset(10, 10, 7, 7);
+            tip = Style(13, Ink, FontStyle.Normal, false); tip.normal.background = Solid(new Color(0.04f, 0.06f, 0.08f, 0.88f)); tip.padding = new RectOffset(10, 10, 7, 7);
             help = Style(12, MapView.Hex("#dfe6ec"), FontStyle.Normal, false);
             label = Style(14, Color.white, FontStyle.Bold, false); label.alignment = TextAnchor.MiddleCenter;
             loadingTitle = Style(34, Ink, FontStyle.Bold, false); loadingTitle.alignment = TextAnchor.MiddleCenter;
@@ -125,14 +125,16 @@ namespace DrawnBorders.Game
 
         void TopLeft()
         {
-            var box = new Rect(16, 16, 470, 66);
+            const string keys = "Left-drag: draw borders   Right-drag: move   Wheel: zoom   Q / E: turn   Home: whole map";
+            // as wide as the help line, so it is not cut off
+            var box = new Rect(16, 16, Mathf.Max(470, help.CalcSize(new GUIContent(keys)).x + 24), 66);
             var old = GUI.color;
             GUI.color = new Color(0.04f, 0.06f, 0.08f, 0.62f);
             GUI.DrawTexture(box, white);
             GUI.color = old;
             GUILayout.BeginArea(new Rect(box.x + 12, box.y + 8, box.width - 24, box.height - 12));
             GUILayout.Label("DRAWN BORDERS  ·  WORLD " + seed, eyebrow);
-            GUILayout.Label("Left-drag: draw borders   Right-drag: move   Wheel: zoom   Q / E: turn   Home: whole map", help);
+            GUILayout.Label(keys, help);
             GUILayout.EndArea();
         }
 

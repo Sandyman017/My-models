@@ -8,6 +8,7 @@ The web game lives in `../drawn-borders` (read its `CLAUDE.md`: who Maz is, how 
 - `Assets/DrawnBorders/Game`: `Boot` (starts the game in any scene on Play), `FoundingGame` (+ `FoundingUi`: the panel and labels in IMGUI), `MapView` (textures, the land mesh at 8 points a cell, the sea sheet, the owner mask blurred into smooth borders, deposits, hover, 3D towns, ray to the ground), `CameraRig`, `InputState` (classic Input, or IMGUI events when the project allows only the new Input System).
 - Shaders in `Assets/DrawnBorders/Resources/DrawnBorders` (CG, no LightMode tag, own lighting in `DrawnBorders.cginc`: they work in the built-in pipeline and URP, Gamma or Linear).
 - No `Packages/` or `ProjectSettings/` are committed: Unity makes them for whatever version Maz opens it with.
+- First run in Unity 6.6 (6000.6.7f1) on Maz's PC: textures with mip levels are filled with `SetPixelData` (the full-size level) and `Apply` makes the rest, because `LoadRawTextureData` wants every level and throws. From far away the sea's sharp sun glints fade (they were a field of white specks).
 
 ## Next
 Provinces (step 2 of founding), then the season engine, ported file by file and checked against the web engine the same way (`Tools/js-reference.js` → `Tools/EngineCheck`).

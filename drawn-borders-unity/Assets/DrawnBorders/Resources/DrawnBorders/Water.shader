@@ -51,13 +51,17 @@ Shader "DrawnBorders/Water"
                 float2 p = i.wpos.xz;
                 float2 w1 = tex2D(_DetailTex, p * 0.21 + float2(t * 0.011, t * 0.007)).rg;
                 float2 w2 = tex2D(_DetailTex, p * 0.53 - float2(t * 0.009, -t * 0.013)).ba;
-                float2 slope = (w1 - 0.5) * 0.5 + (w2 - 0.5) * 0.35;
+                // from far away the ripples are smaller than a pixel: there the sea is calmer and the sharp glints
+                // fade, or they turn into a field of white specks
+                float px = max(length(fwidth(p)), 0.0001);                   // cells per screen pixel
+                float near = saturate(1.25 - px * 25);
+                float2 slope = ((w1 - 0.5) * 0.5 + (w2 - 0.5) * 0.35) * lerp(0.35, 1, near);
                 float3 n = normalize(float3(slope.x, 1, slope.y));
                 float3 toEye = normalize(_WorldSpaceCameraPos - i.wpos);
                 float3 sun = normalize(_SunDir.xyz);
                 float3 hv = normalize(sun + toEye);
                 float nh = saturate(dot(n, hv));
-                float spec = pow(nh, 220) * 2.0 + pow(nh, 28) * 0.1;
+                float spec = pow(nh, 220) * 1.1 * near + pow(nh, 28) * lerp(0.25, 0.1, near);
                 float fres = pow(1 - saturate(dot(n, toEye)), 4);
 
                 float3 baseCol = tex2D(_WaterGrad, float2(saturate(depth / 0.35), 0.5)).rgb;
