@@ -15,6 +15,7 @@ namespace DrawnBorders.Game
         bool stylesReady;
         GUIStyle panel, eyebrow, title, body, small, muted, statKey, statValue, factorText, factorEffect, button, primary, field, notice, info, tip, help, label, loadingTitle;
         GUIStyle rowField, warn, linkButton, card, nationLabel, provLabel, townLabel;
+        GUIStyle barName, barSeason, barEra, barValue, barNote, speedOn, speedOff, newsItem, centeredMuted, optLabel, chip;
         Texture2D white;
 
         static readonly Color Good = MapView.Hex("#86d08f"), Bad = MapView.Hex("#ec8a73"), Neutral = MapView.Hex("#c9d0d6");
@@ -84,9 +85,30 @@ namespace DrawnBorders.Game
             nationLabel = Style(15, new Color(1, 1, 1, 0.92f), FontStyle.Bold, false); nationLabel.alignment = TextAnchor.MiddleCenter;
             provLabel = Style(12, MapView.Hex("#f6efd9"), FontStyle.Bold, false); provLabel.alignment = TextAnchor.MiddleCenter;
             townLabel = Style(12, Color.white, FontStyle.Normal, false); townLabel.alignment = TextAnchor.MiddleCenter;
+            // time and the seasons
+            barName = Style(17, Ink, FontStyle.Bold, false);
+            barSeason = Style(14, Ink, FontStyle.Bold, false); barSeason.alignment = TextAnchor.UpperRight;
+            barEra = Style(11, Soft, FontStyle.Normal, false); barEra.alignment = TextAnchor.UpperRight;
+            barValue = Style(15, Ink, FontStyle.Bold, false);
+            barNote = Style(11, Neutral, FontStyle.Normal, false);
+            speedOff = ButtonStyle(MapView.Hex("#1d2831"), MapView.Hex("#2b3945"), Soft);
+            speedOff.fontSize = 11; speedOff.padding = new RectOffset(2, 2, 4, 4); speedOff.margin = new RectOffset(0, 0, 0, 0);
+            speedOn = ButtonStyle(Color.Lerp(nationColor, Color.black, 0.15f), nationColor, Color.white);
+            speedOn.fontSize = 11; speedOn.padding = speedOff.padding; speedOn.margin = speedOff.margin;
+            newsItem = Style(13, Ink, FontStyle.Normal, true);
+            newsItem.hover.textColor = Color.white;
+            centeredMuted = Style(11, MapView.Hex("#c7d0d8"), FontStyle.Normal, false); centeredMuted.alignment = TextAnchor.UpperCenter;
+            optLabel = Style(15, Ink, FontStyle.Bold, true);
+            chip = Style(12, Neutral, FontStyle.Bold, false);
+            chip.normal.background = Solid(new Color(1, 1, 1, 0.07f)); chip.padding = new RectOffset(6, 6, 2, 2); chip.margin = new RectOffset(0, 6, 2, 2);
         }
 
-        bool OverUi(Vector2 mouse) { return panelScreen.Contains(mouse); }
+        bool OverUi(Vector2 mouse)
+        {
+            if (panelScreen.Contains(mouse) || ModalOpen) return true;
+            foreach (var r in uiRects) if (r.Contains(mouse)) return true;
+            return false;
+        }
 
         void OnGUI()
         {
@@ -98,6 +120,13 @@ namespace DrawnBorders.Game
 
             if (phase == Phase.Loading) { LoadingScreen(vw, vh); panelScreen = new Rect(0, 0, Screen.width, Screen.height); return; }
 
+            if (phase == Phase.Play)
+            {
+                PlayGui(vw, vh);
+                if (Event.current.type == EventType.Repaint) { panelScreen = Rect.zero; focusedControl = GUI.GetNameOfFocusedControl(); typing = false; }
+                if (!ModalOpen) HoverTip(vw, vh);
+                return;
+            }
             if (state != null) GameLabels(); else MapLabels();
             TopLeft();
 
@@ -107,7 +136,6 @@ namespace DrawnBorders.Game
             GUILayout.BeginVertical(panel);
             if (phase == Phase.Founding) FoundingWaitPanel();
             else if (phase == Phase.Provinces) ProvincesPanel(pw - 40);
-            else if (phase == Phase.Started) StartedPanel();
             else if (preview != null) PreviewPanel(pw - 40);
             else IntroPanel();
             GUILayout.EndVertical();
@@ -139,7 +167,7 @@ namespace DrawnBorders.Game
 
         void TopLeft()
         {
-            string keys = (phase == Phase.Provinces ? "Left-drag: draw a province   " : phase == Phase.Started ? "" : "Left-drag: draw borders   ")
+            string keys = (phase == Phase.Provinces ? "Left-drag: draw a province   " : "Left-drag: draw borders   ")
                 + "Right-drag: move   Wheel or R / F: zoom   Q / E: turn   Home: whole map";
             // as wide as the help line, so it is not cut off
             var box = new Rect(16, 16, Mathf.Max(470, help.CalcSize(new GUIContent(keys)).x + 24), 66);

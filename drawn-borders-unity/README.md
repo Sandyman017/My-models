@@ -22,6 +22,7 @@ Tip: in the Game window, choose **Maximize on Play**, so the map fills the scree
 - **W A S D** or the arrow keys: move. **Q / E**: turn. **Home**: the whole map again.
 - The panel on the right shows what your borders give you. Name your nation, then **Found this nation**.
 - Then your rivals appear, and you divide your country into provinces: **Divide it for me** (or into 1 to 5), or draw around some of your land with the left mouse to make it a province. Click a province's name to change it, and **change** to pick its capital. Then **Start with these provinces**.
+- **Space** starts and pauses time (or **▶ Play** at the top right; ▶ ▶▶ ▶▶▶ are the speeds: a season every 36, 18 or 8 seconds). The bar at the top shows your treasury, output, people, food, stability, army and prestige. The news is on the right: click a line for the season report. When something needs you (a war, a letter, a decision), the game pauses by itself. Decisions open as cards: choose one, or **Decide later**.
 
 ## If something goes wrong
 

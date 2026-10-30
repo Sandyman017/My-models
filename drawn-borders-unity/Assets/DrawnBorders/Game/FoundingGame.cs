@@ -13,7 +13,7 @@ namespace DrawnBorders.Game
 {
     public sealed partial class FoundingGame : MonoBehaviour
     {
-        enum Phase { Loading, Draw, Founding, Provinces, Started }
+        enum Phase { Loading, Draw, Founding, Provinces, Play }
 
         Phase phase = Phase.Loading;
         int seed;
@@ -89,6 +89,7 @@ namespace DrawnBorders.Game
             progress = "Shaping the continent";
             ClearClaim();
             ForgetGame();
+            ForgetPlay();
             building = Task.Run(() => MapBuild.Prepare(newSeed, s => progress = s));
         }
 
@@ -99,6 +100,7 @@ namespace DrawnBorders.Game
             if (phase == Phase.Loading) { FinishLoading(); }
             if (phase == Phase.Founding) { FinishFounding(); }
             if (phase == Phase.Provinces) { CommitNameEdits(); }
+            if (phase == Phase.Play) { TickTime(); }
 
             bool overUi = OverUi(InputState.Mouse) || phase == Phase.Loading;
             rig.Tick(overUi && !drawing, typing);

@@ -37,7 +37,7 @@ namespace DrawnBorders.Game
             var colors = new List<string>();
             foreach (var n in s.nations) colors.Add(n.color);
             map.SetPolitics(PoliticalMap.Build(world, s.owner, s.prov, colors, s.provinces, phase == Phase.Provinces ? Rules.Player : -1));
-            map.SetPoliticsLook(1, 0.3f, phase == Phase.Provinces, true);
+            map.SetPoliticsLook(1, 0.26f, phase == Phase.Provinces, true);
             var towns = new List<Town>();
             foreach (var t in s.towns) if (t.owner >= 0) towns.Add(new Town { Cell = t.cell, Name = t.name, Capital = t.capital });
             map.ShowTowns(towns);
@@ -165,9 +165,11 @@ namespace DrawnBorders.Game
             try
             {
                 startLines = JsonUtility.FromJson<StartReply>(engine.CallNow("U.start()")).lines;
-                phase = Phase.Started;
                 pen = null; line.positionCount = 0;
+                var first = JsonUtility.FromJson<SeasonResult>(engine.CallNow("U.startNews()"));
+                phase = Phase.Play;
                 ApplyState(JsonUtility.FromJson<GameState>(engine.CallNow("U.state()")));
+                BeginPlay(first);
                 rig.Home(false);
             }
             catch (Exception e) { provHint = e.Message; Debug.LogException(e); }
@@ -278,18 +280,6 @@ namespace DrawnBorders.Game
             if (GUILayout.Button("Cancel", button)) queued = PenCancel;
             if (!pen.canNew) GUILayout.Label("A new province needs at least " + pen.minArea + ".", muted);
             GUILayout.EndVertical();
-        }
-
-        void StartedPanel()
-        {
-            GUILayout.Label("YOUR NATION BEGINS", eyebrow);
-            GUILayout.Label(nationName, title);
-            GUILayout.Space(6);
-            if (startLines != null) foreach (var l in startLines) { GUILayout.Label(l, body); GUILayout.Space(4); }
-            GUILayout.Space(8);
-            GUILayout.Label("The seasons come in the next part of the Unity version.", muted);
-            GUILayout.Space(8);
-            if (GUILayout.Button("New world", button)) NewWorld(UnityEngine.Random.Range(10000, 100000));
         }
 
         // ---------- names on the map ----------

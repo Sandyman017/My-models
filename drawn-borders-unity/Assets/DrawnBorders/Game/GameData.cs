@@ -39,4 +39,19 @@ namespace DrawnBorders.Game
     [Serializable] public sealed class PenTarget { public int id; public string name; }
 
     [Serializable] public sealed class StartReply { public string[] lines; }
+
+    /// <summary>The bar at the top: the nation, the date, the figures with their notes.</summary>
+    [Serializable] public sealed class HudInfo { public string name, color, season, era; public HudStat[] stats; }
+    [Serializable] public sealed class HudStat { public string key, value, note, tone; }
+
+    /// <summary>A season played: its news (five at most), the full report, why time stopped by itself, a fallen government.</summary>
+    [Serializable] public sealed class SeasonResult { public string season, pause; public NewsItem[] news, report; public bool collapsed; }
+    /// <summary>go: what clicking it opens ("decision" with its id, else the report for now).</summary>
+    [Serializable] public sealed class NewsItem { public int pri, id; public string text, tone, go; }
+
+    [Serializable] public sealed class DecisionList { public DecisionInfo[] list; }
+    [Serializable] public sealed class DecisionInfo { public int id, cell; public string title, body, tone, cat, place, by, def; public DecisionOption[] options; }
+    [Serializable] public sealed class DecisionOption { public string id, label, sub; public Chip[] chips; }
+    [Serializable] public sealed class Chip { public string text, tone; }
+    [Serializable] public sealed class DecideReply { public bool ok; public string reason, text; }
 }

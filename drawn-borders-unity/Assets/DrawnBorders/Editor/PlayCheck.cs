@@ -1,6 +1,6 @@
 // A look at the game with nobody at the keyboard: Unity in batch mode presses Play and goes through the founding (a sample
-// shape, Found this nation, the provinces divided in five, a province drawn with the pen, a name changed, Start) and saves
-// a picture of the map after each step. The panels and names (IMGUI) are not in the pictures: batch mode draws no windows.
+// shape, Found this nation, the provinces divided in five, a province drawn with the pen, a name changed, Start), plays 8
+// seasons (the first option of every decision) and saves a picture of the map after each step. The panels and names (IMGUI) are not in the pictures: batch mode draws no windows.
 //   Unity.exe -batchmode -projectPath <project> -executeMethod DrawnBorders.PlayCheck.Run -logFile <log> -shotDir <folder>
 // (without -quit: it quits by itself, with exit code 1 if anything went wrong). The project must not be open in the editor.
 using System;
@@ -18,7 +18,7 @@ namespace DrawnBorders
     public static class PlayCheck
     {
         const string Active = "DrawnBorders.PlayCheck.active", Dir = "DrawnBorders.PlayCheck.dir";
-        static int step, errors;
+        static int step, errors, seasonsPlayed;
         static double waitUntil, started;
         static readonly BindingFlags Any = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
 
@@ -122,18 +122,41 @@ namespace DrawnBorders
                         Next(3.5, "Start with these provinces pressed");
                         break;
                     case 6:
-                        if (phase != "Started") { Finish(1, "Start did not work: " + Get(game, "provHint")); return; }
+                        if (phase != "Play") { Finish(1, "Start did not work: " + Get(game, "provHint")); return; }
                         foreach (var l in (string[])Get(game, "startLines")) Debug.Log("Play check: story: " + l);
                         Shot(game, "5-started-whole-map");
+                        Hud(game);
+                        Call(game, "EndSeasonNow");
+                        Next(0, "the first season is ending");
+                        break;
+                    case 7:
+                        // seasons one after another; the first option of every decision that opens
+                        if (Get(game, "seasonTask") != null) return;
+                        var hudInfo = (HudInfo)Get(game, "hud");
+                        int open = (int)Get(game, "openDecision");
+                        if (open >= 0)
+                        {
+                            var d = Array.Find((DecisionInfo[])Get(game, "decisionsOpen"), x => x.id == open);
+                            Debug.Log("Play check: decision “" + d.title + "”: " + d.options[0].label + " (" + d.options.Length + " options)");
+                            Call(game, "Decide", d.id, d.options[0].id);
+                        }
+                        if (Get(game, "pauseWhy") != null) Debug.Log("Play check: paused by the game: " + Get(game, "pauseWhy"));
+                        Hud(game);
+                        if ((bool)Get(game, "collapsed")) { Debug.Log("Play check: the government fell"); Next(0.5, "the end"); break; }
+                        if (++seasonsPlayed < 8) { Call(game, "EndSeasonNow"); return; }
+                        Next(0.5, seasonsPlayed + " seasons played (" + hudInfo.season + ")");
+                        break;
+                    case 8:
+                        Shot(game, "6-after-8-seasons");
                         var st2 = (GameState)Get(game, "state");
-                        var cap2 = Array.Find(st2.towns, t => t.owner == Rules.Player && t.capital);
+                        var cap2 = Array.Find(st2.towns, t => t.owner == Rules.Player && t.capital) ?? st2.towns[0];
                         var rig = (CameraRig)Get(game, "rig");
                         var map = (MapView)Get(game, "map");
                         rig.LookAt(map.CellCentre(cap2.cell), 12);
                         Next(3.5, "close to the capital");
                         break;
-                    case 7:
-                        Shot(game, "6-close");
+                    case 9:
+                        Shot(game, "7-close");
                         Finish(0, "all steps done, pictures in " + SessionState.GetString(Dir, ""));
                         break;
                 }
@@ -150,6 +173,15 @@ namespace DrawnBorders
             Debug.Log("Play check: step " + step + ": " + what);
             step++;
             waitUntil = EditorApplication.timeSinceStartup + wait;
+        }
+
+        static void Hud(FoundingGame game)
+        {
+            var h = (HudInfo)Get(game, "hud");
+            if (h == null) { Debug.LogWarning("Play check: no top bar"); return; }
+            var parts = new List<string>();
+            foreach (var s in h.stats) parts.Add(s.key + " " + s.value + (s.note != "" ? " (" + s.note + ")" : ""));
+            Debug.Log("Play check: " + h.season + " · " + string.Join(" · ", parts));
         }
 
         static void Report(FoundingGame game)

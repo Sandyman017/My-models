@@ -36,6 +36,7 @@ namespace DrawnBorders.Game
             int nationClasses = Math.Min(MaxClasses, nationColors.Count + 1);
             for (int c = 0; c < Rules.NCells; c++) cls[c] = world.IsLand(c) ? Math.Min(nationClasses - 1, owner[c] + 1) : -1;
             Pack(pm, Layer(cls, nationClasses, 0), 0);
+            // (Layer gives the strongest and second-strongest class at every pixel; Pack measures the distances)
             for (int k = 1; k < nationClasses; k++) PaletteSet(pm, 0, k, MapView.Hex(nationColors[k - 1]), 1);
 
             // provinces: class 1, 2, … in list order; 0 for land in no province (it gets no mask)
@@ -57,15 +58,16 @@ namespace DrawnBorders.Game
                 }
                 Pack(pm, Layer(cls, Math.Min(MaxClasses, provinces.Count + 1), 1), 1);
             }
-            else Pack(pm, new byte[W * H], 1);
+            else Pack(pm, new Top(), 1);
             return pm;
         }
 
-        // The strongest class at every pixel (0 where no class reaches). Classes below `first` get no mask.
-        static byte[] Layer(int[] cls, int classes, int first)
+        sealed class Top { public float[] V1 = new float[W * H], V2 = new float[W * H]; public byte[] C1 = new byte[W * H], C2 = new byte[W * H]; }
+
+        // The strongest and second-strongest class at every pixel (0 where no class reaches). Classes below `first` get no mask.
+        static Top Layer(int[] cls, int classes, int first)
         {
-            var best = new float[W * H];
-            var top = new byte[W * H];
+            var top = new Top();
             var mask = new byte[Rules.NCells];
             var a = new float[W * H]; var tmp = new float[W * H];
             for (int k = first; k < classes; k++)
@@ -108,8 +110,10 @@ namespace DrawnBorders.Game
                     for (int px = 0; px < rw; px++)
                     {
                         float v = a[py * rw + px];
+                        if (v <= 0) continue;
                         int i = (py0 + py) * W + px0 + px;
-                        if (v > best[i]) { best[i] = v; top[i] = (byte)k; }
+                        if (v > top.V1[i]) { top.V2[i] = top.V1[i]; top.C2[i] = top.C1[i]; top.V1[i] = v; top.C1[i] = (byte)k; }
+                        else if (v > top.V2[i]) { top.V2[i] = v; top.C2[i] = (byte)k; }
                     }
             }
             return top;
@@ -148,11 +152,14 @@ namespace DrawnBorders.Game
                 }
         }
 
-        // Each pixel's distance (in pixels) to the nearest border of its class: half a pixel more than its distance to the
-        // nearest pixel on any border (one with a neighbour of another class). Squared distances by Felzenszwalb's two passes.
-        static float[] Distances(byte[] top)
+        // Each pixel's distance (in pixels) to the nearest border of its class. Far from a border: half a pixel more than the
+        // distance to the nearest pixel on any border (one with a neighbour of another class), by Felzenszwalb's two passes.
+        // Near one, more exactly, between pixels: how much stronger its own class is than the one across (their masks'
+        // difference) over how fast that difference changes, so a border running at a slant comes out smooth, not in steps.
+        static float[] Distances(Top t)
         {
             const float Inf = 1e12f;
+            var top = t.C1;
             var f = new float[W * H];
             for (int y = 0; y < H; y++)
                 for (int x = 0; x < W; x++)
@@ -176,7 +183,38 @@ namespace DrawnBorders.Game
                 Array.Copy(outp, 0, f, y * W, W);
             }
             for (int i = 0; i < f.Length; i++) f[i] = Mathf.Sqrt(f[i]) + 0.5f;
+            // close to a border: the exact distance from the two masks
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = y * W + x;
+                    if (f[i] > 2.5f || t.V2[i] <= 0 || t.C2[i] == t.C1[i]) continue;
+                    byte a = t.C1[i], b = t.C2[i];
+                    float here = t.V1[i] - t.V2[i];
+                    float gx = Slope(t, a, b, i, x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, here);
+                    float gy = Slope(t, a, b, i, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1, here);
+                    float g = Mathf.Sqrt(gx * gx + gy * gy);
+                    if (g > 1e-4f) f[i] = Mathf.Min(f[i] + 0.5f, here / g);
+                }
             return f;
+        }
+
+        // the difference of classes a and b at pixel i, or NaN where one of them is not among the pixel's two strongest
+        static float Diff(Top t, byte a, byte b, int i)
+        {
+            float va = t.C1[i] == a ? t.V1[i] : t.C2[i] == a ? t.V2[i] : float.NaN;
+            float vb = t.C1[i] == b ? t.V1[i] : t.C2[i] == b ? t.V2[i] : float.NaN;
+            return va - vb;
+        }
+
+        // how fast the difference changes along one direction, in mask units a pixel (from both neighbours, or one)
+        static float Slope(Top t, byte a, byte b, int i, int before, int after, float here)
+        {
+            float p = before >= 0 ? Diff(t, a, b, before) : float.NaN, n = after >= 0 ? Diff(t, a, b, after) : float.NaN;
+            if (!float.IsNaN(p) && !float.IsNaN(n)) return (n - p) * 0.5f;
+            if (!float.IsNaN(n)) return n - here;
+            if (!float.IsNaN(p)) return here - p;
+            return 0;
         }
 
         static void Edt1(float[] f, float[] d, int n, int[] v, float[] z)
@@ -199,14 +237,14 @@ namespace DrawnBorders.Game
         }
 
         // the classes and their distances into the textures' bytes (channel r for nations, g for provinces)
-        static void Pack(PoliticalMap pm, byte[] top, int channel)
+        static void Pack(PoliticalMap pm, Top top, int channel)
         {
             var dist = Distances(top);
             for (int py = 0; py < H; py++)
                 for (int px = 0; px < W; px++)
                 {
                     int i = py * W + px, o = ((H - 1 - py) * W + px) * 4;
-                    pm.Ids[o + channel] = top[i];
+                    pm.Ids[o + channel] = top.C1[i];
                     pm.Dist[o + channel] = (byte)Mathf.Clamp(Mathf.RoundToInt(dist[i] / Res / DistRange * 255), 0, 255);
                 }
         }
