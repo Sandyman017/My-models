@@ -4,7 +4,7 @@ A grand strategy game that runs in the browser. You draw your own country's bord
 
 - **Play**: double-click `drawn-borders.html` (Chrome or Edge). It is built from `src/` and committed, so it is always ready to play.
 - **Windows program** (since v35): `desktop/` wraps the same built file in Electron. Maz installs it from the GitHub Releases page.
-- **Unity version** (started after v39.4): `../drawn-borders-unity/` — the founding step in 3D, with the engine ported to C# and checked against this one. Read its `CLAUDE.md` before working there.
+- **Unity version** (started after v39.4): `../drawn-borders-unity/` — the founding step in 3D. The whole game is moving there, with THIS engine (`src/engine`) running inside Unity on V8 (PuerTS), checked to give exactly the same games. After an engine change, also run `node Tools/js-engine/bundle.js` in `../drawn-borders-unity` and commit its bundle. Read its `CLAUDE.md` before working there.
 - **Full history and design**: `game-plan.md` — what the player wants, every version (v1–v38) and what each added, and ideas for next steps. Read it before big changes.
 
 ## About the player (Maz)

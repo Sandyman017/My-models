@@ -7,9 +7,13 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>CS0649;CS0414</NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><!-- PuerTS (Assets/ThirdParty) uses a little unsafe code, as its asmdef allows -->
+
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Assets/**/*.cs" />
+    <!-- Editor-only scripts need UnityEditor, which is not on NuGet: only Unity itself compiles them -->
+    <Compile Remove="../../Assets/**/Editor/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" />
