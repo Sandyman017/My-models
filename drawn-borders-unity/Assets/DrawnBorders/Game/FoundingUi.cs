@@ -14,6 +14,7 @@ namespace DrawnBorders.Game
         bool typing;
         bool stylesReady;
         GUIStyle panel, eyebrow, title, body, small, muted, statKey, statValue, factorText, factorEffect, button, primary, field, notice, info, tip, help, label, loadingTitle;
+        GUIStyle rowField, warn, linkButton, card, nationLabel, provLabel, townLabel;
         Texture2D white;
 
         static readonly Color Good = MapView.Hex("#86d08f"), Bad = MapView.Hex("#ec8a73"), Neutral = MapView.Hex("#c9d0d6");
@@ -73,6 +74,16 @@ namespace DrawnBorders.Game
             help = Style(12, MapView.Hex("#dfe6ec"), FontStyle.Normal, false);
             label = Style(14, Color.white, FontStyle.Bold, false); label.alignment = TextAnchor.MiddleCenter;
             loadingTitle = Style(34, Ink, FontStyle.Bold, false); loadingTitle.alignment = TextAnchor.MiddleCenter;
+            // the provinces step
+            rowField = new GUIStyle(field) { fontSize = 14, padding = new RectOffset(8, 8, 5, 5) };
+            warn = Style(12, MapView.Hex("#e8b35a"));
+            linkButton = Style(12, MapView.Hex("#9cc7ef"), FontStyle.Bold, false);
+            linkButton.hover.textColor = Color.white;
+            card = new GUIStyle { padding = new RectOffset(12, 12, 10, 10) };
+            card.normal.background = Solid(new Color(0.16f, 0.22f, 0.28f, 0.7f));
+            nationLabel = Style(15, new Color(1, 1, 1, 0.92f), FontStyle.Bold, false); nationLabel.alignment = TextAnchor.MiddleCenter;
+            provLabel = Style(12, MapView.Hex("#f6efd9"), FontStyle.Bold, false); provLabel.alignment = TextAnchor.MiddleCenter;
+            townLabel = Style(12, Color.white, FontStyle.Normal, false); townLabel.alignment = TextAnchor.MiddleCenter;
         }
 
         bool OverUi(Vector2 mouse) { return panelScreen.Contains(mouse); }
@@ -87,14 +98,16 @@ namespace DrawnBorders.Game
 
             if (phase == Phase.Loading) { LoadingScreen(vw, vh); panelScreen = new Rect(0, 0, Screen.width, Screen.height); return; }
 
-            MapLabels();
+            if (state != null) GameLabels(); else MapLabels();
             TopLeft();
 
-            float pw = Mathf.Min(400, vw * 0.42f);
+            float pw = Mathf.Min(phase == Phase.Provinces ? 430 : 400, vw * 0.42f);
             var area = new Rect(vw - pw - 16, 16, pw, vh - 32);
             GUILayout.BeginArea(area);
             GUILayout.BeginVertical(panel);
-            if (phase == Phase.Founded) FoundedPanel();
+            if (phase == Phase.Founding) FoundingWaitPanel();
+            else if (phase == Phase.Provinces) ProvincesPanel(pw - 40);
+            else if (phase == Phase.Started) StartedPanel();
             else if (preview != null) PreviewPanel(pw - 40);
             else IntroPanel();
             GUILayout.EndVertical();
@@ -105,7 +118,8 @@ namespace DrawnBorders.Game
                 // the panel's real height, so clicks below it still reach the map
                 var r = new Rect(area.x, area.y, area.width, used.height);
                 panelScreen = new Rect(r.x * uiScale, Screen.height - (r.y + r.height) * uiScale, r.width * uiScale, r.height * uiScale);
-                typing = GUI.GetNameOfFocusedControl() == "nation-name";
+                focusedControl = GUI.GetNameOfFocusedControl();
+                typing = focusedControl == "nation-name" || focusedControl.StartsWith("prov-name-");
             }
 
             HoverTip(vw, vh);
@@ -125,7 +139,8 @@ namespace DrawnBorders.Game
 
         void TopLeft()
         {
-            const string keys = "Left-drag: draw borders   Right-drag: move   Wheel or R / F: zoom   Q / E: turn   Home: whole map";
+            string keys = (phase == Phase.Provinces ? "Left-drag: draw a province   " : phase == Phase.Started ? "" : "Left-drag: draw borders   ")
+                + "Right-drag: move   Wheel or R / F: zoom   Q / E: turn   Home: whole map";
             // as wide as the help line, so it is not cut off
             var box = new Rect(16, 16, Mathf.Max(470, help.CalcSize(new GUIContent(keys)).x + 24), 66);
             var old = GUI.color;
@@ -218,10 +233,11 @@ namespace DrawnBorders.Game
                 GUILayout.EndHorizontal();
                 GUILayout.Space(3);
             }
+            if (engineError != null) { GUILayout.Space(8); GUILayout.Label("The game's engine could not start: " + engineError, notice); }
             GUILayout.Space(12);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Found this nation", primary)) Found();
-            if (GUILayout.Button("Redraw", button)) ClearClaim();
+            if (GUILayout.Button("Found this nation", primary)) queued = Found;
+            if (GUILayout.Button("Redraw", button)) queued = ClearClaim;
             GUILayout.EndHorizontal();
             GUILayout.Label("Draw again on the map to replace these borders.", muted);
         }
@@ -233,22 +249,6 @@ namespace DrawnBorders.Game
             GUILayout.Label(value, statValue);
             GUILayout.EndVertical();
             GUILayout.Space(12);
-        }
-
-        void FoundedPanel()
-        {
-            var p = preview;
-            GUILayout.Label("FOUNDED", eyebrow);
-            GUILayout.Label(nationName, title);
-            GUILayout.Space(4);
-            GUILayout.Label(Borders.FmtArea(p.Area) + " · " + FoundingPreview.FmtPop(p.People) + " people · " + p.Towns.Count + " towns · stability " + p.Traits.Stability + " · defense " + p.Traits.Defense, small);
-            GUILayout.Space(10);
-            GUILayout.Label("Your nation is founded. This is as far as the Unity version goes for now: next comes dividing it into provinces, then the seasons.", body);
-            GUILayout.Space(12);
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Draw again", button)) Unfound();
-            if (GUILayout.Button("New world", button)) NewWorld(Random.Range(10000, 100000));
-            GUILayout.EndHorizontal();
         }
 
         void HoverTip(float vw, float vh)
@@ -265,7 +265,8 @@ namespace DrawnBorders.Game
                 if (r >= 2) parts.Add(r == 2 ? "river" : r == 3 ? "big river" : "great river");
                 else if (r == 1) parts.Add("stream");
                 if (world.Dep[c] != 0) parts.Add(Rules.DepositLabels[world.Dep[c]]);
-                if (cellSet != null && cellSet.Contains(c)) parts.Add(phase == Phase.Founded ? nationName : "inside your borders");
+                if (state != null) GameHoverParts(c, parts);
+                else if (cellSet != null && cellSet.Contains(c)) parts.Add("inside your borders");
             }
             string text = string.Join(" · ", parts);
             var m = InputState.Mouse;
@@ -285,7 +286,7 @@ namespace DrawnBorders.Game
                 var w = map.CellCentre(t.Cell) + Vector3.up * 0.4f;
                 var s = rig.Cam.WorldToScreenPoint(w);
                 if (s.z <= 0) continue;
-                string text = phase == Phase.Founded ? "Capital of " + nationName : "Capital";
+                const string text = "Capital";
                 var size = label.CalcSize(new GUIContent(text));
                 float x = s.x / uiScale - size.x / 2, y = (Screen.height - s.y) / uiScale - size.y - 4;
                 var old = GUI.color;

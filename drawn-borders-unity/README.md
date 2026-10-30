@@ -21,6 +21,7 @@ Tip: in the Game window, choose **Maximize on Play**, so the map fills the scree
 - **Mouse wheel**, or hold **R / F** (or **+ / −**): zoom (the camera tilts toward the horizon as you get closer).
 - **W A S D** or the arrow keys: move. **Q / E**: turn. **Home**: the whole map again.
 - The panel on the right shows what your borders give you. Name your nation, then **Found this nation**.
+- Then your rivals appear, and you divide your country into provinces: **Divide it for me** (or into 1 to 5), or draw around some of your land with the left mouse to make it a province. Click a province's name to change it, and **change** to pick its capital. Then **Start with these provinces**.
 
 ## If something goes wrong
 

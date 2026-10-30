@@ -1,8 +1,9 @@
 /* Writes the web game's rules engine into the Unity project, where V8 (PuerTS) runs it.
    node Tools/js-engine/bundle.js           writes Assets/DrawnBorders/Resources/DrawnBorders/engine-bundle.txt
    node Tools/js-engine/bundle.js --check   fails if that file is older than ../drawn-borders/src/engine
-   The bundle is the polyfill (polyfill.js) and then engineSource() from ../drawn-borders/build.js, the same script the
-   Node tests run. It is one classic script: every function and constant of the engine is a global afterwards. */
+   The bundle is the polyfill (polyfill.js), then engineSource() from ../drawn-borders/build.js (the same script the Node tests
+   run), then bridge.js (what Unity asks of the engine). It is one classic script: every function and constant of the engine
+   is a global afterwards. Rerun it after changing any of them. */
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -11,8 +12,10 @@ const { engineSource } = require(path.join(__dirname, "../../../drawn-borders/bu
 const OUT = path.join(__dirname, "../../Assets/DrawnBorders/Resources/DrawnBorders/engine-bundle.txt");
 
 function bundleSource() {
-  return "/* Made by drawn-borders-unity/Tools/js-engine/bundle.js from drawn-borders/src/engine: do not edit. */\n"
-    + fs.readFileSync(path.join(__dirname, "polyfill.js"), "utf8") + "\n" + engineSource();
+  // "use strict" must be the script's first statement to count, so it comes before the polyfill (engineSource has its own)
+  return "/* Made by drawn-borders-unity/Tools/js-engine/bundle.js from drawn-borders/src/engine: do not edit. */\n\"use strict\";\n"
+    + fs.readFileSync(path.join(__dirname, "polyfill.js"), "utf8") + "\n" + engineSource()
+    + "\n" + fs.readFileSync(path.join(__dirname, "bridge.js"), "utf8");
 }
 
 if (require.main === module) {

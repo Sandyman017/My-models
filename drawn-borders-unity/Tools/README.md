@@ -14,6 +14,10 @@ First result (30 Oct 2026, Unity 6000.6.7f1, PuerTS 3.0.3 V8 against Node 22.16)
 
 The engine calls `Math.random` once (the ministers' salt `g.cabSalt`, on the first season); `check.js` seeds it from the world's seed in both. It uses no `Date`. Node runs the bundle as a plain script, as a browser page does: in a context made with `vm.createContext` (as `drawn-borders/tests/*.test.js` do) every season is about 5 times slower, so those tests' times are not the browser's.
 
+## Playing the founding through in batch mode, with pictures (`Assets/DrawnBorders/Editor/PlayCheck.cs`)
+
+`Start-Process <Unity.exe> -ArgumentList "-batchmode","-projectPath",<project>,"-executeMethod","DrawnBorders.PlayCheck.Run","-logFile",<log>,"-shotDir",<folder> -PassThru`, then `WaitForExit()` (no `-quit`: it quits by itself; exit code 1 if a step failed or the game logged an error; about 40 s on a warm copy). It presses Play, draws a sample shape, founds the nation, divides it in five, draws a province with the pen around the capital, renames one, starts, and saves `1-borders.png` … `6-close.png` (the map only: the panels and names are IMGUI, which batch mode does not draw; the white square in a corner is the cell under the mouse). Its log lines start with `Play check:` (nations, provinces, the pen's land, the first lines of the story). Use the project copy (`D:\Games\db-js-batch`; refresh it with `robocopy Assets <copy>\Assets /MIR /XF *.meta` and the same for `Tools`) while Maz has the project open.
+
 ## Checks without Unity
 
 1. **The C# port (founding step) is the web game's**:

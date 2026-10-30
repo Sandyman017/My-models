@@ -1,5 +1,5 @@
-// The 3D map: the land as a mesh lifted by its heights, the sea as a moving water surface, and what the founding
-// step draws on top (your borders, the deposits, the cell under the mouse, the towns your borders would get).
+// The 3D map: the land as a mesh lifted by its heights, the sea as a moving water surface, and what is drawn on top
+// (every nation's land and borders, province lines, the deposits, the cell under the mouse, the towns).
 using System;
 using System.Collections.Generic;
 using DrawnBorders.Bake;
@@ -69,10 +69,8 @@ namespace DrawnBorders.Game
 
         Material terrainMat, waterMat, markerMat, capitalMat;
         readonly List<UnityEngine.Object> owned = new List<UnityEngine.Object>();
-        Texture2D ownerTex;
-        byte[] ownerPx;
+        Texture2D polIds, polDist, palette;
         GameObject terrainGo, waterGo, townsRoot;
-        const int OwnerRes = 8;
 
         public static readonly Color[] DepositColors =
         {
@@ -141,11 +139,11 @@ namespace DrawnBorders.Game
             }
             var depTex = Tex(Rules.GridW, Rules.GridH, dep, false, false, FilterMode.Point, TextureWrapMode.Clamp);
 
-            ownerTex = new Texture2D(Rules.GridW * OwnerRes, Rules.GridH * OwnerRes, TextureFormat.R8, false, true);
-            ownerTex.wrapMode = TextureWrapMode.Clamp; ownerTex.filterMode = FilterMode.Bilinear;
-            ownerPx = new byte[ownerTex.width * ownerTex.height];
-            ownerTex.LoadRawTextureData(ownerPx); ownerTex.Apply(false, false);
-            owned.Add(ownerTex);
+            // nations and provinces (PoliticalMap): filled by SetPolitics
+            // (the shader blends the four pixels around a point itself, so both are read pixel by pixel)
+            polIds = Tex(PoliticalMap.W, PoliticalMap.H, new byte[PoliticalMap.W * PoliticalMap.H * 4], true, false, FilterMode.Point, TextureWrapMode.Clamp, true);
+            polDist = Tex(PoliticalMap.W, PoliticalMap.H, new byte[PoliticalMap.W * PoliticalMap.H * 4], true, false, FilterMode.Point, TextureWrapMode.Clamp, true);
+            palette = Tex(256, 2, new byte[256 * 2 * 4], false, false, FilterMode.Point, TextureWrapMode.Clamp, true);
 
             terrainMat = new Material(LoadShader("Terrain")); owned.Add(terrainMat);
             waterMat = new Material(LoadShader("Water")); owned.Add(waterMat);
@@ -158,13 +156,17 @@ namespace DrawnBorders.Game
             terrainMat.SetTexture("_DataTex", dataTex);
             terrainMat.SetTexture("_NormalTex", normalTex);
             terrainMat.SetTexture("_DetailTex", detailTex);
-            terrainMat.SetTexture("_OwnerTex", ownerTex);
+            terrainMat.SetTexture("_PolIds", polIds);
+            terrainMat.SetTexture("_PolDist", polDist);
+            terrainMat.SetVector("_PolSize", new Vector4(PoliticalMap.W, PoliticalMap.H, 1f / PoliticalMap.W, 1f / PoliticalMap.H));
+            terrainMat.SetFloat("_DistRange", PoliticalMap.DistRange);
+            terrainMat.SetTexture("_Palette", palette);
             terrainMat.SetTexture("_DepTex", depTex);
             terrainMat.SetColor("_RiverColor", Hex("#3a7f95"));
             waterMat.SetTexture("_DataTex", dataTex);
             waterMat.SetTexture("_DetailTex", detailTex);
             waterMat.SetTexture("_WaterGrad", gradTex);
-            SetOwnerLook(Hex(Rules.NationColors[0]), 0, false);
+            SetPoliticsLook(0, 0.22f, false, false);
             SetHover(-1);
             ApplyLight();
 
@@ -224,74 +226,24 @@ namespace DrawnBorders.Game
             }
         }
 
-        /// <summary>Which cells are yours: the mask is drawn soft and blurred so the border runs in smooth curves.</summary>
-        public void SetOwner(ICollection<int> cells)
+        /// <summary>Who owns the land and the provinces, as worked out by PoliticalMap.Build.</summary>
+        public void SetPolitics(PoliticalMap pm)
         {
-            int W = Rules.GridW, H = Rules.GridH;
-            var grid = new float[W * H];
-            if (cells != null)
-            {
-                foreach (int c in cells) grid[c] = 1;
-                // the sea beside your coast counts as yours, so the coast itself is the border there
-                foreach (int c in cells)
-                    foreach (var d in Rules.Dirs8)
-                    {
-                        int x = Rules.CellX(c) + d[0], y = Rules.CellY(c) + d[1];
-                        if (Rules.InBounds(x, y) && !World.IsLand(Rules.Idx(x, y))) grid[Rules.Idx(x, y)] = 1;
-                    }
-            }
-            int R = OwnerRes, PW = W * R, PH = H * R;
-            var a = new float[PW * PH]; var tmp = new float[PW * PH];
-            Func<int, int, float> g = (x, y) => grid[Mathf.Clamp(y, 0, H - 1) * W + Mathf.Clamp(x, 0, W - 1)];
-            for (int py = 0; py < PH; py++) for (int px = 0; px < PW; px++)
-            {
-                // between cell centres, so the edge sits on the line between your cells and the others
-                float fx = (px + 0.5f) / R - 0.5f, fy = (py + 0.5f) / R - 0.5f;
-                int x0 = Mathf.FloorToInt(fx), y0 = Mathf.FloorToInt(fy);
-                float tx = fx - x0, ty = fy - y0;
-                a[py * PW + px] = Mathf.Lerp(Mathf.Lerp(g(x0, y0), g(x0 + 1, y0), tx), Mathf.Lerp(g(x0, y0 + 1), g(x0 + 1, y0 + 1), tx), ty);
-            }
-            for (int pass = 0; pass < 2; pass++) { BoxBlur(a, tmp, PW, PH, 3, true); BoxBlur(tmp, a, PW, PH, 3, false); }
-            for (int py = 0; py < PH; py++) for (int px = 0; px < PW; px++)
-                ownerPx[(PH - 1 - py) * PW + px] = (byte)Mathf.Clamp(Mathf.RoundToInt(a[py * PW + px] * 255), 0, 255);
-            ownerTex.LoadRawTextureData(ownerPx);
-            ownerTex.Apply(false, false);
+            if (polIds == null) return;
+            polIds.LoadRawTextureData(pm.Ids); polIds.Apply(false, false);
+            polDist.LoadRawTextureData(pm.Dist); polDist.Apply(false, false);
+            palette.LoadRawTextureData(pm.Palette); palette.Apply(false, false);
         }
 
-        static void BoxBlur(float[] src, float[] dst, int W, int H, int r, bool horizontal)
-        {
-            int n = 2 * r + 1;
-            if (horizontal)
-                for (int y = 0; y < H; y++)
-                {
-                    float sum = 0;
-                    for (int k = -r; k <= r; k++) sum += src[y * W + Mathf.Clamp(k, 0, W - 1)];
-                    for (int x = 0; x < W; x++)
-                    {
-                        dst[y * W + x] = sum / n;
-                        sum += src[y * W + Mathf.Min(W - 1, x + r + 1)] - src[y * W + Mathf.Max(0, x - r)];
-                    }
-                }
-            else
-                for (int x = 0; x < W; x++)
-                {
-                    float sum = 0;
-                    for (int k = -r; k <= r; k++) sum += src[Mathf.Clamp(k, 0, H - 1) * W + x];
-                    for (int y = 0; y < H; y++)
-                    {
-                        dst[y * W + x] = sum / n;
-                        sum += src[Mathf.Min(H - 1, y + r + 1) * W + x] - src[Mathf.Max(0, y - r) * W + x];
-                    }
-                }
-        }
-
-        /// <summary>How your land is shown: its colour, how strongly (0 hidden … 1 shown), and whether it is founded (a stronger fill).</summary>
-        public void SetOwnerLook(Color nation, float shown, bool founded)
+        /// <summary>How nations are shown: how strongly (0 hidden … 1 shown), the fill's strength, the player's provinces
+        /// tinted (while dividing the country), province lines.</summary>
+        public void SetPoliticsLook(float shown, float fill, bool provTints, bool provLines)
         {
             if (terrainMat == null) return;
-            terrainMat.SetColor("_NationColor", nation);
             terrainMat.SetFloat("_OwnerShown", shown);
-            terrainMat.SetFloat("_OwnerFill", founded ? 0.34f : 0.22f);
+            terrainMat.SetFloat("_OwnerFill", fill);
+            terrainMat.SetFloat("_ProvTint", provTints ? 1 : 0);
+            terrainMat.SetFloat("_ProvLines", provLines ? 1 : 0);
         }
 
         public void SetHover(int cell)
@@ -388,6 +340,7 @@ namespace DrawnBorders.Game
             foreach (var o in owned) if (o != null) Destroy(o);
             owned.Clear();
             terrainMat = waterMat = markerMat = capitalMat = null;
+            polIds = polDist = palette = null;
         }
 
         void OnDestroy() { Clear(); }

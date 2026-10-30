@@ -1,22 +1,30 @@
-// The founding step of Drawn Borders: a new world, you draw your borders on it, see what they give you, name your
-// nation and found it. The rules are the web game's own (Engine), the look is new (MapView, the shaders).
+// The founding of Drawn Borders: a new world, you draw your borders on it, see what they give you, name your nation and
+// found it; then the real game starts in the web game's engine (EngineThread) and you divide your country into provinces
+// (ProvincesStep). The founding preview's rules are the C# port (Engine); the look is new (MapView, the shaders).
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading.Tasks;
 using DrawnBorders.Engine;
+using DrawnBorders.Js;
 using UnityEngine;
 
 namespace DrawnBorders.Game
 {
     public sealed partial class FoundingGame : MonoBehaviour
     {
-        enum Phase { Loading, Draw, Founded }
+        enum Phase { Loading, Draw, Founding, Provinces, Started }
 
         Phase phase = Phase.Loading;
         int seed;
         Task<MapBuild> building;
         volatile string progress = "";
         string loadError;
+
+        EngineThread engine;          // the web game's engine, on its own thread
+        Task<string> founding;        // U.newGame, while it runs
+        string engineError;
+        Action queued;                // a panel's button, done in Update (outside OnGUI, so the panel's layout never changes mid-frame)
 
         MapView map;
         CameraRig rig;
@@ -66,6 +74,10 @@ namespace DrawnBorders.Game
             line.receiveShadows = false;
             lineMat.SetColor("_Color", Color.Lerp(nationColor, Color.white, 0.35f));
 
+            // the engine starts on its own thread while the world is made
+            try { engine = new EngineThread(); }
+            catch (Exception e) { engineError = e.Message; Debug.LogException(e); }
+
             NewWorld(UnityEngine.Random.Range(10000, 100000));
         }
 
@@ -76,13 +88,17 @@ namespace DrawnBorders.Game
             loadError = null;
             progress = "Shaping the continent";
             ClearClaim();
+            ForgetGame();
             building = Task.Run(() => MapBuild.Prepare(newSeed, s => progress = s));
         }
 
         void Update()
         {
             InputState.Poll();
+            if (queued != null) { var q = queued; queued = null; q(); }
             if (phase == Phase.Loading) { FinishLoading(); }
+            if (phase == Phase.Founding) { FinishFounding(); }
+            if (phase == Phase.Provinces) { CommitNameEdits(); }
 
             bool overUi = OverUi(InputState.Mouse) || phase == Phase.Loading;
             rig.Tick(overUi && !drawing, typing);
@@ -103,12 +119,16 @@ namespace DrawnBorders.Game
             }
             map.SetHover(drawing ? -1 : hoverCell);
 
-            if (phase != Phase.Draw) return;
-            // draw your borders: press, drag around the land you want, release
+            // a click on the map leaves any text box (so a province name being typed is saved)
+            if (onMap && InputState.Down(0) && GUIUtility.keyboardControl != 0) { GUIUtility.keyboardControl = 0; focusedControl = ""; }
+            if (phase != Phase.Draw && phase != Phase.Provinces) return;
+            // draw your borders (or a province, with the pen): press, drag around the land you want, release
             if (!drawing && onMap && InputState.Down(0))
             {
                 drawing = true; path.Clear(); line.positionCount = 0;
                 error = null; note = null;
+                if (phase == Phase.Provinces) { pen = null; provHint = null; }
+                lineMat.SetColor("_Color", phase == Phase.Provinces ? new Color(0.98f, 0.96f, 0.9f) : Color.Lerp(nationColor, Color.white, 0.35f));
                 AddPoint(cx, cy);
             }
             if (drawing)
@@ -127,8 +147,8 @@ namespace DrawnBorders.Game
                 else
                 {
                     drawing = false;
-                    ApplyClaim(Borders.ClaimFromPath(world, path));
-                    line.positionCount = 0;
+                    if (phase == Phase.Provinces) PenDone();   // the line stays until you choose what the land becomes
+                    else { ApplyClaim(Borders.ClaimFromPath(world, path)); line.positionCount = 0; }
                 }
             }
         }
@@ -169,9 +189,7 @@ namespace DrawnBorders.Game
                 note = res.DroppedCells > 0 ? Borders.FmtArea(res.DroppedCells) + " of land was cut off from the rest of your borders, so it was left out." : null;
                 if (string.IsNullOrEmpty(nationName)) nationName = Rules.PlayerNames[random.Next(Rules.PlayerNames.Length)];
                 preview = FoundingPreview.Make(world, cells);
-                map.SetOwner(cells);
-                map.SetOwnerLook(nationColor, 1, false);
-                map.ShowTowns(preview.Towns);
+                ShowClaim();
             }
             else
             {
@@ -180,12 +198,23 @@ namespace DrawnBorders.Game
             }
         }
 
+        // your borders before founding: only your land, in your colour
+        void ShowClaim()
+        {
+            var owner = new int[Rules.NCells];
+            for (int i = 0; i < owner.Length; i++) owner[i] = -1;
+            foreach (int c in cells) owner[c] = Rules.Player;
+            map.SetPolitics(PoliticalMap.Build(world, owner, null, Rules.NationColors, null, -1));
+            map.SetPoliticsLook(1, 0.22f, false, false);
+            map.ShowTowns(preview.Towns);
+        }
+
         void ClearClaim()
         {
             cells = null; cellSet = null; preview = null; error = null; note = null;
             drawing = false; path.Clear();
             if (line != null) line.positionCount = 0;
-            if (map != null && map.World != null) { map.SetOwner(null); map.SetOwnerLook(nationColor, 0, false); map.ShowTowns(null); }
+            if (map != null && map.World != null) { map.SetPoliticsLook(0, 0.22f, false, false); map.ShowTowns(null); }
         }
 
         void TrySample()
@@ -202,18 +231,45 @@ namespace DrawnBorders.Game
             }
         }
 
+        /// <summary>"Found this nation": the engine sets up the real game (your nation, the rivals, everyone's provinces).</summary>
         void Found()
         {
             if (cells == null) return;
             nationName = CleanName(nationName);
-            phase = Phase.Founded;
-            map.SetOwnerLook(nationColor, 1, true);
+            engineError = engine == null ? engineError ?? "the game's engine is missing" : engine.Error;
+            if (engineError != null) return;
+            var list = new StringBuilder("[");
+            for (int i = 0; i < cells.Count; i++) { if (i > 0) list.Append(','); list.Append(cells[i]); }
+            list.Append(']');
+            founding = engine.Call("U.newGame(" + seed + ", " + list + ", " + EngineThread.Str(nationName) + ")");
+            phase = Phase.Founding;
         }
 
+        void FinishFounding()
+        {
+            if (founding == null || !founding.IsCompleted) return;
+            var task = founding;
+            founding = null;
+            if (task.IsFaulted)
+            {
+                var ex = task.Exception != null ? task.Exception.GetBaseException() : null;
+                engineError = ex != null ? ex.Message : "unknown error";
+                Debug.LogException(ex ?? new Exception(engineError));
+                phase = Phase.Draw;
+                return;
+            }
+            phase = Phase.Provinces;
+            ApplyState(JsonUtility.FromJson<GameState>(task.Result));
+            LoadRows();
+            FocusOwnLand();
+        }
+
+        /// <summary>Back to drawing your borders: the founded game is dropped.</summary>
         void Unfound()
         {
+            ForgetGame();
             phase = Phase.Draw;
-            map.SetOwnerLook(nationColor, 1, false);
+            if (cells != null) ShowClaim();
         }
 
         static string CleanName(string raw)
@@ -227,6 +283,7 @@ namespace DrawnBorders.Game
         {
             if (Instance == this) Instance = null;
             if (lineMat != null) Destroy(lineMat);
+            if (engine != null) engine.Dispose();
         }
     }
 }
